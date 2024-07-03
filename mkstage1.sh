@@ -48,6 +48,7 @@ prepare_stage1() {
 install_stage1() {
     export EMERGE_DEFAULT_OPTS="$OPTS"
     export MAKEOPTS="$OPTS"
+    export CFLAGS="$OUR_CFLAGS --sysroot=${STAGE1_DIR}"
     ROOT=$1 USE=build riscv64-unknown-linux-gnu-emerge -k baselayout
     ROOT=$1 riscv64-unknown-linux-gnu-emerge -k ${STAGE1_PACKAGES}
     ROOT=$1 USE=build riscv64-unknown-linux-gnu-emerge portage
