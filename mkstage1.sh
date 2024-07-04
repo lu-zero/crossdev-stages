@@ -26,18 +26,17 @@ setup_crossdev() {
     crossdev riscv64-unknown-linux-gnu
     PORTAGE_CONFIGROOT=${CROSSDEV_ROOT} eselect profile set ${PROFILE}
     sed -i -e "s:CFLAGS=.*:CFLAGS=\"${OUR_CFLAGS}\":" ${CROSSDEV_MAKE_CONF}
-}
-
-build_packages() {
-    export EMERGE_DEFAULT_OPTS="$OPTS"
-    export MAKEOPTS="$OPTS"
-    riscv64-unknown-linux-gnu-emerge -b ${STAGE1_PACKAGES}
+    mkdir -p ${CROSSDEV_ROOT}/etc/portage/env
+    echo "LDFLAGS=\"\$LDFLAGS --sysroot=$STAGE1_DIR\"" > ${CROSSDEV_ROOT}/etc/portage/env/override-sysroot.conf
+    mkdir ${CROSSDEV_ROOT}/etc/portage/package.env
+    echo "dev-lang/perl override-sysroot.conf" > ${CROSSDEV_ROOT}/etc/portage/package.env/perl
 }
 
 prepare_stage1() {
     local root=$1
 
     mkdir -p ${root}/etc/portage/
+    cp -a /usr/$OUR_CHOST/etc/portage/{make.profile,profile} ${root}/etc/portage/
     echo "CHOST=${OUR_CHOST}" > ${root}/etc/portage/make.conf
     echo "ACCEPT_KEYWORDS=~$OUR_KEYWORD" >> ${root}/etc/portage/make.conf
     echo "CFLAGS=\"$OUR_CFLAGS\"" >> ${root}/etc/portage/make.conf
@@ -48,13 +47,11 @@ prepare_stage1() {
 install_stage1() {
     export EMERGE_DEFAULT_OPTS="$OPTS"
     export MAKEOPTS="$OPTS"
-    export CFLAGS="$OUR_CFLAGS --sysroot=${STAGE1_DIR}"
-    ROOT=$1 USE=build riscv64-unknown-linux-gnu-emerge -k baselayout
-    ROOT=$1 riscv64-unknown-linux-gnu-emerge -k ${STAGE1_PACKAGES}
-    ROOT=$1 USE=build riscv64-unknown-linux-gnu-emerge portage
+    ROOT=$1 USE=build riscv64-unknown-linux-gnu-emerge -k -b baselayout
+    ROOT=$1 riscv64-unknown-linux-gnu-emerge -k -b ${STAGE1_PACKAGES}
+    ROOT=$1 USE=build riscv64-unknown-linux-gnu-emerge -k -b portage
 }
 
 setup_crossdev
-build_packages
 prepare_stage1 $STAGE1_DIR
 install_stage1 $STAGE1_DIR
