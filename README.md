@@ -11,6 +11,17 @@ Build Gentoo stages leveraging crossdev
 ## Platforms
 - riscv64 (bpi-f3)
 
+
+## Dependencies
+``` sh
+# Needed to build all the stages
+emerge crossdev merge-usr git
+# Needed to build the bootloader and kernel
+emerge u-boot-tools dtc
+# Needed to investigate the image and run ldconfig
+emerge bubblewrap qemu
+```
+
 ## Limitations
 
 - Some packages are cross-compilation unfriendly and rely on runtime checks (e.g. perl modules)
