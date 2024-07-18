@@ -65,6 +65,7 @@ install_stage1() {
 
 update_stage3() {
     rm -f ${CROSSDEV_ROOT}/etc/portage/package.env/perl
+    riscv64-unknown-linux-gnu-emerge -b -u system
     ROOT=$1 riscv64-unknown-linux-gnu-emerge -u @world
 }
 
