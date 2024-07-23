@@ -70,9 +70,11 @@ loglevel=8
 EOF
 }
 
-# TODO: Decide if the stage3 is to be copied over the build dir or not
 copy_to_root() {
-    INSTALL_MOD_PATH=$STAGE_DIR make -C $BUILD_DIR/linux modules_install
+    local root=$BUILD_DIR/gen/root
+    mkdir -p $root
+    cp -a $STAGE_DIR/* $root
+    INSTALL_MOD_PATH=$root make -C $BUILD_DIR/linux modules_install
 }
 
 checkout_all
