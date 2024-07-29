@@ -5,6 +5,7 @@ OPENSBI_REPO="https://github.com/lu-zero/pi-opensbi"
 U_BOOT_REPO="https://github.com/lu-zero/pi-u-boot"
 KERNEL_TAG="v1.0.3-lu"
 KERNEL_REPO="https://github.com/lu-zero/pi-linux"
+REMOTEPROC_FIRMWARE="https://github.com/BPI-SINOVOIP/armbian-build/raw/f4d657eda0400386bb2bf6d4db8798741afae963/packages/bsp/bananapif3/root/usr/lib/firmware/esos.elf"
 
 usage() {
     echo "Usage: $0 <build-directory> <stage-directory>"
@@ -38,6 +39,8 @@ checkout_all() {
     checkout $OPENSBI_REPO $BOOT_TAG opensbi
     checkout $U_BOOT_REPO $BOOT_TAG u-boot
     checkout $KERNEL_REPO $KERNEL_TAG linux
+    mkdir -p $BUILD_DIR/firmware
+    curl $REMOTEPROC_FIRMWARE > $BUILD_DIR/firmware/esos.elf
 }
 
 build_bootloader() {
@@ -75,6 +78,7 @@ copy_to_root() {
     mkdir -p $root
     cp -a $STAGE_DIR/* $root
     INSTALL_MOD_PATH=$root make -C $BUILD_DIR/linux modules_install
+
 }
 
 checkout_all
