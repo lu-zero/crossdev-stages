@@ -13,10 +13,6 @@ usage() {
     exit 1
 }
 
-if [[ -z "$2" ]]; then
-    usage
-fi
-
 STAGE_DIR=$2
 
 STAGE1_PACKAGES=`grep -v '#' /var/db/repos/gentoo/profiles/default/linux/packages.build`
@@ -33,7 +29,7 @@ export EMERGE_DEFAULT_OPTS="$OPTS"
 export MAKEOPTS="$OPTS"
 
 setup_crossdev() {
-    crossdev riscv64-unknown-linux-gnu
+    crossdev riscv64-unknown-linux-gnu --init-target
     PORTAGE_CONFIGROOT=${CROSSDEV_ROOT} eselect profile set ${PROFILE}
     sed -i -e "s:CFLAGS=.*:CFLAGS=\"${OUR_CFLAGS}\":" ${CROSSDEV_MAKE_CONF}
     mkdir -p ${CROSSDEV_ROOT}/etc/portage/env
@@ -41,6 +37,7 @@ setup_crossdev() {
     # crossdev starts as split_usr layout
     mkdir ${CROSSDEV_ROOT}/bin
     merge-usr --root ${CROSSDEV_ROOT}
+    crossdev riscv64-unknown-linux-gnu
 }
 
 prepare_stage1() {
@@ -66,7 +63,7 @@ install_stage1() {
 update_stage3() {
     rm -f ${CROSSDEV_ROOT}/etc/portage/package.env/perl
     riscv64-unknown-linux-gnu-emerge -b -u system
-    ROOT=$1 riscv64-unknown-linux-gnu-emerge -u @world
+    ROOT=$1 riscv64-unknown-linux-gnu-emerge -e @world
 }
 
 install_clang() {
@@ -77,23 +74,43 @@ install_clang() {
     USE="-extra -clang" ROOT=$1 riscv64-unknown-linux-gnu-emerge clang
 }
 
-if [[ -e ${CROSSDEV_ROOT} ]]
-then
-    echo "Crossdev already present, rm -fR ${CROSSDEV_ROOT} to regenerate"
-else
-    echo "Creating a new crossdev environment for ${OUR_CHOST}"
-    setup_crossdev
+maybe_prepare() {
+    if [[ -e ${CROSSDEV_ROOT} ]]
+    then
+        echo 'Crossdev already present, use `prepare` to regenerate'
+    else
+        echo "Creating a new crossdev environment for ${OUR_CHOST}"
+        setup_crossdev
+    fi
+}
+
+if [[ -z "$1" ]]; then
+    usage
+fi
+
+case $1 in
+    prepare)
+        setup_crossdev
+        exit 0
+        ;;
+esac
+
+if [[ -z "$2" ]]; then
+    usage
 fi
 
 case $1 in
     make)
+        maybe_prepare
         prepare_stage1 $STAGE_DIR
         install_stage1 $STAGE_DIR
         ;;
     update)
+        maybe_prepare
         update_stage3 $STAGE_DIR
         ;;
     install_clang)
+        maybe_prepare
         install_clang $STAGE_DIR
         ;;
     *)
