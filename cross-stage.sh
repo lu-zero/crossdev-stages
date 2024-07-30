@@ -49,6 +49,8 @@ prepare_stage1() {
     echo "ACCEPT_KEYWORDS=~$OUR_KEYWORD" >> ${root}/etc/portage/make.conf
     echo "CFLAGS=\"$OUR_CFLAGS\"" >> ${root}/etc/portage/make.conf
     echo 'CXXFLAGS=$CFLAGS' >> ${root}/etc/portage/make.conf
+    mkdir -p ${root}/etc/portage/package.use
+    echo -e '>=virtual/libcrypt-2-r1 static-libs\n>=sys-libs/libxcrypt-4.4.36-r3 static-libs\n>=sys-apps/busybox-1.36.1-r3 -pam static' > ${root}/etc/portage/package.use/busybox
     PORTAGE_CONFIGROOT=${root} eselect profile set ${PROFILE}
 }
 
@@ -72,6 +74,11 @@ install_clang() {
     # using clang to build compiler-rt requires clang existing and having
     # the {target}-clang symlinks
     USE="-extra -clang" ROOT=$1 riscv64-unknown-linux-gnu-emerge clang
+}
+
+install_boot() {
+    # dracut and busybox must be installed on host and target
+    ROOT=$1 riscv64-unknown-linux-gnu-emerge busybox dracut
 }
 
 maybe_prepare() {
@@ -112,6 +119,10 @@ case $1 in
     install_clang)
         maybe_prepare
         install_clang $STAGE_DIR
+        ;;
+    install_boot)
+        maybe_prepare
+        install_boot $STAGE_DIR
         ;;
     *)
         usage
