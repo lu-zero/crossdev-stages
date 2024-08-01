@@ -10,12 +10,24 @@ usage() {
     echo
     echo "make   : Create a new stage1"
     echo "update : Update a pre-existing stage3"
+    echo 
+    echo "install_clang : Install clang in the stage"
+    echo "install_boot  : Install the booloader requirements"
+    echo "install_more  : Install additional starting packages"
     exit 1
 }
 
 STAGE_DIR=$2
 
 STAGE1_PACKAGES=`grep -v '#' /var/db/repos/gentoo/profiles/default/linux/packages.build`
+ADDITIONAL_PACKAGES="
+  sys-block/parted
+  net-wireless/wpa_supplicant
+  app-editors/vim
+  app-admin/metalog
+  net-misc/ntp
+  dev-vcs/git
+"
 PROFILE=default/linux/riscv/23.0/rv64/lp64d
 # Until https://gcc.gnu.org/bugzilla/show_bug.cgi?id=115789 is fixed we cannot reliably using vectors
 # OUR_CFLAGS="-O3 -march=rv64gcv_zvl256b -pipe"
@@ -29,12 +41,15 @@ export EMERGE_DEFAULT_OPTS="$OPTS"
 export MAKEOPTS="$OPTS"
 
 setup_crossdev() {
+    local root=${CROSSDEV_ROOT}
     crossdev riscv64-unknown-linux-gnu --init-target
     PORTAGE_CONFIGROOT=${CROSSDEV_ROOT} eselect profile set ${PROFILE}
     sed -i -e "s:CFLAGS=.*:CFLAGS=\"${OUR_CFLAGS}\":" ${CROSSDEV_MAKE_CONF}
-    mkdir -p ${CROSSDEV_ROOT}/etc/portage/env
-    mkdir ${CROSSDEV_ROOT}/etc/portage/package.env
-    # crossdev starts as split_usr layout
+    mkdir -p ${root}/etc/portage/env
+    mkdir ${root}/etc/portage/package.env
+    mkdir -p ${root}/etc/portage/package.use
+    echo -e '>=virtual/libcrypt-2-r1 static-libs\n>=sys-libs/libxcrypt-4.4.36-r3 static-libs\n>=sys-apps/busybox-1.36.1-r3 -pam static' > ${root}/etc/portage/package.use/busybox
+   # crossdev starts as split_usr layout
     mkdir ${CROSSDEV_ROOT}/bin
     merge-usr --root ${CROSSDEV_ROOT}
     crossdev riscv64-unknown-linux-gnu
@@ -49,8 +64,6 @@ prepare_stage1() {
     echo "ACCEPT_KEYWORDS=~$OUR_KEYWORD" >> ${root}/etc/portage/make.conf
     echo "CFLAGS=\"$OUR_CFLAGS\"" >> ${root}/etc/portage/make.conf
     echo 'CXXFLAGS=$CFLAGS' >> ${root}/etc/portage/make.conf
-    mkdir -p ${root}/etc/portage/package.use
-    echo -e '>=virtual/libcrypt-2-r1 static-libs\n>=sys-libs/libxcrypt-4.4.36-r3 static-libs\n>=sys-apps/busybox-1.36.1-r3 -pam static' > ${root}/etc/portage/package.use/busybox
     PORTAGE_CONFIGROOT=${root} eselect profile set ${PROFILE}
 }
 
@@ -79,6 +92,10 @@ install_clang() {
 install_boot() {
     # dracut and busybox must be installed on host and target
     ROOT=$1 riscv64-unknown-linux-gnu-emerge busybox dracut
+}
+
+install_more() {
+    ROOT=$1 riscv64-unknown-linux-gnu-emerge $ADDITIONAL_PACKAGES
 }
 
 maybe_prepare() {
@@ -128,6 +145,10 @@ case $1 in
         maybe_prepare
         install_boot $STAGE_DIR
         ;;
+    install_more)
+        maybe_prepare
+        install_more $STAGE_DIR
+	;;
     *)
         usage
         ;;

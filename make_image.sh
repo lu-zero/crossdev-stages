@@ -77,6 +77,12 @@ copy_to_root() {
     mkdir -p $root/etc/dracut.conf.d
     echo 'install_items+=" /lib/firmware/esos.elf "' > $root/etc/dracut.conf.d/firmware.conf
     setup_service sshd default
+    setup_service metalog default
+    echo "x1:12345:respawn:/sbin/agetty 115200 console linux" >> $root/etc/inittab
+    sed -i -e 's/root:x:/root::/' $root/etc/passwd
+    echo "PermitRootLogin yes" >> $root/etc/ssh/sshd_config
+    echo "PermitEmptyPasswords yes" >> $root/etc/ssh/sshd_config
+    echo "StrictModes yes" >> $root/etc/ssh/sshd_config
 }
 
 copy_to_boot() {
@@ -104,6 +110,7 @@ generate_image() {
     pushd $BUILD_DIR
     rm -fR $BUILD_DIR/tmp
     genimage --config $BASE_DIR/genimage.cfg
+    xz -f -T0 -9 gentoo-linux-k1_dev-sdcard.img 
     popd
 }
 
