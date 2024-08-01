@@ -7,6 +7,7 @@ FIRMWARE_REPO="https://gitee.com/bianbu-linux/buildroot-ext.git"
 KERNEL_TAG="v1.0.3-lu"
 KERNEL_REPO="https://github.com/lu-zero/pi-linux"
 
+BASE_DIR=$(dirname $(readlink -f "$0"))
 
 usage() {
     echo "Usage: $0 <build-directory> <stage-directory>"
@@ -59,6 +60,13 @@ build_linux() {
     popd
 }
 
+setup_service() {
+    local service=$1
+    local runlevel=$2
+    local root=$BUILD_DIR/gen/root
+    ln -sf /etc/init.d/$1 $root/etc/runlevels/$2/
+}
+
 copy_to_root() {
     local root=$BUILD_DIR/gen/root
     mkdir -p $root
@@ -68,6 +76,7 @@ copy_to_root() {
     cp -a $BUILD_DIR/firmware/board/spacemit/k1/target_overlay/lib/firmware/* $root/lib/firmware
     mkdir -p $root/etc/dracut.conf.d
     echo 'install_items+=" /lib/firmware/esos.elf "' > $root/etc/dracut.conf.d/firmware.conf
+    setup_service sshd default
 }
 
 copy_to_boot() {
@@ -88,9 +97,16 @@ EOF
            --sysroot $root --tmpdir /var/tmp/ $boot/initramfs.img generic
 }
 
+generate_image() {
+    pushd $BUILD_DIR
+    rm -fR $BUILD_DIR/tmp
+    genimage --config $BASE_DIR/genimage.cfg
+    popd
+}
+
 checkout_all
 build_bootloader
 build_linux
 copy_to_root
 copy_to_boot
-
+generate_image
