@@ -84,13 +84,16 @@ copy_to_boot() {
     local root=$BUILD_DIR/gen/root
     mkdir -p $boot
     cp $BUILD_DIR/linux/arch/riscv/boot/Image.gz.itb $boot
-    cp $BUILD_DIR/linux/arch/riscv/boot/dts/spacemit/*.dts $boot
+    cp $BUILD_DIR/linux/arch/riscv/boot/dts/spacemit/*.dtb $boot
     cat <<- EOF > $boot/env_k1-x.txt
 // Common parameter
 console=ttyS0,115200
 init=/init
 bootdelay=0
 loglevel=8
+
+knl_name=Image.gz.itb
+ramdisk_name=initramfs.img
 EOF
     DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
        dracut -f --no-early-microcode --no-kernel -m "busybox" --gzip \
