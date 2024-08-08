@@ -50,8 +50,10 @@ setup_crossdev() {
     mkdir ${root}/etc/portage/package.env
     mkdir -p ${root}/etc/portage/package.use
     echo -e '>=virtual/libcrypt-2-r1 static-libs\n>=sys-libs/libxcrypt-4.4.36-r3 static-libs\n>=sys-apps/busybox-1.36.1-r3 -pam static' > ${root}/etc/portage/package.use/busybox
-   # crossdev starts as split_usr layout
+    echo 'LDFLAGS="$LDFLAGS --sysroot=$EROOT"' > ${root}/etc/portage/env/override-sysroot
+    echo "dev-lang/perl override-sysroot" >${root}/etc/portage/package.env/perl
     mkdir ${CROSSDEV_ROOT}/bin
+    # crossdev starts as split_usr layout
     merge-usr --root ${CROSSDEV_ROOT}
     crossdev riscv64-unknown-linux-gnu
 }
@@ -69,21 +71,25 @@ prepare_stage1() {
 }
 
 install_stage1() {
-    echo "LDFLAGS=\"\$LDFLAGS --sysroot=$STAGE_DIR\"" > ${CROSSDEV_ROOT}/etc/portage/env/override-sysroot.conf
-    echo "dev-lang/perl override-sysroot.conf" > ${CROSSDEV_ROOT}/etc/portage/package.env/perl
     ROOT=$1 USE=build riscv64-unknown-linux-gnu-emerge -k -b baselayout
     ROOT=$1 riscv64-unknown-linux-gnu-emerge -k -b ${STAGE1_PACKAGES}
     ROOT=$1 USE=build riscv64-unknown-linux-gnu-emerge -k -b portage
 }
 
+install_perl() {
+    local root=${CROSSDEV_ROOT}
+    echo 'LDFLAGS="$LDFLAGS --sysroot=$EROOT"' > ${root}/etc/portage/env/override-sysroot
+    echo "dev-lang/perl override-sysroot" >${root}/etc/portage/package.env/perl
+    riscv64-unknown-linux-gnu-emerge perl
+    ROOT=$1 riscv64-unknown-linux-gnu-emerge perl
+}
+
 update_stage3() {
-    rm -f ${CROSSDEV_ROOT}/etc/portage/package.env/perl
     riscv64-unknown-linux-gnu-emerge -b -u system
     ROOT=$1 riscv64-unknown-linux-gnu-emerge -e @world
 }
 
 install_clang() {
-    rm -f ${CROSSDEV_ROOT}/etc/portage/package.env/perl
     # clang-tidy fails to cross-build
     # using clang to build compiler-rt requires clang existing and having
     # the {target}-clang symlinks
@@ -149,6 +155,10 @@ case $1 in
     install_more)
         maybe_prepare
         install_more $STAGE_DIR
+	;;
+    install_perl)
+        maybe_prepare
+        install_perl $STAGE_DIR
 	;;
     *)
         usage
