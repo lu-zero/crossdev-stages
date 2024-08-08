@@ -39,6 +39,7 @@ CROSSDEV_MAKE_CONF=${CROSSDEV_ROOT}/etc/portage/make.conf
 OPTS="-j50 --load-average 100"
 export EMERGE_DEFAULT_OPTS="$OPTS"
 export MAKEOPTS="$OPTS"
+export FEATURES="parallel-install -merge-wait"
 
 setup_crossdev() {
     local root=${CROSSDEV_ROOT}
