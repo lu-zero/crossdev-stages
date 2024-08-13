@@ -10,7 +10,7 @@ usage() {
     echo
     echo "make   : Create a new stage1"
     echo "update : Update a pre-existing stage3"
-    echo 
+    echo
     echo "install_clang : Install clang in the stage"
     echo "install_boot  : Install the booloader requirements"
     echo "install_more  : Install additional starting packages"
@@ -143,10 +143,12 @@ case $1 in
     update)
         maybe_prepare
         update_stage3 $STAGE_DIR
+        update_ldconfig
         ;;
     install_clang)
         maybe_prepare
         install_clang $STAGE_DIR
+        update_ldconfig
         ;;
     install_boot)
         maybe_prepare
@@ -155,11 +157,12 @@ case $1 in
     install_more)
         maybe_prepare
         install_more $STAGE_DIR
-	;;
+        update_ldconfig
+        ;;
     install_perl)
         maybe_prepare
         install_perl $STAGE_DIR
-	;;
+        ;;
     *)
         usage
         ;;

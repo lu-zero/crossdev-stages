@@ -83,6 +83,7 @@ copy_to_root() {
     echo "PermitRootLogin yes" >> $root/etc/ssh/sshd_config
     echo "PermitEmptyPasswords yes" >> $root/etc/ssh/sshd_config
     echo "StrictModes yes" >> $root/etc/ssh/sshd_config
+    ldconfig -v -f $root/etc/ld.so.conf -r $root
 }
 
 copy_to_boot() {
@@ -110,7 +111,7 @@ generate_image() {
     pushd $BUILD_DIR
     rm -fR $BUILD_DIR/tmp
     genimage --config $BASE_DIR/genimage.cfg
-    xz -f -T0 -9 gentoo-linux-k1_dev-sdcard.img 
+    xz -f -T0 -9 gentoo-linux-k1_dev-sdcard.img
     popd
 }
 
