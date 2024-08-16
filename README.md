@@ -9,7 +9,7 @@ Build Gentoo stages leveraging crossdev
 - [x] Assemble bootable images
 
 ## Platforms
-- riscv64 (bpi-f3)
+- riscv64 (BPI-F3)
 
 
 ## Dependencies
