@@ -36,6 +36,8 @@ run_bwrap() {
         --proc /proc \
         --bind /sys sys \
         --ro-bind /etc/resolv.conf etc/resolv.conf \
+        --hostname gentoo \
+        --unshare-uts \
         $args
 }
 
