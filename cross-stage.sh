@@ -85,8 +85,9 @@ install_perl() {
 }
 
 update_stage3() {
+    riscv64-unknown-linux-gnu-emerge -b gcc
     riscv64-unknown-linux-gnu-emerge -b -u system
-    ROOT=$1 riscv64-unknown-linux-gnu-emerge -e @world
+    ROOT=$1 riscv64-unknown-linux-gnu-emerge -k -e @world
 }
 
 install_clang() {
