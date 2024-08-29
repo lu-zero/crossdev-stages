@@ -116,7 +116,7 @@ maybe_prepare() {
 }
 
 update_ldconfig() {
-    ldconfig -v -f $STAGE_DIR/etc/ld.so.conf -r $STAGE_DIR
+    ldconfig -v -C /etc/ld.so.cache -f $STAGE_DIR/etc/ld.so.conf -r $STAGE_DIR
 }
 
 if [[ -z "$1" ]]; then
