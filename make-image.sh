@@ -78,6 +78,7 @@ copy_to_root() {
     echo 'install_items+=" /lib/firmware/esos.elf "' > $root/etc/dracut.conf.d/firmware.conf
     setup_service sshd default
     setup_service metalog default
+    setup_service ntp-client default
     echo "x1:12345:respawn:/sbin/agetty 115200 console linux" >> $root/etc/inittab
     sed -i -e 's/root:x:/root::/' $root/etc/passwd
     echo "PermitRootLogin yes" >> $root/etc/ssh/sshd_config
