@@ -27,6 +27,7 @@ ADDITIONAL_PACKAGES="
   app-admin/metalog
   net-misc/ntp
   dev-vcs/git
+  sys-devel/mold
 "
 PROFILE=default/linux/riscv/23.0/rv64/lp64d
 # Until https://gcc.gnu.org/bugzilla/show_bug.cgi?id=115789 is fixed we cannot reliably using vectors
