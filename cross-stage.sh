@@ -88,8 +88,8 @@ install_perl() {
 }
 
 update_stage3() {
-    riscv64-unknown-linux-gnu-emerge -b gcc
-    riscv64-unknown-linux-gnu-emerge -b -u system
+    riscv64-unknown-linux-gnu-emerge -b -k gcc
+    riscv64-unknown-linux-gnu-emerge -b -k -u system
     ROOT=$1 riscv64-unknown-linux-gnu-emerge -k -e @world
 }
 
@@ -106,7 +106,7 @@ install_boot() {
 }
 
 install_more() {
-    ROOT=$1 riscv64-unknown-linux-gnu-emerge $ADDITIONAL_PACKAGES
+    ROOT=$1 riscv64-unknown-linux-gnu-emerge -b -k $ADDITIONAL_PACKAGES
 }
 
 maybe_prepare() {
