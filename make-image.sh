@@ -1,10 +1,10 @@
 #!/bin/bash
 
-BOOT_TAG="v2.0"
+BOOT_TAG="v2.0.2"
 OPENSBI_REPO="https://gitee.com/bianbu-linux/opensbi.git"
 U_BOOT_REPO="https://gitee.com/bianbu-linux/uboot-2022.10.git"
 FIRMWARE_REPO="https://gitee.com/bianbu-linux/buildroot-ext.git"
-KERNEL_TAG="v2.0-lu"
+KERNEL_TAG="v2.0.2-lu"
 KERNEL_REPO="https://github.com/lu-zero/pi-linux"
 
 BASE_DIR=$(dirname $(readlink -f "$0"))
