@@ -29,6 +29,9 @@ ADDITIONAL_PACKAGES="
   dev-vcs/git
   sys-devel/mold
 "
+# Building rust requires more manual changes
+#  dev-lang/rust
+
 PROFILE=default/linux/riscv/23.0/rv64/lp64d
 # Until https://gcc.gnu.org/bugzilla/show_bug.cgi?id=115789 is fixed we cannot reliably using vectors
 # OUR_CFLAGS="-O3 -march=rv64gcv_zvl256b -pipe"
@@ -51,14 +54,13 @@ setup_crossdev() {
     mkdir ${root}/etc/portage/package.env
     mkdir -p ${root}/etc/portage/package.use
     echo -e '>=virtual/libcrypt-2-r1 static-libs\n>=sys-libs/libxcrypt-4.4.36-r3 static-libs\n>=sys-apps/busybox-1.36.1-r3 -pam static' > ${root}/etc/portage/package.use/busybox
-    echo -e 'sys-libs/compiler-rt -clang -atomic-builtins\nsys-libs/compiler-rt-sanitizers -clang -atomic-builtins' > ${root}/etc/portage/package.use/clang
-    echo "sys-devel/clang -extra" >> ${root}/etc/portage/package.use/clang
+    echo "llvm-core/clang -extra" > ${root}/etc/portage/package.use/clang
 #    echo 'LDFLAGS="$LDFLAGS --sysroot=$EROOT"' > ${root}/etc/portage/env/override-sysroot
 #    echo "dev-lang/perl override-sysroot" >${root}/etc/portage/package.env/perl
     mkdir ${CROSSDEV_ROOT}/bin
     # crossdev starts as split_usr layout
     merge-usr --root ${CROSSDEV_ROOT}
-    crossdev riscv64-unknown-linux-gnu
+    crossdev riscv64-unknown-linux-gnu --ex-pkg sys-devel/clang-crossdev-wrappers
 }
 
 prepare_stage1() {
@@ -97,7 +99,7 @@ install_clang() {
     # clang-tidy fails to cross-build
     # using clang to build compiler-rt requires clang existing and having
     # the {target}-clang symlinks
-    USE="-extra -clang" ROOT=$1 riscv64-unknown-linux-gnu-emerge clang
+    ROOT=$1 riscv64-unknown-linux-gnu-emerge llvm-core/clang
 }
 
 install_boot() {
