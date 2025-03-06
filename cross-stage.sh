@@ -28,6 +28,8 @@ ADDITIONAL_PACKAGES="
   net-misc/ntp
   dev-vcs/git
   sys-devel/mold
+  dev-lang/go
+  dev-build/cmake
 "
 # Building rust requires more manual changes
 #  dev-lang/rust
