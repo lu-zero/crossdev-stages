@@ -1,11 +1,12 @@
 #!/bin/bash
 
-BOOT_TAG="v2.0.2"
-OPENSBI_REPO="https://gitee.com/bianbu-linux/opensbi.git"
+BOOT_TAG="k1-bl-v2.1-release"
+OPENSBI_TAG=k1-opensbi
+OPENSBI_REPO="https://github.com/cyyself/opensbi"
 U_BOOT_REPO="https://gitee.com/bianbu-linux/uboot-2022.10.git"
 FIRMWARE_REPO="https://gitee.com/bianbu-linux/buildroot-ext.git"
-KERNEL_TAG="v2.0.2-lu"
-KERNEL_REPO="https://github.com/lu-zero/pi-linux"
+KERNEL_TAG="k1-bl-v2.1-release-lu"
+KERNEL_REPO="https://github.com/lu-zero/linux"
 
 BASE_DIR=$(dirname $(readlink -f "$0"))
 
@@ -38,7 +39,7 @@ checkout() {
 
 checkout_all() {
     mkdir -p "$BUILD_DIR"
-    checkout $OPENSBI_REPO $BOOT_TAG opensbi
+    checkout $OPENSBI_REPO $OPENSBI_TAG opensbi
     checkout $U_BOOT_REPO $BOOT_TAG u-boot
     checkout $KERNEL_REPO $KERNEL_TAG linux
     checkout $FIRMWARE_REPO $BOOT_TAG firmware
@@ -46,7 +47,7 @@ checkout_all() {
 
 build_bootloader() {
     pushd $BUILD_DIR
-    make -C opensbi PLATFORM=generic PLATFORM_DEFCONFIG=k1_defconfig -j$(nproc)
+    make -C opensbi PLATFORM=generic PLATFORM_DEFCONFIG=defconfig -j$(nproc) LLVM=1
     make -C u-boot k1_defconfig
     make -C u-boot -j$(nproc)
     popd

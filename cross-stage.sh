@@ -30,14 +30,14 @@ ADDITIONAL_PACKAGES="
   sys-devel/mold
   dev-lang/go
   dev-build/cmake
+  dev-lang/rust
 "
 # Building rust requires more manual changes
-#  dev-lang/rust
 
 PROFILE=default/linux/riscv/23.0/rv64/lp64d
 # Until https://gcc.gnu.org/bugzilla/show_bug.cgi?id=115789 is fixed we cannot reliably using vectors
-# OUR_CFLAGS="-O3 -march=rv64gcv_zvl256b -pipe"
-OUR_CFLAGS="-O3 -pipe"
+OUR_CFLAGS="-O3 -march=rv64gcv_zvl256b -pipe"
+#OUR_CFLAGS="-O3 -pipe"
 OUR_CHOST=riscv64-unknown-linux-gnu
 OUR_KEYWORD=riscv
 CROSSDEV_ROOT=/usr/${OUR_CHOST}
@@ -58,7 +58,7 @@ setup_crossdev() {
     echo -e '>=virtual/libcrypt-2-r1 static-libs\n>=sys-libs/libxcrypt-4.4.36-r3 static-libs\n>=sys-apps/busybox-1.36.1-r3 -pam static' > ${root}/etc/portage/package.use/busybox
     echo "llvm-core/clang -extra" > ${root}/etc/portage/package.use/clang
     # The new meson-based build system tries to run run iconv tests
-    echo "dev-vcs/git -iconv" > {root}/etc/portage/package.use/git
+    echo "dev-vcs/git -iconv" > ${root}/etc/portage/package.use/git
 #    echo 'LDFLAGS="$LDFLAGS --sysroot=$EROOT"' > ${root}/etc/portage/env/override-sysroot
 #    echo "dev-lang/perl override-sysroot" >${root}/etc/portage/package.env/perl
     mkdir ${CROSSDEV_ROOT}/bin
