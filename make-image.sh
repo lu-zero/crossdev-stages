@@ -33,7 +33,7 @@ checkout() {
     if [[ -d $src ]]; then
         (cd $src && git fetch && git checkout "$tag")
     else
-        git clone --branch $tag $repo $src
+        git clone --depth 1 --branch $tag $repo $src
     fi
 }
 
