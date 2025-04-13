@@ -137,7 +137,8 @@ maybe_prepare() {
 }
 
 update_ldconfig() {
-    ldconfig -v -C /etc/ld.so.cache -f $STAGE_DIR/etc/ld.so.conf -r $STAGE_DIR
+    # ldconfig -v -C /etc/ld.so.cache -f $STAGE_DIR/etc/ld.so.conf -r $STAGE_DIR
+    ldconfig -v -C /etc/ld.so.cache -r $STAGE_DIR
 }
 
 if [[ -z "$1" ]]; then
@@ -164,6 +165,9 @@ case $1 in
     update)
         maybe_prepare
         update_stage3 $STAGE_DIR
+        update_ldconfig
+        ;;
+    update_ldconfig)
         update_ldconfig
         ;;
     install_clang)
