@@ -60,6 +60,7 @@ setup_crossdev() {
     crossdev riscv64-unknown-linux-gnu --init-target
     PORTAGE_CONFIGROOT=${CROSSDEV_ROOT} eselect profile set ${PROFILE}
     sed -i -e "s:CFLAGS=.*:CFLAGS=\"${OUR_CFLAGS}\":" ${CROSSDEV_MAKE_CONF}
+    echo 'LLVM_TARGETS="AArch64 RISCV"' >> ${root}/etc/portage/make.conf
     mkdir -p ${root}/etc/portage/env
     mkdir ${root}/etc/portage/package.env
     mkdir -p ${root}/etc/portage/package.use
