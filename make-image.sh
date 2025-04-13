@@ -106,6 +106,8 @@ loglevel=8
 
 knl_name=Image.gz.itb
 ramdisk_name=initramfs.img
+// Workaround bogus UUID computation
+set_root_arg=setenv bootargs  root=/dev/mmcblk0p6
 EOF
     DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
        dracut -f --no-early-microcode --no-kernel -m "busybox" --gzip \
