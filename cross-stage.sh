@@ -66,6 +66,7 @@ setup_crossdev() {
     mkdir -p ${root}/etc/portage/package.use
     echo -e '>=virtual/libcrypt-2-r1 static-libs\n>=sys-libs/libxcrypt-4.4.36-r3 static-libs\n>=sys-apps/busybox-1.36.1-r3 -pam static' > ${root}/etc/portage/package.use/busybox
     echo "llvm-core/clang -extra" > ${root}/etc/portage/package.use/clang
+    echo "dev-lang/rust rustfmt" > ${root}/etc/portage/package.use/rust
     # The new meson-based build system tries to run run iconv tests
     echo "dev-vcs/git -iconv" > ${root}/etc/portage/package.use/git
 #    echo 'LDFLAGS="$LDFLAGS --sysroot=$EROOT"' > ${root}/etc/portage/env/override-sysroot
