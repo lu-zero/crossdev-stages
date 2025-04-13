@@ -31,7 +31,15 @@ ADDITIONAL_PACKAGES="
   dev-lang/go
   dev-build/cmake
   dev-lang/rust
+  net-wireless/iw
+  app-misc/screen
+  sys-process/htop
+  net-analyzer/nmap
+  app-portage/gentoolkit
+  app-portage/genlop
 "
+# sys-apps/ripgrep tries to execute itself on install.
+
 # Building rust requires more manual changes
 
 PROFILE=default/linux/riscv/23.0/rv64/lp64d
