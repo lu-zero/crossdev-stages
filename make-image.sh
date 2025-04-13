@@ -75,6 +75,8 @@ copy_to_root() {
     INSTALL_MOD_PATH=$root make -C $BUILD_DIR/linux modules_install
     mkdir -p $root/lib/firmware
     cp -a $BUILD_DIR/firmware/board/spacemit/k1/target_overlay/lib/firmware/* $root/lib/firmware
+    # assumes we have linux-firmware installed
+    cp -a /lib/firmware/rtw89 $root/lib/firmware/
     mkdir -p $root/etc/dracut.conf.d
     echo 'install_items+=" /lib/firmware/esos.elf "' > $root/etc/dracut.conf.d/firmware.conf
     setup_service sshd default
