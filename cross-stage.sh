@@ -105,6 +105,7 @@ install_perl() {
 
 update_stage3() {
     riscv64-unknown-linux-gnu-emerge -b -k gcc
+    riscv64-unknown-linux-gnu-emerge -b -k sys-libs/binutils-libs
     riscv64-unknown-linux-gnu-emerge -b -k -u system
     ROOT=$1 riscv64-unknown-linux-gnu-emerge -k -e @world
 }
