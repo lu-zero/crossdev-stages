@@ -44,6 +44,8 @@ ADDITIONAL_PACKAGES="
 
 PROFILE=default/linux/riscv/23.0/rv64/lp64d
 # Until https://gcc.gnu.org/bugzilla/show_bug.cgi?id=115789 is fixed we cannot reliably using vectors
+# Make sure to use gcc-15.0.9999 for now
+GCC_VER=15.0.9999
 OUR_CFLAGS="-O3 -march=rv64gcv_zvl256b -pipe"
 #OUR_CFLAGS="-O3 -pipe"
 OUR_CHOST=riscv64-unknown-linux-gnu
@@ -74,7 +76,7 @@ setup_crossdev() {
     mkdir ${CROSSDEV_ROOT}/bin
     # crossdev starts as split_usr layout
     merge-usr --root ${CROSSDEV_ROOT}
-    crossdev riscv64-unknown-linux-gnu --ex-pkg sys-devel/clang-crossdev-wrappers
+    crossdev riscv64-unknown-linux-gnu --g $GCC_VER --ex-pkg sys-devel/clang-crossdev-wrappers
 }
 
 prepare_stage1() {
