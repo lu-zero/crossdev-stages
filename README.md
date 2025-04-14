@@ -23,6 +23,11 @@ emerge bubblewrap
 # Needed to assemble the whole image
 emerge genimage xz-utils
 ```
+# Needed to use crossdev
+```
+emerge app-eselect/eselect-repository
+eselect repository create crossdev
+```
 
 ## Limitations
 
