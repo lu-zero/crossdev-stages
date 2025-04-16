@@ -23,7 +23,8 @@ emerge bubblewrap
 # Needed to assemble the whole image
 emerge genimage xz-utils
 ```
-# Needed to use crossdev
+### For the newcomers
+**crossdev** requires a minimum amount of [setup](https://wiki.gentoo.org/wiki/Crossdev#eselect_creation):
 ```
 emerge app-eselect/eselect-repository
 eselect repository create crossdev
@@ -31,4 +32,4 @@ eselect repository create crossdev
 
 ## Limitations
 
-- Some packages are cross-compilation unfriendly and rely on runtime checks (e.g. perl modules)
+- Some packages are cross-compilation unfriendly and rely on runtime checks (e.g. git iconv checks)
