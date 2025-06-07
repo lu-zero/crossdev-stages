@@ -37,6 +37,10 @@ run_bwrap() {
         --bind /sys sys \
         --ro-bind /etc/resolv.conf etc/resolv.conf \
         --hostname gentoo \
+        --clearenv \
+        --setenv TERM "$TERM" \
+        --setenv COLORTERM "$COLORTERM" \
+        --setenv NO_COLOR "$NO_COLOR" \
         --unshare-uts \
         $args
 }
@@ -58,7 +62,7 @@ case $1 in
         ;;
     enter)
         shift
-        run_bwrap $1 bash
+        run_bwrap $1 bash --login
         ;;
     run)
         shift
