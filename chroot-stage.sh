@@ -41,6 +41,7 @@ run_bwrap() {
         --setenv TERM "$TERM" \
         --setenv COLORTERM "$COLORTERM" \
         --setenv NO_COLOR "$NO_COLOR" \
+        --setenv HOME /root \
         --unshare-uts \
         $args
 }
