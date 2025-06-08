@@ -64,7 +64,10 @@ setup_crossdev() {
     sed -i -e "s:CFLAGS=.*:CFLAGS=\"${OUR_CFLAGS}\":" ${CROSSDEV_MAKE_CONF}
     echo 'LLVM_TARGETS="AArch64 RISCV"' >> ${root}/etc/portage/make.conf
     mkdir -p ${root}/etc/portage/env
+    echo 'CFLAGS="-O3 -pipe"' >> ${root}/etc/portage/env/plain.conf
+    echo 'CXXFLAGS="-O3 -pipe"' >> ${root}/etc/portage/env/plain.conf
     mkdir ${root}/etc/portage/package.env
+    echo "dev-lang/rust plain.conf" > ${root}/etc/portage/package.env/rust
     mkdir -p ${root}/etc/portage/package.{use,accept_keywords}
     echo -e '>=virtual/libcrypt-2-r1 static-libs\n>=sys-libs/libxcrypt-4.4.36-r3 static-libs\n>=sys-apps/busybox-1.36.1-r3 -pam static' > ${root}/etc/portage/package.use/busybox
     echo "llvm-core/clang -extra" > ${root}/etc/portage/package.use/clang
