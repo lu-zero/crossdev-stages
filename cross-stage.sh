@@ -43,9 +43,9 @@ ADDITIONAL_PACKAGES="
 # Building rust requires more manual changes
 
 PROFILE=default/linux/riscv/23.0/rv64/lp64d
-# Until https://gcc.gnu.org/bugzilla/show_bug.cgi?id=115789 is fixed we cannot reliably using vectors
-# Make sure to use gcc-15.0.9999 for now
-GCC_VER=15.0.9999
+# Please report bugs and link them to https://gcc.gnu.org/bugzilla/show_bug.cgi?id=116242
+# GCC_VER=16.0.9999
+GCC_VER=16.0.0_p20250601-r1
 OUR_CFLAGS="-O3 -march=rv64gcv_zvl256b -pipe"
 #OUR_CFLAGS="-O3 -pipe"
 OUR_CHOST=riscv64-unknown-linux-gnu
@@ -65,18 +65,22 @@ setup_crossdev() {
     echo 'LLVM_TARGETS="AArch64 RISCV"' >> ${root}/etc/portage/make.conf
     mkdir -p ${root}/etc/portage/env
     mkdir ${root}/etc/portage/package.env
-    mkdir -p ${root}/etc/portage/package.use
+    mkdir -p ${root}/etc/portage/package.{use,accept_keywords}
     echo -e '>=virtual/libcrypt-2-r1 static-libs\n>=sys-libs/libxcrypt-4.4.36-r3 static-libs\n>=sys-apps/busybox-1.36.1-r3 -pam static' > ${root}/etc/portage/package.use/busybox
     echo "llvm-core/clang -extra" > ${root}/etc/portage/package.use/clang
     echo "dev-lang/rust rustfmt -system-llvm" > ${root}/etc/portage/package.use/rust
+    # Workaround crossdev unmasking improperly
+    mkdir -p /etc/portage/package.{accept_keywords,mask}
+    echo "cross-riscv64-unknown-linux-gnu/rust-std **" > /etc/portage/package.accept_keywords/rust-std
+    echo "=cross-riscv64-unknown-linux-gnu/gcc-15*" > /etc/portage/package.mask/cross-riscv64-unknown-linux-gnu-fixup
     # The new meson-based build system tries to run run iconv tests
     echo "dev-vcs/git -iconv" > ${root}/etc/portage/package.use/git
-#    echo 'LDFLAGS="$LDFLAGS --sysroot=$EROOT"' > ${root}/etc/portage/env/override-sysroot
-#    echo "dev-lang/perl override-sysroot" >${root}/etc/portage/package.env/perl
     mkdir ${CROSSDEV_ROOT}/bin
     # crossdev starts as split_usr layout
     merge-usr --root ${CROSSDEV_ROOT}
-    crossdev riscv64-unknown-linux-gnu --g $GCC_VER --ex-pkg sys-devel/clang-crossdev-wrappers
+    crossdev riscv64-unknown-linux-gnu --g $GCC_VER --ex-pkg sys-devel/clang-crossdev-wrappers --ex-pkg sys-devel/rust-std
+    # Add gcc-16 prereleases
+    echo "<sys-devel/gcc-16.0.9999:16 **" > ${root}/etc/portage/package.accept_keywords/gcc
 }
 
 prepare_stage1() {
@@ -114,9 +118,9 @@ update_stage3() {
 
 install_clang() {
     # clang-tidy fails to cross-build
-    # using clang to build compiler-rt requires clang existing and having
-    # the {target}-clang symlinks
-    ROOT=$1 riscv64-unknown-linux-gnu-emerge llvm-core/clang
+    # TODO: make so plugin-api.h exists even w/out emerging this again
+    riscv64-unknown-linux-gnu-emerge -b -k sys-libs/binutils-libs
+    ROOT=$1 riscv64-unknown-linux-gnu-emerge -b -k llvm-core/clang
 }
 
 install_boot() {
