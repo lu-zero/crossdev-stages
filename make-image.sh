@@ -88,7 +88,7 @@ copy_to_root() {
     echo "PermitRootLogin yes" >> $root/etc/ssh/sshd_config
     echo "PermitEmptyPasswords yes" >> $root/etc/ssh/sshd_config
     echo "StrictModes yes" >> $root/etc/ssh/sshd_config
-    ldconfig -v -f $root/etc/ld.so.conf -r $root
+    ldconfig -v -r $root
 }
 
 copy_to_boot() {
