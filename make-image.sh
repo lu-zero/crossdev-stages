@@ -1,12 +1,11 @@
 #!/bin/bash
 
-BOOT_TAG="k1-bl-v2.1-release"
+TAG="k1-bl-v2.2.7-release"
 OPENSBI_TAG=k1-opensbi
 OPENSBI_REPO="https://github.com/cyyself/opensbi"
 U_BOOT_REPO="https://gitee.com/bianbu-linux/uboot-2022.10.git"
 FIRMWARE_REPO="https://gitee.com/bianbu-linux/buildroot-ext.git"
-KERNEL_TAG="k1-bl-v2.1-release-lu"
-KERNEL_REPO="https://github.com/lu-zero/linux"
+KERNEL_REPO="https://gitee.com/bianbu-linux/linux-6.6.git"
 
 BASE_DIR=$(dirname $(readlink -f "$0"))
 
@@ -40,9 +39,9 @@ checkout() {
 checkout_all() {
     mkdir -p "$BUILD_DIR"
     checkout $OPENSBI_REPO $OPENSBI_TAG opensbi
-    checkout $U_BOOT_REPO $BOOT_TAG u-boot
-    checkout $KERNEL_REPO $KERNEL_TAG linux
-    checkout $FIRMWARE_REPO $BOOT_TAG firmware
+    checkout $U_BOOT_REPO $TAG u-boot
+    checkout $KERNEL_REPO $TAG linux
+    checkout $FIRMWARE_REPO $TAG firmware
 }
 
 build_bootloader() {
