@@ -78,6 +78,8 @@ setup_crossdev() {
     echo "=cross-riscv64-unknown-linux-gnu/gcc-15*" > /etc/portage/package.mask/cross-riscv64-unknown-linux-gnu-fixup
     # The new meson-based build system tries to run run iconv tests
     echo "dev-vcs/git -iconv" > ${root}/etc/portage/package.use/git
+    echo 'CFLAGS="-O3 -march=rv64gc -pipe"' > ${root}/etc/portage/env/rv64gc
+    echo "dev-libs/libgcrypt rv64gc" >${root}/etc/portage/package.env/libgcrypt
     mkdir ${CROSSDEV_ROOT}/bin
     # crossdev starts as split_usr layout
     merge-usr --root ${CROSSDEV_ROOT}
