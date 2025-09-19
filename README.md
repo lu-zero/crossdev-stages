@@ -22,6 +22,8 @@ emerge u-boot-tools dtc dracut busybox
 emerge bubblewrap
 # Needed to assemble the whole image
 emerge genimage xz-utils
+# Neeed to use wireless lan
+emerge linux-firmware
 ```
 ### For the newcomers
 **crossdev** requires a minimum amount of [setup](https://wiki.gentoo.org/wiki/Crossdev#eselect_creation):
