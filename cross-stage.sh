@@ -45,7 +45,7 @@ ADDITIONAL_PACKAGES="
 PROFILE=default/linux/riscv/23.0/rv64/lp64d
 # Please report bugs and link them to https://gcc.gnu.org/bugzilla/show_bug.cgi?id=116242
 # GCC_VER=16.0.9999
-GCC_VER=16.0.0_p20250907
+GCC_VER=16.0.0_p20251005
 OUR_CFLAGS="-O3 -march=rv64gcv_zvl256b -pipe"
 #OUR_CFLAGS="-O3 -pipe"
 OUR_CHOST=riscv64-unknown-linux-gnu
@@ -78,8 +78,7 @@ setup_crossdev() {
     echo "=cross-riscv64-unknown-linux-gnu/gcc-15*" > /etc/portage/package.mask/cross-riscv64-unknown-linux-gnu-fixup
     # The new meson-based build system tries to run run iconv tests
     echo "dev-vcs/git -iconv" > ${root}/etc/portage/package.use/git
-    echo 'CFLAGS="-O3 -march=rv64gc -pipe"' > ${root}/etc/portage/env/rv64gc
-    echo "dev-libs/libgcrypt rv64gc" >${root}/etc/portage/package.env/libgcrypt
+    #echo 'CFLAGS="-O3 -march=rv64gc -pipe"' > ${root}/etc/portage/env/rv64gc
     mkdir ${CROSSDEV_ROOT}/bin
     # crossdev starts as split_usr layout
     merge-usr --root ${CROSSDEV_ROOT}
