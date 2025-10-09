@@ -72,6 +72,7 @@ copy_to_root() {
     mkdir -p $root
     cp -a $STAGE_DIR/* $root
     INSTALL_MOD_PATH=$root make -C $BUILD_DIR/linux modules_install
+    make -C $BUILD_DIR/linux/tools/perf V=1 WERROR=0 DESTDIR=$(pwd)/$root/usr/ install
     mkdir -p $root/lib/firmware
     cp -a $BUILD_DIR/firmware/board/spacemit/k1/target_overlay/lib/firmware/* $root/lib/firmware
     # assumes we have linux-firmware installed
