@@ -1,0 +1,27 @@
+[package]
+name = "crossdev-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "crossdev-stages"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+crossdev-config = { path = "../crossdev-config" }
+crossdev-core = { path = "../crossdev-core" }
+crossdev-image = { path = "../crossdev-image" }
+crossdev-stage3 = { path = "../crossdev-stage3" }
+crossdev-utils = { path = "../crossdev-utils" }
+thiserror.workspace = true
+log.workspace = true
+env_logger.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true

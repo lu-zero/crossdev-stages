@@ -1,0 +1,30 @@
+[target]
+arch = "riscv64"
+chost = "riscv64-unknown-linux-gnu"
+flavor = "rv64_lp64d-openrc"
+keyword = "riscv"
+
+[compilation]
+cflags = "-O3 -march=rv64gcv_zvl256b -pipe"
+gcc_version = "16.0.0_p20251005"
+profile = "default/linux/riscv/23.0/rv64/lp64d"
+
+[repositories]
+opensbi_repo = "https://github.com/cyyself/opensbi"
+opensbi_tag = "k1-opensbi"
+u_boot_repo = "https://gitee.com/bianbu-linux/uboot-2022.10.git"
+u_boot_tag = "k1-bl-v2.2.7-release"
+firmware_repo = "https://gitee.com/bianbu-linux/buildroot-ext.git"
+firmware_tag = "k1-bl-v2.2.7-release"
+kernel_repo = "https://gitee.com/bianbu-linux/linux-6.6.git"
+kernel_tag = "k1-bl-v2.2.7-release"
+bootloader_tag = "k1-bl-v2.2.7-release"
+
+[packages]
+stage1_file = "stage1-packages.txt"
+additional_file = "additional-packages.txt"
+
+[image]
+root_size = "5G"
+boot_size = "500M"
+genimage_config = "genimage-k1.cfg"

@@ -1,0 +1,42 @@
+[workspace]
+members = [
+    "crates/crossdev-config",
+    "crates/crossdev-core",
+    "crates/crossdev-image",
+    "crates/crossdev-stage3",
+    "crates/crossdev-utils",
+    "crates/crossdev-cli",
+]
+resolver = "2"
+
+[workspace.dependencies]
+# Core dependencies
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+log = "0.4"
+config = "0.13"
+toml = "0.7"
+clap = { version = "4.0", features = ["derive"] }
+tokio = { version = "1.0", features = ["process", "fs"] }
+env_logger = "0.10"
+
+# Command execution
+command-group = "1.0"
+
+# Testing
+mockall = "0.11"
+assert_cmd = "2.0"
+predicates = "2.1"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["crossdev-stages team"]
+license = "MIT"
+repository = "https://github.com/your-repo/crossdev-stages-rust"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"

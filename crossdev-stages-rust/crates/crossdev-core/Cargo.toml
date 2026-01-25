@@ -1,0 +1,19 @@
+[package]
+name = "crossdev-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+crossdev-config = { path = "../crossdev-config" }
+crossdev-utils = { path = "../crossdev-utils" }
+thiserror.workspace = true
+log.workspace = true
+command-group.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+mockall.workspace = true
+assert_cmd.workspace = true

@@ -1,0 +1,18 @@
+[package]
+name = "crossdev-stage3"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+crossdev-config = { path = "../crossdev-config" }
+thiserror.workspace = true
+log.workspace = true
+command-group.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+mockall.workspace = true
+tempfile = "3.3"
