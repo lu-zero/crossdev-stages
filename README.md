@@ -11,6 +11,13 @@ Build Gentoo stages leveraging crossdev
 ## Platforms
 - riscv64 (BPI-F3, Milk-V Jupiter, DC Roma II)
 
+## Documentation
+
+Comprehensive documentation is available in the [docs/](docs/) directory:
+- [REFACTORING_SUMMARY.md](docs/REFACTORING_SUMMARY.md) - Complete refactoring overview
+- [USAGE_EXAMPLES.md](docs/USAGE_EXAMPLES.md) - Practical usage examples
+- [DEMO_KEY_IMPROVEMENTS.md](docs/DEMO_KEY_IMPROVEMENTS.md) - Before/after comparisons
+
 
 ## Dependencies
 ``` sh
