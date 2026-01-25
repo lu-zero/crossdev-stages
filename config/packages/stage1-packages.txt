@@ -1,0 +1,32 @@
+# Base stage1 packages - these come from Gentoo's default linux packages.build
+# Additional packages can be added to additional-packages.txt
+
+# This file should contain the essential packages needed for a minimal system
+# The actual list is dynamically loaded from /var/db/repos/gentoo/profiles/default/linux/packages.build
+
+# Additional core packages that might be needed
+sys-apps/baselayout
+sys-apps/portage
+
+# Basic utilities
+sys-apps/coreutils
+sys-apps/findutils
+sys-apps/grep
+sys-apps/sed
+sys-apps/util-linux
+
+# Shell
+app-shells/bash
+
+# Filesystem tools
+sys-fs/e2fsprogs
+sys-fs/mount
+
+# Networking basics
+sys-apps/iproute2
+net-misc/iputils
+
+# Package management
+app-arch/tar
+app-arch/gzip
+app-arch/xz-utils

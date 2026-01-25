@@ -1,0 +1,25 @@
+# Additional packages to install in the stage
+
+# System utilities
+sys-block/parted
+app-editors/vim
+app-admin/metalog
+net-misc/ntp
+
+# Development tools
+dev-vcs/git
+sys-devel/mold
+dev-lang/go
+dev-build/cmake
+dev-lang/rust
+
+# Network tools
+net-wireless/wpa_supplicant
+net-wireless/iw
+app-misc/screen
+sys-process/htop
+net-analyzer/nmap
+
+# Portage tools
+app-portage/gentoolkit
+app-portage/genlop

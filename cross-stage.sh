@@ -1,139 +1,146 @@
 #!/bin/bash
 
-if [[ `whoami` != "root" ]]; then
-    echo "This script requires root"
-    exit 1
-fi
+# Cross-stage script - refactored to use external configuration
 
-usage() {
-    echo "Usage: $0 <command> <stage-directory>"
+# Source common library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/lib/common.sh"
+
+# Default configuration
+DEFAULT_PLATFORM="riscv64-k1"
+DEFAULT_CONFIG="config/platforms/${DEFAULT_PLATFORM}.conf"
+
+# Help function
+display_help() {
+    echo "Usage: $0 [options] <command> [stage-directory]"
     echo
-    echo "make   : Create a new stage1"
-    echo "update : Update a pre-existing stage3"
+    echo "Options:"
+    echo "  --config,-c <file>  Use alternative configuration file"
+    echo "  --platform,-p <name> Use specific platform configuration"
+    echo "  --help,-h           Show this help message"
     echo
-    echo "install_clang : Install clang in the stage"
-    echo "install_boot  : Install the booloader requirements"
-    echo "install_more  : Install additional starting packages"
-    exit 1
+    echo "Commands:"
+    echo "  prepare             Setup crossdev environment"
+    echo "  make               Create a new stage1"
+    echo "  update             Update a pre-existing stage3"
+    echo "  update_ldconfig    Update ldconfig cache"
+    echo "  install_clang      Install clang in the stage"
+    echo "  install_boot       Install the bootloader requirements"
+    echo "  install_more       Install additional starting packages"
+    echo "  install_perl       Install perl"
+    echo
+    echo "Examples:"
+    echo "  $0 --help                          Show this help"
+    echo "  $0 prepare                         Setup crossdev environment"
+    echo "  $0 make /path/to/stage             Create a new stage1"
+    echo "  $0 --platform riscv64-k1 make /path/to/stage"
+    exit 0
 }
 
-STAGE_DIR=$2
+# Parse command line arguments (but preserve non-option arguments)
+TEMP_ARGS=()
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --help|-h)
+            display_help
+            exit 0
+            ;;
+        --config|-c)
+            CONFIG_FILE="$2"
+            shift 2
+            ;;
+        --platform|-p)
+            PLATFORM="$2"
+            if [[ -n "$PLATFORM" ]]; then
+                CONFIG_FILE="config/platforms/${PLATFORM}.conf"
+            fi
+            shift 2
+            ;;
+        --verbose|-v)
+            VERBOSE=1
+            shift
+            ;;
+        --*)
+            echo "Unknown option: $1"
+            usage
+            exit 1
+            ;;
+        *)
+            TEMP_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
 
-STAGE1_PACKAGES=`grep -v '#' /var/db/repos/gentoo/profiles/default/linux/packages.build`
-ADDITIONAL_PACKAGES="
-  sys-block/parted
-  net-wireless/wpa_supplicant
-  app-editors/vim
-  app-admin/metalog
-  net-misc/ntp
-  dev-vcs/git
-  sys-devel/mold
-  dev-lang/go
-  dev-build/cmake
-  dev-lang/rust
-  net-wireless/iw
-  app-misc/screen
-  sys-process/htop
-  net-analyzer/nmap
-  app-portage/gentoolkit
-  app-portage/genlop
-"
-# sys-apps/ripgrep tries to execute itself on install.
+# Restore non-option arguments
+set -- "${TEMP_ARGS[@]}"
 
-# Building rust requires more manual changes
+# Load configuration
+CONFIG_FILE="${CONFIG_FILE:-$DEFAULT_CONFIG}"
+load_config "$CONFIG_FILE"
 
-PROFILE=default/linux/riscv/23.0/rv64/lp64d
-# Please report bugs and link them to https://gcc.gnu.org/bugzilla/show_bug.cgi?id=116242
-# GCC_VER=16.0.9999
-GCC_VER=16.0.0_p20251005
-OUR_CFLAGS="-O3 -march=rv64gcv_zvl256b -pipe"
-#OUR_CFLAGS="-O3 -pipe"
-OUR_CHOST=riscv64-unknown-linux-gnu
-OUR_KEYWORD=riscv
-CROSSDEV_ROOT=/usr/${OUR_CHOST}
-CROSSDEV_MAKE_CONF=${CROSSDEV_ROOT}/etc/portage/make.conf
+# Set global variables from config
+CROSSDEV_ROOT="/usr/${TARGET_CHOST}"
+CROSSDEV_MAKE_CONF="${CROSSDEV_ROOT}/etc/portage/make.conf"
 OPTS="-j50 --load-average 100"
 export EMERGE_DEFAULT_OPTS="$OPTS"
 export MAKEOPTS="$OPTS"
 export FEATURES="parallel-install -merge-wait"
 
+# Check root (but allow --help to work without root)
+if [[ "$1" != "--help" && "$1" != "-h" ]]; then
+    check_root
+fi
+
 setup_crossdev() {
-    local root=${CROSSDEV_ROOT}
-    crossdev riscv64-unknown-linux-gnu --init-target
-    PORTAGE_CONFIGROOT=${CROSSDEV_ROOT} eselect profile set ${PROFILE}
-    sed -i -e "s:CFLAGS=.*:CFLAGS=\"${OUR_CFLAGS}\":" ${CROSSDEV_MAKE_CONF}
-    echo 'LLVM_TARGETS="AArch64 RISCV"' >> ${root}/etc/portage/make.conf
-    mkdir -p ${root}/etc/portage/env
-    echo 'CFLAGS="-O3 -pipe"' >> ${root}/etc/portage/env/plain.conf
-    echo 'CXXFLAGS="-O3 -pipe"' >> ${root}/etc/portage/env/plain.conf
-    mkdir ${root}/etc/portage/package.env
-    echo "dev-lang/rust plain.conf" > ${root}/etc/portage/package.env/rust
-    mkdir -p ${root}/etc/portage/package.{use,accept_keywords}
-    echo -e '>=virtual/libcrypt-2-r1 static-libs\n>=sys-libs/libxcrypt-4.4.36-r3 static-libs\n>=sys-apps/busybox-1.36.1-r3 -pam static' > ${root}/etc/portage/package.use/busybox
-    echo "llvm-core/clang -extra" > ${root}/etc/portage/package.use/clang
-    echo "dev-lang/rust rustfmt -system-llvm" > ${root}/etc/portage/package.use/rust
-    # Workaround crossdev unmasking improperly
-    mkdir -p /etc/portage/package.{accept_keywords,mask}
-    echo "cross-riscv64-unknown-linux-gnu/rust-std **" > /etc/portage/package.accept_keywords/rust-std
-    echo "=cross-riscv64-unknown-linux-gnu/gcc-15*" > /etc/portage/package.mask/cross-riscv64-unknown-linux-gnu-fixup
-    # The new meson-based build system tries to run run iconv tests
-    echo "dev-vcs/git -iconv" > ${root}/etc/portage/package.use/git
-    #echo 'CFLAGS="-O3 -march=rv64gc -pipe"' > ${root}/etc/portage/env/rv64gc
-    mkdir ${CROSSDEV_ROOT}/bin
-    # crossdev starts as split_usr layout
-    merge-usr --root ${CROSSDEV_ROOT}
-    crossdev riscv64-unknown-linux-gnu --g $GCC_VER --ex-pkg sys-devel/clang-crossdev-wrappers --ex-pkg sys-devel/rust-std
-    # Add gcc-16 prereleases
-    echo "<sys-devel/gcc-16.0.9999:16 **" > ${root}/etc/portage/package.accept_keywords/gcc
+    setup_crossdev_env
 }
 
 prepare_stage1() {
-    local root=$1
-
-    mkdir -p ${root}/etc/portage/
-    cp -a /usr/$OUR_CHOST/etc/portage/{make.profile,profile} ${root}/etc/portage/
-    echo "CHOST=${OUR_CHOST}" > ${root}/etc/portage/make.conf
-    echo "ACCEPT_KEYWORDS=~$OUR_KEYWORD" >> ${root}/etc/portage/make.conf
-    echo "CFLAGS=\"$OUR_CFLAGS\"" >> ${root}/etc/portage/make.conf
-    echo 'CXXFLAGS=$CFLAGS' >> ${root}/etc/portage/make.conf
-    PORTAGE_CONFIGROOT=${root} eselect profile set ${PROFILE}
+    prepare_stage1 "$1"
 }
 
 install_stage1() {
-    ROOT=$1 USE=build riscv64-unknown-linux-gnu-emerge -k -b baselayout
-    ROOT=$1 riscv64-unknown-linux-gnu-emerge -k -b ${STAGE1_PACKAGES}
-    ROOT=$1 USE=build riscv64-unknown-linux-gnu-emerge -k -b portage
+    install_stage1 "$1"
 }
 
 install_perl() {
+    local stage_dir=$1
     local root=${CROSSDEV_ROOT}
 #    echo 'LDFLAGS="$LDFLAGS --sysroot=$EROOT"' > ${root}/etc/portage/env/override-sysroot
 #    echo "dev-lang/perl override-sysroot" >${root}/etc/portage/package.env/perl
-    riscv64-unknown-linux-gnu-emerge perl
-    ROOT=$1 riscv64-unknown-linux-gnu-emerge perl
+    "${TARGET_CHOST}"-emerge perl
+    ROOT="$stage_dir" "${TARGET_CHOST}"-emerge perl
 }
 
 update_stage3() {
-    riscv64-unknown-linux-gnu-emerge -b -k gcc
-    riscv64-unknown-linux-gnu-emerge -b -k sys-libs/binutils-libs
-    riscv64-unknown-linux-gnu-emerge -b -k -u system
-    ROOT=$1 riscv64-unknown-linux-gnu-emerge -k -e @world
+    local stage_dir=$1
+    "${TARGET_CHOST}"-emerge -b -k gcc
+    "${TARGET_CHOST}"-emerge -b -k sys-libs/binutils-libs
+    "${TARGET_CHOST}"-emerge -b -k -u system
+    ROOT="$stage_dir" "${TARGET_CHOST}"-emerge -k -e @world
 }
 
 install_clang() {
+    local stage_dir=$1
     # clang-tidy fails to cross-build
     # TODO: make so plugin-api.h exists even w/out emerging this again
-    riscv64-unknown-linux-gnu-emerge -b -k sys-libs/binutils-libs
-    ROOT=$1 riscv64-unknown-linux-gnu-emerge -b -k llvm-core/clang
+    "${TARGET_CHOST}"-emerge -b -k sys-libs/binutils-libs
+    ROOT="$stage_dir" "${TARGET_CHOST}"-emerge -b -k llvm-core/clang
 }
 
 install_boot() {
+    local stage_dir=$1
     # dracut and busybox must be installed on host and target
-    ROOT=$1 riscv64-unknown-linux-gnu-emerge busybox dracut
+    ROOT="$stage_dir" "${TARGET_CHOST}"-emerge busybox dracut
 }
 
 install_more() {
-    ROOT=$1 riscv64-unknown-linux-gnu-emerge -b -k $ADDITIONAL_PACKAGES
+    local stage_dir=$1
+    local additional_packages
+    
+    additional_packages=$(read_package_list "${ADDITIONAL_PACKAGES_FILE}")
+    ROOT="$stage_dir" "${TARGET_CHOST}"-emerge -b -k ${additional_packages}
 }
 
 maybe_prepare() {
@@ -141,18 +148,17 @@ maybe_prepare() {
     then
         echo 'Crossdev already present, use `prepare` to regenerate'
     else
-        echo "Creating a new crossdev environment for ${OUR_CHOST}"
+        echo "Creating a new crossdev environment for ${TARGET_CHOST}"
         setup_crossdev
     fi
 }
 
 update_ldconfig() {
-    # ldconfig -v -C /etc/ld.so.cache -f $STAGE_DIR/etc/ld.so.conf -r $STAGE_DIR
-    ldconfig -v -C /etc/ld.so.cache -r $STAGE_DIR
+    update_ldconfig "$STAGE_DIR"
 }
 
 if [[ -z "$1" ]]; then
-    usage
+    display_help
 fi
 
 case $1 in
@@ -199,6 +205,6 @@ case $1 in
         install_perl $STAGE_DIR
         ;;
     *)
-        usage
+        display_help
         ;;
 esac
