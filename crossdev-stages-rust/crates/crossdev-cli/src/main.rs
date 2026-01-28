@@ -7,6 +7,30 @@ use crossdev_config::PlatformConfig;
 use crossdev_stage3::Stage3Fetcher;
 use log::{info, LevelFilter};
 
+/// Get the default architecture by converting Rust's std::env::consts::ARCH to Gentoo format
+fn get_default_arch() -> &'static str {
+    // Get the system architecture and convert to Gentoo format
+    // We need to use a static string for clap's default_value
+    match std::env::consts::ARCH {
+        "aarch64" => "arm64",
+        "x86_64" => "amd64",
+        "riscv64" => "riscv",
+        "i686" => "i686",
+        "arm" => "arm",
+        "powerpc" => "powerpc",
+        "powerpc64" => "powerpc64",
+        "mips" => "mips",
+        "mips64" => "mips64",
+        "s390x" => "s390x",
+        "loongarch64" => "loongarch64",
+        "parisc" => "hppa",
+        "parisc64" => "hppa64",
+        "ppc" => "powerpc",
+        "ppc64" => "powerpc64",
+        arch => Box::leak(arch.to_string().into_boxed_str()), // For other architectures, use as-is
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     env_logger::Builder::from_default_env()
@@ -26,7 +50,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .long("arch")
                         .value_name("ARCH")
                         .help("Target architecture")
-                        .default_value(std::env::consts::ARCH),
+                        .default_value(get_default_arch()),
                 )
                 .arg(
                     Arg::new("flavor")
