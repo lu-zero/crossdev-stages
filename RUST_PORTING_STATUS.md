@@ -52,14 +52,14 @@ cargo build
 ### Fetch a Stage3 Image
 
 ```bash
-# Using CLI arguments
+# List available flavors (new unified command)
+cargo run -- fetch --arch riscv --list
+
+# Fetch stage3 image
 cargo run -- fetch --arch riscv --flavor rv64_lp64d-openrc
 
-# Using CLI arguments with extraction
+# Fetch and extract
 cargo run -- fetch --arch riscv --flavor rv64_lp64d-openrc --extract /path/to/dir
-
-# List available flavors
-cargo run -- list --arch riscv
 ```
 
 ### Get Help
@@ -108,7 +108,7 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; finished in 0.00s
 
 ## Progress Breakdown
 
-### ✅ Complete (12/12 tests passing)
+### ✅ Complete (13/13 tests passing)
 
 **crossdev-config crate** (5 tests)
 - [x] test_cross_compile_prefix
@@ -117,12 +117,13 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; finished in 0.00s
 - [x] test_load_invalid_config
 - [x] test_load_valid_config
 
-**crossdev-stage3 crate** (5 tests)
+**crossdev-stage3 crate** (6 tests)
 - [x] test_extract_date_from_filename
 - [x] test_extract_timestamp
 - [x] test_find_latest_stage3
 - [x] test_parse_stage3_list (enhanced with PGP handling)
 - [x] test_is_cached
+- [x] test_list_available_flavors (new)
 
 **crossdev-cli crate** (2 tests)
 - [x] test_get_arch_aliases
@@ -158,23 +159,28 @@ test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; finished in 0.00s
 ## Recent Changes
 
 ### Added
-- Enhanced CLI with `list` command to show available stage3 flavors
+- Enhanced CLI with `--list` flag in fetch command to show available stage3 flavors
 - Improved stage3 parsing with PGP signature handling
 - Configurable mirror URLs
 - Better error handling and user feedback
 - Architecture aliases support
+- `list_available_flavors()` API method to Stage3Fetcher
+- `extract_flavor_from_filename()` helper function
+- Comprehensive test for flavor listing functionality
 
 ### Changed
-- Renamed `fetch-stage3` command to `fetch` for consistency
-- Updated CLI argument structure to be more user-friendly
+- Refactored CLI to fold list functionality into fetch command
+- Updated CLI argument structure to be more intuitive
 - Improved stage3 metadata parsing with better error handling
 - Enhanced logging and user output with more detailed information
+- Fixed flavor extraction to properly parse from filenames instead of using config
 
 ### Fixed
 - Stage3 parsing now handles PGP signed files correctly
 - Better error messages for network failures
-- Improved flavor detection from filenames
+- Improved flavor detection from filenames (now extracts actual flavors)
 - Fixed timestamp extraction from stage3 filenames
+- Proper unique flavor detection and alphabetical sorting
 
 ## Code Quality Metrics
 
