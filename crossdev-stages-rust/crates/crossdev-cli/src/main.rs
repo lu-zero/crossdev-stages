@@ -7,27 +7,78 @@ use crossdev_config::PlatformConfig;
 use crossdev_stage3::Stage3Fetcher;
 use log::{info, LevelFilter};
 
+use std::borrow::Cow;
+
+/// Known architectures with their Gentoo equivalents
+#[derive(Debug, Clone, Copy)]
+enum KnownArch {
+    Aarch64,
+    X86_64,
+    Riscv64,
+    I686,
+    Arm,
+    Powerpc,
+    Powerpc64,
+    Mips,
+    Mips64,
+    S390x,
+    Loongarch64,
+    Parisc,
+    Parisc64,
+    Ppc,
+    Ppc64,
+}
+
+impl KnownArch {
+    fn as_str(self) -> &'static str {
+        match self {
+            KnownArch::Aarch64 => "arm64",
+            KnownArch::X86_64 => "amd64",
+            KnownArch::Riscv64 => "riscv",
+            KnownArch::I686 => "i686",
+            KnownArch::Arm => "arm",
+            KnownArch::Powerpc => "powerpc",
+            KnownArch::Powerpc64 => "powerpc64",
+            KnownArch::Mips => "mips",
+            KnownArch::Mips64 => "mips64",
+            KnownArch::S390x => "s390x",
+            KnownArch::Loongarch64 => "loongarch64",
+            KnownArch::Parisc => "hppa",
+            KnownArch::Parisc64 => "hppa64",
+            KnownArch::Ppc => "powerpc",
+            KnownArch::Ppc64 => "powerpc64",
+        }
+    }
+}
+
 /// Get the default architecture by converting Rust's std::env::consts::ARCH to Gentoo format
-fn get_default_arch() -> &'static str {
-    // Get the system architecture and convert to Gentoo format
-    // We need to use a static string for clap's default_value
+fn get_default_arch() -> Cow<'static, str> {
     match std::env::consts::ARCH {
-        "aarch64" => "arm64",
-        "x86_64" => "amd64",
-        "riscv64" => "riscv",
-        "i686" => "i686",
-        "arm" => "arm",
-        "powerpc" => "powerpc",
-        "powerpc64" => "powerpc64",
-        "mips" => "mips",
-        "mips64" => "mips64",
-        "s390x" => "s390x",
-        "loongarch64" => "loongarch64",
-        "parisc" => "hppa",
-        "parisc64" => "hppa64",
-        "ppc" => "powerpc",
-        "ppc64" => "powerpc64",
-        arch => Box::leak(arch.to_string().into_boxed_str()), // For other architectures, use as-is
+        "aarch64" => Cow::Borrowed(KnownArch::Aarch64.as_str()),
+        "x86_64" => Cow::Borrowed(KnownArch::X86_64.as_str()),
+        "riscv64" => Cow::Borrowed(KnownArch::Riscv64.as_str()),
+        "i686" => Cow::Borrowed(KnownArch::I686.as_str()),
+        "arm" => Cow::Borrowed(KnownArch::Arm.as_str()),
+        "powerpc" => Cow::Borrowed(KnownArch::Powerpc.as_str()),
+        "powerpc64" => Cow::Borrowed(KnownArch::Powerpc64.as_str()),
+        "mips" => Cow::Borrowed(KnownArch::Mips.as_str()),
+        "mips64" => Cow::Borrowed(KnownArch::Mips64.as_str()),
+        "s390x" => Cow::Borrowed(KnownArch::S390x.as_str()),
+        "loongarch64" => Cow::Borrowed(KnownArch::Loongarch64.as_str()),
+        "parisc" => Cow::Borrowed(KnownArch::Parisc.as_str()),
+        "parisc64" => Cow::Borrowed(KnownArch::Parisc64.as_str()),
+        "ppc" => Cow::Borrowed(KnownArch::Ppc.as_str()),
+        "ppc64" => Cow::Borrowed(KnownArch::Ppc64.as_str()),
+        arch => Cow::Owned(arch.to_string()), // For unknown architectures, use as-is
+    }
+}
+
+/// Get the default architecture as a static string for clap
+fn get_default_arch_static() -> &'static str {
+    // Convert to static string for clap's default_value
+    match get_default_arch() {
+        Cow::Borrowed(s) => s,
+        Cow::Owned(s) => Box::leak(s.into_boxed_str()),
     }
 }
 
@@ -50,7 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .long("arch")
                         .value_name("ARCH")
                         .help("Target architecture")
-                        .default_value(get_default_arch()),
+                        .default_value(get_default_arch_static()),
                 )
                 .arg(
                     Arg::new("flavor")
