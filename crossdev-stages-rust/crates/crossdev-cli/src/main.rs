@@ -7,7 +7,6 @@ use crossdev_config::PlatformConfig;
 use crossdev_stage3::Stage3Fetcher;
 use log::{info, LevelFilter};
 
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     env_logger::Builder::from_default_env()
@@ -120,18 +119,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     genimage_config: "genimage.cfg".to_string(),
                 },
             };
-            
+
             // Create stage3 fetcher
             let fetcher = Stage3Fetcher::new(config, cache_dir, mirror);
-            
+
             // Check if we should list flavors instead of fetching
             if sub_matches.get_flag("list") {
                 info!("Listing available stage3 flavors");
                 let flavors = fetcher.list_available_flavors()?;
-                
+
                 println!("Available stage3 flavors for {}:", arch);
                 println!("===============================");
-                
+
                 if flavors.is_empty() {
                     println!("No stage3 flavors found for architecture: {}", arch);
                     println!("This might mean the architecture is not supported or the mirror is unavailable.");
@@ -143,13 +142,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     println!("\nTotal: {} flavor(s) available", flavors.len());
                     println!("\nTo use a specific flavor, specify it with the --flavor option:");
-                    println!("  cargo run -- fetch --arch {} --flavor {}", arch, flavors.first().unwrap_or(&"unknown".to_string()));
+                    println!(
+                        "  cargo run -- fetch --arch {} --flavor {}",
+                        arch,
+                        flavors.first().unwrap_or(&"unknown".to_string())
+                    );
                 }
             } else {
                 // Fetch latest stage3
                 info!("Fetching latest stage3 image...");
                 let stage3 = fetcher.fetch_latest()?;
-                
+
                 info!("Latest stage3 image:");
                 info!("  Name: {}", stage3.name);
                 info!("  URL: {}", stage3.url);
@@ -157,7 +160,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 info!("  Date: {}", stage3.date);
                 info!("  Arch: {}", stage3.arch);
                 info!("  Flavor: {}", stage3.flavor);
-                
+
                 // Extract if requested
                 if let Some(extract_dir) = extract_dir {
                     info!("Extracting to: {}", extract_dir);

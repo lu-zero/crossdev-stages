@@ -6,8 +6,8 @@
 //! - Filesystem creation
 //! - Image generation
 
-pub mod repositories;
 pub mod builder;
+pub mod repositories;
 
-pub use repositories::RepositoryManager;
 pub use builder::ImageBuilder;
+pub use repositories::RepositoryManager;

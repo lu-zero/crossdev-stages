@@ -1,8 +1,8 @@
 //! ldconfig management
 
+use log::info;
 use std::process::Command;
 use thiserror::Error;
-use log::info;
 
 /// ldconfig management errors
 #[derive(Debug, Error)]

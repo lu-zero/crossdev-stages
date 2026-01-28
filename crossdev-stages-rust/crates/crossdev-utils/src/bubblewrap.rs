@@ -1,8 +1,8 @@
 //! Bubblewrap container execution
 
+use log::info;
 use std::process::Command;
 use thiserror::Error;
-use log::info;
 
 /// Bubblewrap execution errors
 #[derive(Debug, Error)]

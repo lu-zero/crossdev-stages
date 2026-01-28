@@ -1,8 +1,8 @@
 //! Image building
 
+use log::info;
 use std::process::Command;
 use thiserror::Error;
-use log::info;
 
 /// Build errors
 #[derive(Debug, Error)]

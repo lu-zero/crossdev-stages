@@ -1,8 +1,8 @@
 //! Source repository management
 
+use log::info;
 use std::process::Command;
 use thiserror::Error;
-use log::info;
 
 /// Repository management errors
 #[derive(Debug, Error)]

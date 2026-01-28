@@ -1,8 +1,8 @@
 //! Package management
 
+use log::info;
 use std::process::Command;
 use thiserror::Error;
-use log::info;
 
 /// Package management errors
 #[derive(Debug, Error)]
