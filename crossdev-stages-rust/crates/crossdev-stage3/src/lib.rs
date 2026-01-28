@@ -73,15 +73,15 @@ impl Stage3Fetcher {
 
     /// List available stage3 flavors for the configured architecture
     ///
-    /// This method fetches the list of available stage3 images and extracts
-    /// the unique flavors available for the target architecture.
+    /// This method fetches the general latest-stage3.txt file (not flavor-specific)
+    /// to get all available flavors for the target architecture.
     ///
     /// # Returns
     ///
     /// A vector of available flavor strings
     pub fn list_available_flavors(&self) -> Result<Vec<String>, Stage3Error> {
-        // Fetch the list of available stage3 images
-        let stage3_list = self.fetch_stage3_list()?;
+        // Fetch all available stage3 images (not flavor-specific)
+        let stage3_list = self.fetch_all_stage3_flavors()?;
 
         // Extract unique flavors from the list
         Ok(self.list_available_flavors_from_list(&stage3_list))
@@ -179,6 +179,140 @@ impl Stage3Fetcher {
 
         // Parse the stage3 list
         self.parse_stage3_list(&content)
+    }
+
+    /// Fetch all available stage3 images for the architecture (not flavor-specific)
+    ///
+    /// This method fetches the general latest-stage3.txt file that contains
+    /// all available flavors for the target architecture.
+    ///
+    /// # Returns
+    ///
+    /// A vector of all available Stage3Info for all flavors
+    fn fetch_all_stage3_flavors(&self) -> Result<Vec<Stage3Info>, Stage3Error> {
+        // Fetch the general latest-stage3.txt file (not flavor-specific)
+        let latest_url = format!(
+            "{}/releases/{}/autobuilds/latest-stage3.txt",
+            self.mirror_url.trim_end_matches('/'),
+            self.config.target.arch
+        );
+        
+        info!("Fetching all stage3 flavors from: {}", latest_url);
+        
+        // Use curl to fetch the general stage3 list
+        let output = Command::new("curl")
+            .arg("-s")
+            .arg("-f")
+            .arg(&latest_url)
+            .output()
+            .map_err(|e| Stage3Error::IoError(e))?;
+        
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(Stage3Error::FetchError(
+                format!("Failed to fetch all stage3 flavors: {}", stderr)
+            ));
+        }
+        
+        let content = String::from_utf8_lossy(&output.stdout);
+        
+        // Parse the general stage3 list (contains all flavors)
+        self.parse_all_flavors_list(&content)
+    }
+
+    /// Parse stage3 list content into Stage3Info structures (for all flavors)
+    ///
+    /// This method parses the general latest-stage3.txt file that contains
+    /// all available flavors for the architecture.
+    ///
+    /// Example format:
+    /// # Wed Oct 18 01:00:01 UTC 2023
+    /// stage3-riscv64-openrc-20231018T010001Z.tar.xz 123456789 SHA256 abc123...
+    fn parse_all_flavors_list(&self, content: &str) -> Result<Vec<Stage3Info>, Stage3Error> {
+        let mut stage3_images = Vec::new();
+        
+        let mut in_pgp_section = false;
+        
+        for line in content.lines() {
+            let line = line.trim();
+            
+            // Skip comments, empty lines, PGP headers, and PGP signature sections
+            if line.is_empty() || line.starts_with('#') || line.starts_with("Hash:") {
+                continue;
+            }
+            
+            // Detect PGP sections
+            if line == "-----BEGIN PGP SIGNED MESSAGE-----" {
+                // This marks the start of signed content, but the content itself is valid
+                continue;
+            }
+            
+            if line == "-----BEGIN PGP SIGNATURE-----" {
+                in_pgp_section = true;
+                info!("PGP signature section: entered");
+                continue;
+            }
+            
+            if line == "-----END PGP SIGNATURE-----" {
+                in_pgp_section = false;
+                info!("PGP signature section: exited");
+                continue;
+            }
+            
+            // Skip lines in PGP signature sections (but not signed content)
+            if in_pgp_section {
+                continue;
+            }
+            
+            info!("Processing line: {}", line);
+            
+            // Parse stage3 info
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 2 {
+                let full_path = parts[0].to_string();
+                
+                // Parse size
+                let size = parts[1].parse::<u64>()
+                    .map_err(|e| Stage3Error::ParseError(
+                        format!("Failed to parse size for {}: {}", full_path, e)
+                    ))?;
+                
+                // Extract filename from path (format: timestamp/filename.tar.xz)
+                let name = full_path.split('/').last().unwrap_or(&full_path).to_string();
+                
+                // Extract arch and flavor from name
+                if name.starts_with("stage3-") {
+                    // Extract date from filename: stage3-arch-flavor-YYYYMMDDTHHMMSSZ.tar.xz
+                    let date = extract_date_from_filename(&name);
+                    
+                    // Extract actual flavor from filename
+                    let actual_flavor = extract_flavor_from_filename(&name);
+                    
+                    stage3_images.push(Stage3Info {
+                        name: name.clone(),
+                        url: format!(
+                            "{}/releases/{}/autobuilds/{}",
+                            self.mirror_url.trim_end_matches('/'), self.config.target.arch, full_path
+                        ),
+                        size,
+                        date,
+                        arch: self.config.target.arch.clone(),
+                        flavor: actual_flavor,
+                    });
+                }
+            }
+        }
+        
+        if stage3_images.is_empty() {
+            return Err(Stage3Error::ParseError(
+                format!(
+                    "No stage3 images found for arch={}",
+                    self.config.target.arch
+                )
+            ));
+        }
+        
+        Ok(stage3_images)
     }
 
     /// Parse stage3 list content into Stage3Info structures
