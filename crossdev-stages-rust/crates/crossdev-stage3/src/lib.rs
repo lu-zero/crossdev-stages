@@ -71,6 +71,48 @@ impl Stage3Fetcher {
         }
     }
 
+    /// List available stage3 flavors for the configured architecture
+    ///
+    /// This method fetches the list of available stage3 images and extracts
+    /// the unique flavors available for the target architecture.
+    ///
+    /// # Returns
+    ///
+    /// A vector of available flavor strings
+    pub fn list_available_flavors(&self) -> Result<Vec<String>, Stage3Error> {
+        // Fetch the list of available stage3 images
+        let stage3_list = self.fetch_stage3_list()?;
+        
+        // Extract unique flavors from the list
+        Ok(self.list_available_flavors_from_list(&stage3_list))
+    }
+    
+    /// Helper method to extract unique flavors from a stage3 list
+    ///
+    /// This is used internally and for testing.
+    ///
+    /// # Arguments
+    ///
+    /// * `stage3_list` - List of stage3 images
+    ///
+    /// # Returns
+    ///
+    /// A vector of unique, sorted flavor strings
+    fn list_available_flavors_from_list(&self, stage3_list: &[Stage3Info]) -> Vec<String> {
+        let mut flavors = Vec::new();
+        
+        for stage3 in stage3_list {
+            if !flavors.contains(&stage3.flavor) {
+                flavors.push(stage3.flavor.clone());
+            }
+        }
+        
+        // Sort flavors alphabetically
+        flavors.sort();
+        
+        flavors
+    }
+
     /// Fetch the latest stage3 image for the configured architecture
     ///
     /// This method:
@@ -200,6 +242,9 @@ impl Stage3Fetcher {
                     // Extract date from filename: stage3-arch-flavor-YYYYMMDDTHHMMSSZ.tar.xz
                     let date = extract_date_from_filename(&name);
                     
+                    // Extract actual flavor from filename
+                    let actual_flavor = extract_flavor_from_filename(&name);
+                    
                     stage3_images.push(Stage3Info {
                         name: name.clone(),
                         url: format!(
@@ -209,7 +254,7 @@ impl Stage3Fetcher {
                         size,
                         date,
                         arch: self.config.target.arch.clone(),
-                        flavor: self.config.target.flavor.clone(),
+                        flavor: actual_flavor,
                     });
                 }
             }
@@ -445,6 +490,27 @@ fn extract_timestamp(filename: &str) -> u64 {
     0
 }
 
+/// Extract flavor from stage3 filename
+///
+/// Filename format: stage3-arch-flavor-YYYYMMDDTHHMMSSZ.tar.xz
+/// Returns the flavor part (arch-flavor)
+fn extract_flavor_from_filename(filename: &str) -> String {
+    // Remove .tar.xz extension first
+    let without_ext = filename.replace(".tar.xz", "");
+    
+    // Split by '-' and get the relevant parts
+    let parts: Vec<&str> = without_ext.split('-').collect();
+    
+    if parts.len() >= 3 {
+        // Format: stage3-arch-flavor-timestamp
+        // We want parts[1] (arch) and parts[2] (flavor) combined
+        return format!("{}-{}", parts[1], parts[2]);
+    }
+    
+    // Fallback: return the full filename without extension and stage3 prefix
+    without_ext.replace("stage3-", "")
+}
+
 /// Extract date from stage3 filename
 ///
 /// Returns date as string in YYYYMMDD format
@@ -650,5 +716,65 @@ stage3-riscv64-openrc-20231017T010001Z.tar.xz 123456788 SHA256 def456...
         };
         
         assert!(fetcher.is_cached(&stage3));
+    }
+    
+    #[test]
+    fn test_list_available_flavors() {
+        let config = PlatformConfig {
+            target: crossdev_config::TargetConfig {
+                arch: "riscv64".to_string(),
+                chost: "riscv64-unknown-linux-gnu".to_string(),
+                flavor: "rv64_lp64d-openrc".to_string(),
+                keyword: "riscv".to_string(),
+            },
+            compilation: crossdev_config::CompilationConfig {
+                cflags: "test".to_string(),
+                gcc_version: "test".to_string(),
+                profile: "test".to_string(),
+            },
+            repositories: crossdev_config::RepositoryConfig {
+                opensbi_repo: "test".to_string(),
+                opensbi_tag: "test".to_string(),
+                u_boot_repo: "test".to_string(),
+                u_boot_tag: "test".to_string(),
+                firmware_repo: "test".to_string(),
+                firmware_tag: "test".to_string(),
+                kernel_repo: "test".to_string(),
+                kernel_tag: "test".to_string(),
+                bootloader_tag: "test".to_string(),
+            },
+            packages: crossdev_config::PackageConfig {
+                stage1_file: "test".to_string(),
+                additional_file: "test".to_string(),
+            },
+            image: crossdev_config::ImageConfig {
+                root_size: "test".to_string(),
+                boot_size: "test".to_string(),
+                genimage_config: "test".to_string(),
+            },
+        };
+        
+        let fetcher = Stage3Fetcher::new(config, "/tmp/cache", "https://distfiles.gentoo.org");
+        
+        // Create mock stage3 list with multiple flavors
+        let test_data = r#"
+# Wed Oct 18 01:00:01 UTC 2023
+stage3-riscv64-openrc-20231018T010001Z.tar.xz 123456789 SHA256 abc123...
+stage3-riscv64-hardened-20231017T010001Z.tar.xz 123456788 SHA256 def456...
+stage3-riscv64-openrc-20231016T010001Z.tar.xz 123456787 SHA256 ghi789...
+"#;
+        
+        // Mock the fetch_stage3_list method to return our test data
+        // For this test, we'll directly test the flavor extraction logic
+        let stage3_list = fetcher.parse_stage3_list(test_data).unwrap();
+        
+        // Test the list_available_flavors method
+        let flavors = fetcher.list_available_flavors_from_list(&stage3_list);
+        
+        assert_eq!(flavors.len(), 2);
+        assert!(flavors.contains(&"riscv64-openrc".to_string()));
+        assert!(flavors.contains(&"riscv64-hardened".to_string()));
+        assert_eq!(flavors[0], "riscv64-hardened".to_string());
+        assert_eq!(flavors[1], "riscv64-openrc".to_string());
     }
 }
