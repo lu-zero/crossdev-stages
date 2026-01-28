@@ -9,6 +9,8 @@ use log::{info, LevelFilter};
 
 use std::borrow::Cow;
 
+mod arch;
+
 /// Known architectures with their Gentoo equivalents
 #[derive(Debug, Clone, Copy)]
 enum KnownArch {
@@ -155,11 +157,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let flavor = if let Some(f) = flavor {
                 f.clone()
             } else {
-                match arch.as_str() {
-                    "riscv64" => "rv64_lp64d-openrc".to_string(),
-                    "riscv" => "rv32_ilp32d-openrc".to_string(),
-                    _ => format!("{}-openrc", arch),
-                }
+                // Use the shared function from the arch module
+                arch::get_default_flavor(&arch)
             };
 
             info!("Fetching stage3 for arch={}, flavor={}", arch, flavor);

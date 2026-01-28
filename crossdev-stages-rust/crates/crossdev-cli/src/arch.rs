@@ -57,6 +57,20 @@ pub fn get_arch_aliases() -> HashMap<&'static str, &'static str> {
     aliases
 }
 
+/// Get the default stage3 flavor for a given architecture
+///
+/// Returns architecture-specific default flavors:
+/// - riscv64 → rv64_lp64d-openrc (64-bit RISC-V with LP64D ABI)
+/// - riscv → rv32_ilp32d-openrc (32-bit RISC-V with ILP32D ABI)
+/// - Other architectures → {arch}-openrc
+pub fn get_default_flavor(arch: &str) -> String {
+    match arch {
+        "riscv64" => "rv64_lp64d-openrc".to_string(),
+        "riscv" => "rv32_ilp32d-openrc".to_string(),
+        _ => format!("{}-openrc", arch),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
