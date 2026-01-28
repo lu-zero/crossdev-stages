@@ -11,13 +11,13 @@ use thiserror::Error;
 pub enum SandboxError {
     #[error("Backend not available: {0}")]
     BackendUnavailable(String),
-    
+
     #[error("Container creation failed: {0}")]
     ContainerCreationFailed(String),
-    
+
     #[error("Command execution failed: {0}")]
     CommandExecutionFailed(String),
-    
+
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
 }
@@ -30,7 +30,9 @@ pub type SandboxResult<T> = Result<T, SandboxError>;
 /// Defines the interface that all sandbox backends must implement
 pub trait SandboxBackend: Send + Sync {
     /// Create a new sandbox instance
-    fn new() -> SandboxResult<Self> where Self: Sized;
+    fn new() -> SandboxResult<Self>
+    where
+        Self: Sized;
 
     /// Check if this backend is available on the current system
     fn is_available(&self) -> bool;
@@ -58,23 +60,23 @@ pub struct DockerBackend;
 /// Auto-detect and create the best available sandbox backend
 pub fn auto_detect_backend() -> SandboxResult<Box<dyn SandboxBackend>> {
     // Try backends in order of preference
-    
+
     #[cfg(feature = "docker")]
     if let Ok(backend) = DockerBackend::new() {
         if backend.is_available() {
             return Ok(Box::new(backend));
         }
     }
-    
+
     #[cfg(feature = "bubblewrap")]
     if let Ok(backend) = BubblewrapBackend::new() {
         if backend.is_available() {
             return Ok(Box::new(backend));
         }
     }
-    
+
     Err(SandboxError::BackendUnavailable(
-        "No available sandbox backend. Enable 'docker' or 'bubblewrap' feature".to_string()
+        "No available sandbox backend. Enable 'docker' or 'bubblewrap' feature".to_string(),
     ))
 }
 
@@ -84,7 +86,7 @@ impl SandboxBackend for BubblewrapBackend {
         let backend = Self;
         if !backend.is_available() {
             return Err(SandboxError::BackendUnavailable(
-                "Bubblewrap not available on this system".to_string()
+                "Bubblewrap not available on this system".to_string(),
             ));
         }
         Ok(backend)
@@ -119,7 +121,7 @@ impl SandboxBackend for DockerBackend {
         let backend = Self;
         if !backend.is_available() {
             return Err(SandboxError::BackendUnavailable(
-                "Docker not available on this system".to_string()
+                "Docker not available on this system".to_string(),
             ));
         }
         Ok(backend)

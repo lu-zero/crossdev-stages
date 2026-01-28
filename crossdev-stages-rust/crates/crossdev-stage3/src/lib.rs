@@ -196,9 +196,9 @@ impl Stage3Fetcher {
             self.mirror_url.trim_end_matches('/'),
             self.config.target.arch
         );
-        
+
         info!("Fetching all stage3 flavors from: {}", latest_url);
-        
+
         // Use curl to fetch the general stage3 list
         let output = Command::new("curl")
             .arg("-s")
@@ -206,16 +206,17 @@ impl Stage3Fetcher {
             .arg(&latest_url)
             .output()
             .map_err(|e| Stage3Error::IoError(e))?;
-        
+
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Stage3Error::FetchError(
-                format!("Failed to fetch all stage3 flavors: {}", stderr)
-            ));
+            return Err(Stage3Error::FetchError(format!(
+                "Failed to fetch all stage3 flavors: {}",
+                stderr
+            )));
         }
-        
+
         let content = String::from_utf8_lossy(&output.stdout);
-        
+
         // Parse the general stage3 list (contains all flavors)
         self.parse_all_flavors_list(&content)
     }
@@ -230,69 +231,77 @@ impl Stage3Fetcher {
     /// stage3-riscv64-openrc-20231018T010001Z.tar.xz 123456789 SHA256 abc123...
     fn parse_all_flavors_list(&self, content: &str) -> Result<Vec<Stage3Info>, Stage3Error> {
         let mut stage3_images = Vec::new();
-        
+
         let mut in_pgp_section = false;
-        
+
         for line in content.lines() {
             let line = line.trim();
-            
+
             // Skip comments, empty lines, PGP headers, and PGP signature sections
             if line.is_empty() || line.starts_with('#') || line.starts_with("Hash:") {
                 continue;
             }
-            
+
             // Detect PGP sections
             if line == "-----BEGIN PGP SIGNED MESSAGE-----" {
                 // This marks the start of signed content, but the content itself is valid
                 continue;
             }
-            
+
             if line == "-----BEGIN PGP SIGNATURE-----" {
                 in_pgp_section = true;
                 info!("PGP signature section: entered");
                 continue;
             }
-            
+
             if line == "-----END PGP SIGNATURE-----" {
                 in_pgp_section = false;
                 info!("PGP signature section: exited");
                 continue;
             }
-            
+
             // Skip lines in PGP signature sections (but not signed content)
             if in_pgp_section {
                 continue;
             }
-            
+
             info!("Processing line: {}", line);
-            
+
             // Parse stage3 info
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 2 {
                 let full_path = parts[0].to_string();
-                
+
                 // Parse size
-                let size = parts[1].parse::<u64>()
-                    .map_err(|e| Stage3Error::ParseError(
-                        format!("Failed to parse size for {}: {}", full_path, e)
-                    ))?;
-                
+                let size = parts[1].parse::<u64>().map_err(|e| {
+                    Stage3Error::ParseError(format!(
+                        "Failed to parse size for {}: {}",
+                        full_path, e
+                    ))
+                })?;
+
                 // Extract filename from path (format: timestamp/filename.tar.xz)
-                let name = full_path.split('/').last().unwrap_or(&full_path).to_string();
-                
+                let name = full_path
+                    .split('/')
+                    .last()
+                    .unwrap_or(&full_path)
+                    .to_string();
+
                 // Extract arch and flavor from name
                 if name.starts_with("stage3-") {
                     // Extract date from filename: stage3-arch-flavor-YYYYMMDDTHHMMSSZ.tar.xz
                     let date = extract_date_from_filename(&name);
-                    
+
                     // Extract actual flavor from filename
                     let actual_flavor = extract_flavor_from_filename(&name);
-                    
+
                     stage3_images.push(Stage3Info {
                         name: name.clone(),
                         url: format!(
                             "{}/releases/{}/autobuilds/{}",
-                            self.mirror_url.trim_end_matches('/'), self.config.target.arch, full_path
+                            self.mirror_url.trim_end_matches('/'),
+                            self.config.target.arch,
+                            full_path
                         ),
                         size,
                         date,
@@ -302,16 +311,14 @@ impl Stage3Fetcher {
                 }
             }
         }
-        
+
         if stage3_images.is_empty() {
-            return Err(Stage3Error::ParseError(
-                format!(
-                    "No stage3 images found for arch={}",
-                    self.config.target.arch
-                )
-            ));
+            return Err(Stage3Error::ParseError(format!(
+                "No stage3 images found for arch={}",
+                self.config.target.arch
+            )));
         }
-        
+
         Ok(stage3_images)
     }
 
