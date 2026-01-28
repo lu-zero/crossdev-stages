@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use thiserror::Error;
-use log::{info, error, warn};
+use log::info;
 use crossdev_config::{PlatformConfig, ConfigError};
 
 /// Stage3 fetching and management errors
@@ -48,6 +48,7 @@ pub struct Stage3Info {
 pub struct Stage3Fetcher {
     config: PlatformConfig,
     cache_dir: PathBuf,
+    mirror_url: String,
 }
 
 impl Stage3Fetcher {
@@ -57,14 +58,16 @@ impl Stage3Fetcher {
     ///
     /// * `config` - Platform configuration
     /// * `cache_dir` - Directory to cache stage3 images
+    /// * `mirror_url` - Gentoo mirror URL
     ///
     /// # Returns
     ///
     /// A new Stage3Fetcher instance
-    pub fn new(config: PlatformConfig, cache_dir: impl AsRef<Path>) -> Self {
+    pub fn new(config: PlatformConfig, cache_dir: impl AsRef<Path>, mirror_url: &str) -> Self {
         Self {
             config,
             cache_dir: cache_dir.as_ref().to_path_buf(),
+            mirror_url: mirror_url.to_string(),
         }
     }
 
@@ -105,14 +108,10 @@ impl Stage3Fetcher {
 
     /// Fetch the list of available stage3 images from Gentoo mirrors
     fn fetch_stage3_list(&self) -> Result<Vec<Stage3Info>, Stage3Error> {
-        let base_url = format!(
-            "https://distfiles.gentoo.org/releases/{}/autobuilds/",
-            self.config.target.arch
-        );
-        
         let latest_url = format!(
-            "{}/latest-{}.txt",
-            base_url,
+            "{}/releases/{}/autobuilds/latest-stage3-{}.txt",
+            self.mirror_url.trim_end_matches('/'),
+            self.config.target.arch,
             self.config.target.flavor
         );
         
@@ -147,34 +146,65 @@ impl Stage3Fetcher {
     fn parse_stage3_list(&self, content: &str) -> Result<Vec<Stage3Info>, Stage3Error> {
         let mut stage3_images = Vec::new();
         
+        let mut in_pgp_section = false;
+        
         for line in content.lines() {
-            // Skip comments and empty lines
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
+            
+            // Skip comments, empty lines, PGP headers, and PGP signature sections
+            if line.is_empty() || line.starts_with('#') || line.starts_with("Hash:") {
                 continue;
             }
             
+            // Detect PGP sections
+            if line == "-----BEGIN PGP SIGNED MESSAGE-----" {
+                // This marks the start of signed content, but the content itself is valid
+                continue;
+            }
+            
+            if line == "-----BEGIN PGP SIGNATURE-----" {
+                in_pgp_section = true;
+                info!("PGP signature section: entered");
+                continue;
+            }
+            
+            if line == "-----END PGP SIGNATURE-----" {
+                in_pgp_section = false;
+                info!("PGP signature section: exited");
+                continue;
+            }
+            
+            // Skip lines in PGP signature sections (but not signed content)
+            if in_pgp_section {
+                continue;
+            }
+            
+            info!("Processing line: {}", line);
+            
             // Parse stage3 info
             let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 3 {
-                let name = parts[0].to_string();
+            if parts.len() >= 2 {
+                let full_path = parts[0].to_string();
                 
                 // Parse size
                 let size = parts[1].parse::<u64>()
                     .map_err(|e| Stage3Error::ParseError(
-                        format!("Failed to parse size for {}: {}", name, e)
+                        format!("Failed to parse size for {}: {}", full_path, e)
                     ))?;
                 
+                // Extract filename from path (format: timestamp/filename.tar.xz)
+                let name = full_path.split('/').last().unwrap_or(&full_path).to_string();
+                
                 // Extract arch and flavor from name
-                if name.starts_with("stage3-") && name.contains(&self.config.target.flavor) {
+                if name.starts_with("stage3-") {
                     // Extract date from filename: stage3-arch-flavor-YYYYMMDDTHHMMSSZ.tar.xz
                     let date = extract_date_from_filename(&name);
                     
                     stage3_images.push(Stage3Info {
                         name: name.clone(),
                         url: format!(
-                            "https://distfiles.gentoo.org/releases/{}/autobuilds/{}",
-                            self.config.target.arch, name
+                            "{}/releases/{}/autobuilds/{}",
+                            self.mirror_url.trim_end_matches('/'), self.config.target.arch, full_path
                         ),
                         size,
                         date,
@@ -403,7 +433,8 @@ fn extract_timestamp(filename: &str) -> u64 {
     let parts: Vec<&str> = filename.split('-').collect();
     if parts.len() >= 4 {
         // Remove .tar.xz extension and T/Z characters
-        let timestamp_part = parts[parts.len() - 2]
+        let last_part = parts[parts.len() - 1];
+        let timestamp_part = last_part.replace(".tar.xz", "")
             .replace("T", "")
             .replace("Z", "");
         
@@ -420,7 +451,9 @@ fn extract_timestamp(filename: &str) -> u64 {
 fn extract_date_from_filename(filename: &str) -> String {
     let parts: Vec<&str> = filename.split('-').collect();
     if parts.len() >= 4 {
-        let timestamp_part = parts[parts.len() - 2];
+        // Get the last part and remove .tar.xz extension
+        let last_part = parts[parts.len() - 1];
+        let timestamp_part = last_part.replace(".tar.xz", "");
         // Extract YYYYMMDD from YYYYMMDDTHHMMSSZ
         if timestamp_part.len() >= 8 {
             return timestamp_part[..8].to_string();
@@ -485,7 +518,7 @@ mod tests {
             },
         };
         
-        let fetcher = Stage3Fetcher::new(config, "/tmp/cache");
+        let fetcher = Stage3Fetcher::new(config, "/tmp/cache", "https://distfiles.gentoo.org");
         
         let test_data = r#"
 # Wed Oct 18 01:00:01 UTC 2023
@@ -537,7 +570,7 @@ stage3-riscv64-openrc-20231017T010001Z.tar.xz 123456788 SHA256 def456...
             },
         };
         
-        let fetcher = Stage3Fetcher::new(config, "/tmp/cache");
+        let fetcher = Stage3Fetcher::new(config, "/tmp/cache", "https://distfiles.gentoo.org");
         
         let images = vec![
             Stage3Info {
@@ -605,7 +638,7 @@ stage3-riscv64-openrc-20231017T010001Z.tar.xz 123456788 SHA256 def456...
             },
         };
         
-        let fetcher = Stage3Fetcher::new(config, cache_dir);
+        let fetcher = Stage3Fetcher::new(config, cache_dir, "https://distfiles.gentoo.org");
         
         let stage3 = Stage3Info {
             name: "stage3-test.tar.xz".to_string(),
