@@ -151,11 +151,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let cache_dir = sub_matches.get_one::<String>("cache").unwrap();
             let extract_dir = sub_matches.get_one::<String>("extract");
 
-            // Determine flavor - default to {arch}-openrc if not specified
+            // Determine flavor - use architecture-specific defaults
             let flavor = if let Some(f) = flavor {
                 f.clone()
             } else {
-                format!("{}-openrc", arch)
+                match arch.as_str() {
+                    "riscv64" => "rv64_lp64d-openrc".to_string(),
+                    "riscv" => "rv32_ilp32d-openrc".to_string(),
+                    _ => format!("{}-openrc", arch),
+                }
             };
 
             info!("Fetching stage3 for arch={}, flavor={}", arch, flavor);
