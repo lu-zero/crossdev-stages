@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .long("arch")
                         .value_name("ARCH")
                         .help("Target architecture")
-                        .default_value("amd64"),
+                        .default_value(std::env::consts::ARCH),
                 )
                 .arg(
                     Arg::new("flavor")
