@@ -15,12 +15,15 @@ clap.workspace = true
 crossdev-config = { path = "../crossdev-config" }
 crossdev-core = { path = "../crossdev-core" }
 crossdev-image = { path = "../crossdev-image" }
+crossdev-sandbox = { path = "../crossdev-sandbox" }
 crossdev-stage3 = { path = "../crossdev-stage3" }
 crossdev-utils = { path = "../crossdev-utils" }
 thiserror.workspace = true
 log.workspace = true
 env_logger.workspace = true
 tokio.workspace = true
+atty = "0.2"
+bollard = { version = "0.16", features = ["buildkit"] }
 
 [dev-dependencies]
 assert_cmd.workspace = true

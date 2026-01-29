@@ -10,10 +10,12 @@ repository.workspace = true
 # Container backends
 bollard = { version = "0.16", optional = true }  # Docker API
 tokio = { version = "1.0", features = ["full"] }
+async-trait = "0.1"
+futures-util = "0.3"
 thiserror = "1.0"
 log = "0.4"
 
 [features]
-default = ["bubblewrap"]
+default = ["docker", "bubblewrap"]
 docker = ["bollard"]
 bubblewrap = []
