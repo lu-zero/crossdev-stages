@@ -380,8 +380,8 @@ impl DockerBackend {
             "--name".to_string(),
             container_id.to_string(),
             "gentoo/stage3".to_string(),
-            "sleep".to_string(),
-            "infinity".to_string(),
+            "bash".to_string(),
+            "-l".to_string(), // Login shell to ensure proper environment
         ];
 
         match std::process::Command::new("docker").args(&args).output() {
