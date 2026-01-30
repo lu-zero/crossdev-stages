@@ -373,10 +373,9 @@ impl DockerBackend {
 
         info!("Container '{}' doesn't exist, creating it...", container_id);
 
-        // Create new container using docker run
+        // Create new container using docker create (better for reusable instances)
         let args = vec![
-            "run".to_string(),
-            "-d".to_string(), // Detached mode
+            "create".to_string(), // Use create instead of run for better lifecycle management
             "--name".to_string(),
             container_id.to_string(),
             "gentoo/stage3".to_string(),
@@ -387,11 +386,30 @@ impl DockerBackend {
         match std::process::Command::new("docker").args(&args).output() {
             Ok(output) => {
                 if output.status.success() {
-                    info!(
-                        "✓ Container '{}' created and started successfully",
-                        container_id
-                    );
-                    Ok(())
+                    info!("✓ Container '{}' created successfully", container_id);
+
+                    // Start the container after creation
+                    match std::process::Command::new("docker")
+                        .args(["start", container_id])
+                        .output()
+                    {
+                        Ok(start_output) => {
+                            if start_output.status.success() {
+                                info!("✓ Container '{}' started", container_id);
+                                Ok(())
+                            } else {
+                                let error_msg = String::from_utf8_lossy(&start_output.stderr);
+                                Err(SandboxError::CommandExecutionFailed(format!(
+                                    "Failed to start container '{}': {}",
+                                    container_id, error_msg
+                                )))
+                            }
+                        }
+                        Err(e) => Err(SandboxError::CommandExecutionFailed(format!(
+                            "Failed to start container '{}': {}",
+                            container_id, e
+                        ))),
+                    }
                 } else {
                     let error_msg = String::from_utf8_lossy(&output.stderr);
                     Err(SandboxError::CommandExecutionFailed(format!(
@@ -401,7 +419,7 @@ impl DockerBackend {
                 }
             }
             Err(e) => Err(SandboxError::CommandExecutionFailed(format!(
-                "Failed to execute docker run: {}",
+                "Failed to execute docker create: {}",
                 e
             ))),
         }
