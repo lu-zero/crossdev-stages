@@ -7,7 +7,7 @@ use crossdev_config::PlatformConfig;
 use crossdev_sandbox::auto_detect_backend;
 use crossdev_stage3::Stage3Fetcher;
 use crossdev_utils::arch;
-use log::{info, LevelFilter};
+use log::{info, warn, LevelFilter};
 
 mod crossdev;
 use crossdev::CrossdevEnvironment;
@@ -850,8 +850,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Clean up a container by stopping it
+/// This is called when:
+/// - Interactive session completes normally
+/// - User presses Ctrl+C (SIGINT)
+/// - Any error occurs during interactive session
 async fn cleanup_container(name: &str) {
+    info!("Stopping container '{}' to free resources", name);
     if let Ok(docker) = bollard::Docker::connect_with_local_defaults() {
-        let _ = docker.stop_container(name, None).await;
+        match docker.stop_container(name, None).await {
+            Ok(_) => info!("✓ Container '{}' stopped successfully", name),
+            Err(e) => warn!("Warning: Failed to stop container '{}': {}", name, e),
+        }
+    } else {
+        warn!(
+            "Warning: Docker connection failed during cleanup for container '{}'",
+            name
+        );
     }
 }
