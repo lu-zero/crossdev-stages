@@ -280,7 +280,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         } else {
                                             let error_msg = String::from_utf8_lossy(&output.stderr);
                                             // If image already exists, that's fine
-                                            if !error_msg.contains("not found") && !error_msg.contains("No such image") {
+                                            if !error_msg.contains("not found")
+                                                && !error_msg.contains("No such image")
+                                            {
                                                 info!("Image '{}' is already available", image);
                                             } else {
                                                 eprintln!("Failed to pull image: {}", error_msg);
@@ -296,19 +298,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 // Set up basic Portage configuration in the container
                                 info!("Setting up basic Portage environment");
-                                
+
                                 // Ensure container is ready by running a simple command
-                                let _ = backend.run_command(
-                                    name,
-                                    "echo",
-                                    &["Container ready"],
-                                    None
-                                ).await;
+                                let _ = backend
+                                    .run_command(name, "echo", &["Container ready"], None)
+                                    .await;
 
                                 // Set ACCEPT_KEYWORDS based on host architecture (setup is always for the host)
                                 let host_arch = std::env::consts::ARCH;
                                 let gentoo_arch = crossdev_utils::arch::parse_arch(host_arch);
-                                
+
                                 // Map Gentoo architecture to ACCEPT_KEYWORDS
                                 let accept_keyword = match gentoo_arch.as_str() {
                                     "amd64" => "~amd64",
@@ -321,10 +320,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     "hppa" => "~hppa",
                                     _ => "~amd64", // Default fallback
                                 };
-                                
+
                                 info!("Detected host architecture: {} (Gentoo: {}) -> ACCEPT_KEYWORDS={}", 
                                     host_arch, gentoo_arch, accept_keyword);
-                                
+
                                 let accept_keywords_result = backend.run_command(
                                     name,
                                     "sh",
@@ -348,7 +347,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     &["-c", "mkdir -p /etc/portage/package.use && echo 'sys-apps/dtc python' > /etc/portage/package.use/u-boot-tools"],
                                     None
                                 ).await;
-                                
+
                                 match uboot_use_result {
                                     Ok(_) => info!("✓ package.use/u-boot-tools configured with python USE flag"),
                                     Err(e) => {
@@ -359,13 +358,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 // Run emerge --sync to update package database
                                 info!("Running emerge --sync to update package database...");
-                                let sync_result = backend.run_command(
-                                    "default",
-                                    "emerge",
-                                    &["--sync"],
-                                    None
-                                ).await;
-                                
+                                let sync_result = backend
+                                    .run_command("default", "emerge", &["--sync"], None)
+                                    .await;
+
                                 match sync_result {
                                     Ok(_) => info!("✓ Package database synchronized"),
                                     Err(e) => {
@@ -383,58 +379,87 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // 5. Repository setup (next step)
                                 // Note: We should also consider setting MAKEOPTS in make.conf for optimal build performance
                                 info!("Installing cross-compilation prerequisites...");
-                                
+
                                 // Install all required dependencies from README.md in a single emerge call
                                 // Note: We may want to cache these packages later for faster setup
                                 let packages = [
                                     // Needed to build all the stages
-                                    "sys-devel/crossdev", "sys-apps/merge-usr", "dev-vcs/git",
+                                    "sys-devel/crossdev",
+                                    "sys-apps/merge-usr",
+                                    "dev-vcs/git",
                                     // Needed to build the bootloader and kernel
-                                    "sys-boot/u-boot-tools", "sys-devel/dtc", "sys-kernel/dracut", "sys-apps/busybox",
+                                    "dev-embedded/u-boot-tools",
+                                    "sys-apps/dtc",
+                                    "sys-kernel/dracut",
+                                    "sys-apps/busybox",
                                     // Needed to assemble the whole image
-                                    "sys-fs/genimage", "app-arch/xz-utils",
+                                    "sys-fs/genimage",
+                                    "app-arch/xz-utils",
                                     // crossdev repository setup
-                                    "app-eselect/eselect-repository"
+                                    "app-eselect/eselect-repository",
                                 ];
-                                
-                                // Join all packages into a single space-separated string for one emerge call
-                                let packages_str = packages.join(" ");
-                                
-                                info!("Installing packages: {}", packages_str);
-                                let result = backend.run_command(
-                                    "default",
-                                    "emerge",
-                                    &["-v", &packages_str],
-                                    None
-                                ).await;
-                                
+
+                                // Convert packages array to command arguments for single emerge call
+                                let mut emerge_args = vec!["-v"];
+                                for package in packages.iter() {
+                                    emerge_args.push(package);
+                                }
+
+                                info!("Installing all cross-compilation prerequisites...");
+                                let result = backend
+                                    .run_command("default", "emerge", &emerge_args, None)
+                                    .await;
+
+                                match result {
+                                    Ok(_) => info!("✓ All packages installed"),
+                                    Err(e) => {
+                                        eprintln!("Error: Failed to install packages: {}", e);
+                                        std::process::exit(1);
+                                    }
+                                }
+
                                 match result {
                                     Ok(_) => info!("✓ All packages installed"),
                                     Err(e) => {
                                         eprintln!("Warning: Failed to install packages: {}", e);
                                     }
                                 }
-                                
+
                                 // Set up crossdev repository
                                 info!("Setting up crossdev repository...");
-                                let repo_result = backend.run_command(
-                                    "default",
-                                    "eselect",
-                                    &["repository", "create", "crossdev"],
-                                    None
-                                ).await;
-                                
+                                let repo_result = backend
+                                    .run_command(
+                                        "default",
+                                        "eselect",
+                                        &["repository", "create", "crossdev"],
+                                        None,
+                                    )
+                                    .await;
+
                                 match repo_result {
                                     Ok(_) => info!("✓ crossdev repository created"),
                                     Err(e) => {
-                                        eprintln!("Warning: Failed to create crossdev repository: {}", e);
+                                        eprintln!(
+                                            "Warning: Failed to create crossdev repository: {}",
+                                            e
+                                        );
                                     }
                                 }
 
-                                // Note: emerge --sync is skipped in the basic setup as it can take a long time
-                                // Users should run it manually when needed: docker exec -it default emerge --sync
-                                info!("⚠ Skipping emerge --sync (can be run manually later)");
-                                info!("  To sync package database: docker exec -it default emerge --sync");
+                                // Run emerge --sync to update package database
+                                info!("Running emerge --sync to update package database...");
+                                let sync_result = backend
+                                    .run_command("default", "emerge", &["--sync"], None)
+                                    .await;
+
+                                match sync_result {
+                                    Ok(_) => info!("✓ Package database synchronized"),
+                                    Err(e) => {
+                                        eprintln!("Error: Failed to sync package database: {}", e);
+                                        eprintln!("  Package installation cannot proceed without current package information");
+                                        std::process::exit(1);
+                                    }
+                                }
 
                                 println!(
                                     "✓ Sandbox '{}' setup complete with backend: {}",
@@ -444,9 +469,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!("  Image: {}", image);
                                 println!("  Status: Ready for cross-compilation preparation");
                                 println!("\nNext steps:");
-                                println!("  1. Run 'sandbox prepare' to set up crossdev environment");
+                                println!(
+                                    "  1. Run 'sandbox prepare' to set up crossdev environment"
+                                );
                                 println!("  2. Or enter the sandbox with 'sandbox enter'");
-
                             } else {
                                 println!(
                                     "✓ Sandbox '{}' prepared with backend: {}",
@@ -466,17 +492,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 Some(("prepare", sub_matches)) => {
                     let default_target = String::from("riscv64-k1");
-                    let target = sub_matches.get_one::<String>("target")
+                    let target = sub_matches
+                        .get_one::<String>("target")
                         .unwrap_or(&default_target);
 
-                    info!("Preparing cross-compilation environment for target: {}", target);
+                    info!(
+                        "Preparing cross-compilation environment for target: {}",
+                        target
+                    );
 
                     match auto_detect_backend() {
                         Ok(backend) => {
                             if backend.name() == "docker" {
                                 // Load platform configuration
                                 let config_file = format!("config/platforms/{}.toml", target);
-                                let config = match crossdev_config::PlatformConfig::load_from_file(&config_file) {
+                                let config = match crossdev_config::PlatformConfig::load_from_file(
+                                    &config_file,
+                                ) {
                                     Ok(cfg) => cfg,
                                     Err(e) => {
                                         eprintln!("Failed to load platform config: {}", e);
@@ -486,20 +518,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 let target_config = &config.target;
                                 let crossdev_root = format!("/usr/{}", target_config.chost);
-                                let crossdev_make_conf = format!("{}/etc/portage/make.conf", crossdev_root);
+                                let crossdev_make_conf =
+                                    format!("{}/etc/portage/make.conf", crossdev_root);
 
-                                info!("Setting up crossdev environment for {}", target_config.chost);
+                                info!(
+                                    "Setting up crossdev environment for {}",
+                                    target_config.chost
+                                );
 
                                 // Initialize crossdev with proper overlay output
-                                let init_result = backend.run_command(
-                                    "default",
-                                    "crossdev",
-                                    &["--ov-output", "/var/db/repos/crossdev", target_config.chost.as_str(), "--init-target"],
-                                    None
-                                ).await;
+                                let init_result = backend
+                                    .run_command(
+                                        "default",
+                                        "crossdev",
+                                        &[
+                                            "--ov-output",
+                                            "/var/db/repos/crossdev",
+                                            target_config.chost.as_str(),
+                                            "--init-target",
+                                        ],
+                                        None,
+                                    )
+                                    .await;
 
                                 match init_result {
-                                    Ok(_) => info!("✓ Crossdev initialized for {}", target_config.chost),
+                                    Ok(_) => {
+                                        info!("✓ Crossdev initialized for {}", target_config.chost)
+                                    }
                                     Err(e) => {
                                         eprintln!("Failed to initialize crossdev: {}", e);
                                         eprintln!("\nNote: The Docker container may not have crossdev installed.");
@@ -511,16 +556,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
 
                                 // Set profile
-                                let profile_result = backend.run_command(
-                                    "default",
-                                    "sh",
-                                    &["-c", &format!("PORTAGE_CONFIGROOT={} eselect profile set {}", 
-                                        crossdev_root, config.compilation.profile)],
-                                    None
-                                ).await;
+                                let profile_result = backend
+                                    .run_command(
+                                        "default",
+                                        "sh",
+                                        &[
+                                            "-c",
+                                            &format!(
+                                                "PORTAGE_CONFIGROOT={} eselect profile set {}",
+                                                crossdev_root, config.compilation.profile
+                                            ),
+                                        ],
+                                        None,
+                                    )
+                                    .await;
 
                                 match profile_result {
-                                    Ok(_) => info!("✓ Profile set to {}", config.compilation.profile),
+                                    Ok(_) => {
+                                        info!("✓ Profile set to {}", config.compilation.profile)
+                                    }
                                     Err(e) => {
                                         eprintln!("Failed to set profile: {}", e);
                                         std::process::exit(1);
@@ -603,17 +657,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 match unmask_result {
                                     Ok(_) => info!("✓ Crossdev unmasking workarounds applied"),
                                     Err(e) => {
-                                        eprintln!("Warning: Failed to apply unmasking workarounds: {}", e);
+                                        eprintln!(
+                                            "Warning: Failed to apply unmasking workarounds: {}",
+                                            e
+                                        );
                                     }
                                 }
 
                                 // crossdev starts as split_usr layout - convert to merged usr
-                                let merge_usr_result = backend.run_command(
-                                    "default",
-                                    "merge-usr",
-                                    &["--root", &crossdev_root],
-                                    None
-                                ).await;
+                                let merge_usr_result = backend
+                                    .run_command(
+                                        "default",
+                                        "merge-usr",
+                                        &["--root", &crossdev_root],
+                                        None,
+                                    )
+                                    .await;
 
                                 match merge_usr_result {
                                     Ok(_) => info!("✓ merge-usr completed"),
@@ -624,12 +683,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
 
                                 // Install crossdev packages
-                                let install_result = backend.run_command(
-                                    "default",
-                                    "crossdev",
-                                    &[target_config.chost.as_str(), "--g", &config.compilation.gcc_version, "--ex-pkg", "sys-devel/clang-crossdev-wrappers", "--ex-pkg", "sys-devel/rust-std"],
-                                    None
-                                ).await;
+                                let install_result = backend
+                                    .run_command(
+                                        "default",
+                                        "crossdev",
+                                        &[
+                                            target_config.chost.as_str(),
+                                            "--g",
+                                            &config.compilation.gcc_version,
+                                            "--ex-pkg",
+                                            "sys-devel/clang-crossdev-wrappers",
+                                            "--ex-pkg",
+                                            "sys-devel/rust-std",
+                                        ],
+                                        None,
+                                    )
+                                    .await;
 
                                 match install_result {
                                     Ok(_) => info!("✓ Crossdev packages installed"),
@@ -644,7 +713,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!("  CHOST: {}", target_config.chost);
                                 println!("  Profile: {}", config.compilation.profile);
                                 println!("  Status: Ready for cross-compilation");
-
                             } else {
                                 println!("✓ Preparing sandbox environment for target: {}", target);
                                 println!("  Backend: {}", backend.name());
@@ -678,7 +746,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 {
                                     Ok(_) => {
                                         println!("Interactive session completed");
-                                        
+
                                         // Stop the container after use to free resources
                                         self::cleanup_container(name).await;
                                     }
@@ -734,7 +802,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 Some(("run", sub_matches)) => {
-                    let name = sub_matches.get_one::<String>("name").map(|s| s.as_str()).unwrap_or("default");
+                    let name = sub_matches
+                        .get_one::<String>("name")
+                        .map(|s| s.as_str())
+                        .unwrap_or("default");
                     let command = sub_matches.get_one::<String>("command").unwrap();
                     let args: Vec<String> = sub_matches
                         .get_many::<String>("args")
@@ -763,7 +834,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         name
                                     );
                                     println!("{}", output);
-                                    
+
                                     // Stop the container after use to free resources
                                     self::cleanup_container(name).await;
                                 }
@@ -803,9 +874,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 };
 
                                 // First try to stop the container if it's running
-                                let _ = docker
-                                    .stop_container(name, None)
-                                    .await;
+                                let _ = docker.stop_container(name, None).await;
 
                                 match docker
                                     .remove_container(
@@ -821,7 +890,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     Ok(_) => {
                                         println!("✓ Sandbox '{}' deleted successfully", name);
                                         println!("  - Container instance removed");
-                                        
+
                                         // Optionally clean up cache (docker system prune)
                                         if force {
                                             println!("  - Cleaning up Docker cache...");

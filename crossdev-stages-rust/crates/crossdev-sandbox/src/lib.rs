@@ -198,14 +198,15 @@ impl SandboxBackend for DockerBackend {
         let output = std::process::Command::new("docker")
             .args(args)
             .output()
-            .map_err(|e| SandboxError::CommandExecutionFailed(format!(
-                "Failed to execute command: {}", e
-            )))?;
+            .map_err(|e| {
+                SandboxError::CommandExecutionFailed(format!("Failed to execute command: {}", e))
+            })?;
 
         if !output.status.success() {
             let error_msg = String::from_utf8_lossy(&output.stderr);
             return Err(SandboxError::CommandExecutionFailed(format!(
-                "Command failed: {}", error_msg
+                "Command failed: {}",
+                error_msg
             )));
         }
 
@@ -235,7 +236,7 @@ impl SandboxBackend for DockerBackend {
             args.extend(["-w".to_string(), wd.to_string_lossy().into_owned()]);
         }
         args.push(container_id.to_string());
-        
+
         // For interactive shell, use bash -li
         if command == ["bash", "-li"] {
             args.extend(["bash".to_string(), "-li".to_string()]);
@@ -244,22 +245,25 @@ impl SandboxBackend for DockerBackend {
         }
 
         // Execute the interactive command using docker CLI
-        match std::process::Command::new("docker")
-            .args(args)
-            .status() {
+        match std::process::Command::new("docker").args(args).status() {
             Ok(status) => {
                 // Interactive sessions can exit with any code when user exits
                 // Only log if it's not a normal exit (0) or common shell exit codes
-                if !status.success() && !status.code().map_or(false, |c| c == 0 || c == 1 || c == 130) {
+                if !status.success()
+                    && !status
+                        .code()
+                        .map_or(false, |c| c == 0 || c == 1 || c == 130)
+                {
                     info!("Interactive session exited with code: {:?}", status.code());
                 }
                 Ok(())
             }
-            Err(e) => Err(SandboxError::CommandExecutionFailed(format!("Failed to start interactive session: {}", e)))
+            Err(e) => Err(SandboxError::CommandExecutionFailed(format!(
+                "Failed to start interactive session: {}",
+                e
+            ))),
         }
     }
-
-
 
     fn name(&self) -> &str {
         "docker"
@@ -274,7 +278,14 @@ impl DockerBackend {
 
         // First try to check if container exists using docker CLI (more reliable)
         let check_result = std::process::Command::new("docker")
-            .args(["ps", "-a", "--filter", &format!("name={}", container_id), "--format", "{{.Names}}"])
+            .args([
+                "ps",
+                "-a",
+                "--filter",
+                &format!("name={}", container_id),
+                "--format",
+                "{{.Names}}",
+            ])
             .output();
 
         match check_result {
@@ -283,34 +294,43 @@ impl DockerBackend {
                     let container_names = String::from_utf8_lossy(&output.stdout);
                     if container_names.trim() == container_id {
                         info!("✓ Container '{}' already exists", container_id);
-                        
+
                         // Check if it's running
                         let status_result = std::process::Command::new("docker")
                             .args(["inspect", "-f", "{{.State.Running}}", container_id])
                             .output();
-                        
+
                         match status_result {
                             Ok(status_output) => {
                                 if status_output.status.success() {
-                                    let running_status_str = String::from_utf8_lossy(&status_output.stdout);
+                                    let running_status_str =
+                                        String::from_utf8_lossy(&status_output.stdout);
                                     let running_status = running_status_str.trim();
                                     if running_status == "true" {
                                         info!("✓ Container '{}' is already running", container_id);
                                         return Ok(());
                                     } else {
-                                        info!("Container '{}' exists but is stopped, starting it...", container_id);
+                                        info!(
+                                            "Container '{}' exists but is stopped, starting it...",
+                                            container_id
+                                        );
                                         // Start the existing stopped container
                                         let start_result = std::process::Command::new("docker")
                                             .args(["start", container_id])
                                             .output();
-                                        
+
                                         match start_result {
                                             Ok(start_output) => {
                                                 if start_output.status.success() {
-                                                    info!("✓ Container '{}' started successfully", container_id);
+                                                    info!(
+                                                        "✓ Container '{}' started successfully",
+                                                        container_id
+                                                    );
                                                     return Ok(());
                                                 } else {
-                                                    let error_msg = String::from_utf8_lossy(&start_output.stderr);
+                                                    let error_msg = String::from_utf8_lossy(
+                                                        &start_output.stderr,
+                                                    );
                                                     info!("Failed to start existing container '{}': {}", container_id, error_msg);
                                                     // If we can't start it, remove and recreate
                                                     let _ = std::process::Command::new("docker")
@@ -319,7 +339,10 @@ impl DockerBackend {
                                                 }
                                             }
                                             Err(e) => {
-                                                info!("Failed to start existing container '{}': {}", container_id, e);
+                                                info!(
+                                                    "Failed to start existing container '{}': {}",
+                                                    container_id, e
+                                                );
                                                 // If we can't start it, remove and recreate
                                                 let _ = std::process::Command::new("docker")
                                                     .args(["rm", "-f", container_id])
@@ -341,7 +364,10 @@ impl DockerBackend {
                 }
             }
             Err(e) => {
-                info!("Failed to check for existing container '{}': {}", container_id, e);
+                info!(
+                    "Failed to check for existing container '{}': {}",
+                    container_id, e
+                );
             }
         }
 
@@ -350,7 +376,7 @@ impl DockerBackend {
         // Create new container using docker run
         let args = vec![
             "run".to_string(),
-            "-d".to_string(),  // Detached mode
+            "-d".to_string(), // Detached mode
             "--name".to_string(),
             container_id.to_string(),
             "gentoo/stage3".to_string(),
@@ -358,25 +384,26 @@ impl DockerBackend {
             "infinity".to_string(),
         ];
 
-        match std::process::Command::new("docker")
-            .args(&args)
-            .output() {
+        match std::process::Command::new("docker").args(&args).output() {
             Ok(output) => {
                 if output.status.success() {
-                    info!("✓ Container '{}' created and started successfully", container_id);
+                    info!(
+                        "✓ Container '{}' created and started successfully",
+                        container_id
+                    );
                     Ok(())
                 } else {
                     let error_msg = String::from_utf8_lossy(&output.stderr);
                     Err(SandboxError::CommandExecutionFailed(format!(
-                        "Failed to create container '{}': {}", container_id, error_msg
+                        "Failed to create container '{}': {}",
+                        container_id, error_msg
                     )))
                 }
             }
-            Err(e) => {
-                Err(SandboxError::CommandExecutionFailed(format!(
-                    "Failed to execute docker run: {}", e
-                )))
-            }
+            Err(e) => Err(SandboxError::CommandExecutionFailed(format!(
+                "Failed to execute docker run: {}",
+                e
+            ))),
         }
     }
 
@@ -508,7 +535,7 @@ mod tests {
     fn test_sandbox_enter_error_handling() {
         // Test that the sandbox enter logic handles errors properly
         // This test verifies the logic without requiring Docker to be running
-        
+
         // Test auto-detection
         let result = auto_detect_backend();
         match result {
@@ -521,7 +548,7 @@ mod tests {
                 println!("No backend available (expected in test environment)");
             }
         }
-        
+
         // Test that we can create backend instances
         #[cfg(feature = "docker")]
         {
@@ -531,7 +558,7 @@ mod tests {
                 Err(e) => println!("Docker backend creation failed (expected): {}", e),
             }
         }
-        
+
         #[cfg(feature = "bubblewrap")]
         {
             let bubblewrap_backend = BubblewrapBackend::new();
