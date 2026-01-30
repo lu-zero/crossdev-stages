@@ -188,6 +188,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     cflags: "-O2 -pipe".to_string(),
                     gcc_version: "16.0.0".to_string(),
                     profile: "default/linux/amd64/17.1".to_string(),
+                    makeopts: "-j$(nproc) --load-average=$(nproc)".to_string(),
+                    emerge_default_opts: "--jobs=$(nproc) --load-average=$(nproc) --quiet-build y"
+                        .to_string(),
                 },
                 repositories: crossdev_config::RepositoryConfig {
                     opensbi_repo: "https://github.com/riscv/opensbi".to_string(),
@@ -338,13 +341,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
 
                                 // Set MAKEOPTS for parallel builds (adjust based on available CPU cores)
+                                // Set MAKEOPTS and EMERGE_DEFAULT_OPTS for optimal performance
                                 info!("Configuring MAKEOPTS and EMERGE_DEFAULT_OPTS for optimal performance");
                                 info!("  MAKEOPTS will use all available CPU cores with proper load averaging");
                                 info!("  EMERGE_DEFAULT_OPTS will enable parallel package installation");
+
+                                // Use default values for basic setup (auto-detect CPU cores)
+                                let makeopts = "-j$(nproc) --load-average=$(nproc)";
+                                let emerge_opts =
+                                    "--jobs=$(nproc) --load-average=$(nproc) --quiet-build y";
+
+                                info!("  Using MAKEOPTS: {}", makeopts);
+                                info!("  Using EMERGE_DEFAULT_OPTS: {}", emerge_opts);
+
                                 let makeopts_result = backend.run_command(
                                     name,
                                     "sh",
-                                    &["-c", "echo 'MAKEOPTS=\"-j$(nproc) --load-average=$(nproc)\"' >> /etc/portage/make.conf && echo 'EMERGE_DEFAULT_OPTS=\"--jobs=$(nproc) --load-average=$(nproc) --quiet-build y\"' >> /etc/portage/make.conf"],
+                                    &["-c", &format!("echo 'MAKEOPTS=\"{}\"' >> /etc/portage/make.conf && echo 'EMERGE_DEFAULT_OPTS=\"{}\"' >> /etc/portage/make.conf", makeopts, emerge_opts)],
                                     None
                                 ).await;
 
@@ -352,10 +365,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     Ok(_) => {
                                         info!("✓ MAKEOPTS and EMERGE_DEFAULT_OPTS configured");
                                         info!("  Configuration:");
-                                        info!(
-                                            "    - MAKEOPTS=\"-j$(nproc) --load-average=$(nproc)\""
-                                        );
-                                        info!("    - EMERGE_DEFAULT_OPTS=\"--jobs=$(nproc) --load-average=$(nproc) --quiet-build y\"");
+                                        info!("    - MAKEOPTS=\"{}\"", makeopts);
+                                        info!("    - EMERGE_DEFAULT_OPTS=\"{}\"", emerge_opts);
                                     }
                                     Err(e) => {
                                         eprintln!("Warning: Failed to set MAKEOPTS/EMERGE_DEFAULT_OPTS: {}", e);

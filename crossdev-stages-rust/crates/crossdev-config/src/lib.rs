@@ -38,6 +38,18 @@ pub struct CompilationConfig {
     pub cflags: String,
     pub gcc_version: String,
     pub profile: String,
+    #[serde(default = "default_makeopts")]
+    pub makeopts: String,
+    #[serde(default = "default_emerge_opts")]
+    pub emerge_default_opts: String,
+}
+
+fn default_makeopts() -> String {
+    "-j$(nproc) --load-average=$(nproc)".to_string()
+}
+
+fn default_emerge_opts() -> String {
+    "--jobs=$(nproc) --load-average=$(nproc) --quiet-build y".to_string()
 }
 
 /// Repository configuration
@@ -174,6 +186,8 @@ mod tests {
             cflags = "-O3 -march=rv64gcv_zvl256b -pipe"
             gcc_version = "16.0.0_p20251005"
             profile = "default/linux/riscv/23.0/rv64/lp64d"
+            makeopts = "-j$(nproc) --load-average=$(nproc)"
+            emerge_default_opts = "--jobs=$(nproc) --load-average=$(nproc) --quiet-build y"
             
             [repositories]
             opensbi_repo = "https://github.com/cyyself/opensbi"
@@ -251,6 +265,8 @@ mod tests {
                 cflags: "test".to_string(),
                 gcc_version: "test".to_string(),
                 profile: "test".to_string(),
+                makeopts: "test".to_string(),
+                emerge_default_opts: "test".to_string(),
             },
             repositories: RepositoryConfig {
                 opensbi_repo: "test".to_string(),
