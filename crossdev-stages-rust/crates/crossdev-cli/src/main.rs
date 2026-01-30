@@ -340,12 +340,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
 
+                                // Set up package.use for u-boot-tools with python USE flag
+                                info!("Setting up package.use configurations...");
+                                let uboot_use_result = backend.run_command(
+                                    "default",
+                                    "sh",
+                                    &["-c", "mkdir -p /etc/portage/package.use && echo 'sys-apps/dtc python' > /etc/portage/package.use/u-boot-tools"],
+                                    None
+                                ).await;
+                                
+                                match uboot_use_result {
+                                    Ok(_) => info!("✓ package.use/u-boot-tools configured with python USE flag"),
+                                    Err(e) => {
+                                        eprintln!("Warning: Failed to configure u-boot-tools USE flags: {}", e);
+                                    }
+                                }
+
                                 // Install essential packages for cross-compilation
                                 // Following proper Portage setup order:
                                 // 1. ACCEPT_KEYWORDS configured ✓
-                                // 2. emerge --sync (skipped for speed)
-                                // 3. Install packages (current step)
-                                // 4. Repository setup (next step)
+                                // 2. package.use configured ✓
+                                // 3. emerge --sync (skipped for speed)
+                                // 4. Install packages (current step)
+                                // 5. Repository setup (next step)
                                 info!("Installing cross-compilation prerequisites...");
                                 
                                 // Install all required dependencies from README.md
