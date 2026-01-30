@@ -311,26 +311,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let host_arch = std::env::consts::ARCH;
                                 let gentoo_arch = crossdev_utils::arch::parse_arch(host_arch);
 
-                                // Map Gentoo architecture to ACCEPT_KEYWORDS
-                                let accept_keyword = match gentoo_arch.as_str() {
-                                    "amd64" => "~amd64",
-                                    "arm64" => "~arm64",
-                                    "riscv" => "~riscv",
-                                    "arm" => "~arm",
-                                    "i686" => "~x86",
-                                    "powerpc" => "~ppc",
-                                    "powerpc64" => "~ppc64",
-                                    "hppa" => "~hppa",
-                                    _ => "~amd64", // Default fallback
-                                };
+                                // ACCEPT_KEYWORDS is now simply ~ + gentoo_arch
+                                // Since arch parsing returns the correct Gentoo architecture names
+                                let accept_keyword = format!("~{}", gentoo_arch);
 
                                 info!("Detected host architecture: {} (Gentoo: {}) -> ACCEPT_KEYWORDS={}", 
                                     host_arch, gentoo_arch, accept_keyword);
+                                info!("Preserving existing make.conf content and updating ACCEPT_KEYWORDS");
 
                                 let accept_keywords_result = backend.run_command(
                                     name,
                                     "sh",
-                                    &["-c", &format!("echo 'ACCEPT_KEYWORDS={}' > /etc/portage/make.conf", accept_keyword)],
+                                    &["-c", &format!("if [ -f /etc/portage/make.conf ]; then sed -i '/^ACCEPT_KEYWORDS=/d' /etc/portage/make.conf; fi && echo 'ACCEPT_KEYWORDS={}' >> /etc/portage/make.conf", accept_keyword)],
                                     None
                                 ).await;
 

@@ -26,8 +26,8 @@ pub fn parse_arch(arch: &str) -> String {
         "aarch64" => "arm64", // Normalize aarch64 to arm64
         "riscv" => "riscv",   // Gentoo uses "riscv" for the directory
         "arm" => "arm",       // Gentoo uses "arm" for the directory
-        "ppc" => "powerpc",
-        "ppc64" => "powerpc64",
+        "ppc" => "ppc",
+        "ppc64" => "ppc64",
         _ => arch,
     };
 
@@ -35,7 +35,8 @@ pub fn parse_arch(arch: &str) -> String {
     let arch = if arch.starts_with("parisc") {
         arch.replacen("parisc", "hppa", 1)
     } else if arch.starts_with("ppc") && !arch.starts_with("powerpc") {
-        arch.replacen("ppc", "powerpc", 1)
+        // Keep ppc/ppc64 as-is for ACCEPT_KEYWORDS compatibility
+        arch.to_string()
     } else {
         arch.to_string()
     };
@@ -91,8 +92,8 @@ mod tests {
         assert_eq!(parse_arch("aarch64"), "arm64"); // Normalize to arm64
         assert_eq!(parse_arch("riscv"), "riscv"); // Gentoo uses "riscv" for directory
         assert_eq!(parse_arch("arm"), "arm"); // Gentoo uses "arm" for directory
-        assert_eq!(parse_arch("ppc"), "powerpc");
-        assert_eq!(parse_arch("ppc64"), "powerpc64");
+        assert_eq!(parse_arch("ppc"), "ppc");
+        assert_eq!(parse_arch("ppc64"), "ppc64");
         assert_eq!(parse_arch("parisc"), "hppa");
         assert_eq!(parse_arch("parisc64"), "hppa64");
     }
