@@ -363,9 +363,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // 3. emerge --sync (skipped for speed)
                                 // 4. Install packages (current step)
                                 // 5. Repository setup (next step)
+                                // Note: We should also consider setting MAKEOPTS in make.conf for optimal build performance
                                 info!("Installing cross-compilation prerequisites...");
                                 
-                                // Install all required dependencies from README.md
+                                // Install all required dependencies from README.md in a single emerge call
                                 // Note: We may want to cache these packages later for faster setup
                                 let packages = [
                                     // Needed to build all the stages
@@ -378,19 +379,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     "app-eselect/eselect-repository"
                                 ];
                                 
-                                for package in packages.iter() {
-                                    info!("Installing {}...", package);
-                                    let result = backend.run_command(
-                                        "default",
-                                        "emerge",
-                                        &["-v", package],
-                                        None
-                                    ).await;
-                                    
-                                    match result {
-                                        Ok(_) => info!("✓ {} installed", package),
-                                        Err(e) => {
-                                            eprintln!("Warning: Failed to install {}: {}", package, e);
+                                // Join all packages into a single space-separated string for one emerge call
+                                let packages_str = packages.join(" ");
+                                
+                                info!("Installing packages: {}", packages_str);
+                                let result = backend.run_command(
+                                    "default",
+                                    "emerge",
+                                    &["-v", &packages_str],
+                                    None
+                                ).await;
+                                
+                                match result {
+                                    Ok(_) => info!("✓ All packages installed"),
+                                    Err(e) => {
+                                        eprintln!("Warning: Failed to install packages: {}", e);
+                                        // Fallback to individual installation if combined fails
+                                        for package in packages.iter() {
+                                            info!("Installing {}...", package);
+                                            let individual_result = backend.run_command(
+                                                "default",
+                                                "emerge",
+                                                &["-v", package],
+                                                None
+                                            ).await;
+                                            
+                                            match individual_result {
+                                                Ok(_) => info!("✓ {} installed", package),
+                                                Err(e) => {
+                                                    eprintln!("Warning: Failed to install {}: {}", package, e);
+                                                }
+                                            }
                                         }
                                     }
                                 }
