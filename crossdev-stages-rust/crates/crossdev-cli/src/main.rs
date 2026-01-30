@@ -356,11 +356,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
 
+                                // Run emerge --sync to update package database
+                                info!("Running emerge --sync to update package database...");
+                                let sync_result = backend.run_command(
+                                    "default",
+                                    "emerge",
+                                    &["--sync"],
+                                    None
+                                ).await;
+                                
+                                match sync_result {
+                                    Ok(_) => info!("✓ Package database synchronized"),
+                                    Err(e) => {
+                                        eprintln!("Warning: Failed to sync package database: {}", e);
+                                        eprintln!("This can happen if the network is unavailable or repos are misconfigured.");
+                                    }
+                                }
+
                                 // Install essential packages for cross-compilation
                                 // Following proper Portage setup order:
                                 // 1. ACCEPT_KEYWORDS configured ✓
                                 // 2. package.use configured ✓
-                                // 3. emerge --sync (skipped for speed)
+                                // 3. emerge --sync completed ✓
                                 // 4. Install packages (current step)
                                 // 5. Repository setup (next step)
                                 // Note: We should also consider setting MAKEOPTS in make.conf for optimal build performance
