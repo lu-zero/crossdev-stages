@@ -45,11 +45,11 @@ pub struct CompilationConfig {
 }
 
 fn default_makeopts() -> String {
-    "-j$(nproc) --load-average=$(nproc)".to_string()
+    "-j4 --load-average 4".to_string()
 }
 
 fn default_emerge_opts() -> String {
-    "--jobs=$(nproc) --load-average=$(nproc) --quiet-build y".to_string()
+    "--jobs 4 --load-average 4 --quiet-build y".to_string()
 }
 
 /// Repository configuration
