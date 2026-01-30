@@ -394,23 +394,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     Ok(_) => info!("✓ All packages installed"),
                                     Err(e) => {
                                         eprintln!("Warning: Failed to install packages: {}", e);
-                                        // Fallback to individual installation if combined fails
-                                        for package in packages.iter() {
-                                            info!("Installing {}...", package);
-                                            let individual_result = backend.run_command(
-                                                "default",
-                                                "emerge",
-                                                &["-v", package],
-                                                None
-                                            ).await;
-                                            
-                                            match individual_result {
-                                                Ok(_) => info!("✓ {} installed", package),
-                                                Err(e) => {
-                                                    eprintln!("Warning: Failed to install {}: {}", package, e);
-                                                }
-                                            }
-                                        }
                                     }
                                 }
                                 
