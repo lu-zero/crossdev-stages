@@ -119,13 +119,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .subcommand(
                     Command::new("run")
                         .about("Run a command in the sandbox (setup if not prepared)")
+                        .arg(Arg::new("command").required(true).help("Command to run"))
+                        .arg(Arg::new("args").num_args(0..).help("Command arguments"))
                         .arg(
                             Arg::new("name")
+                                .short('n')
+                                .long("name")
                                 .help("Name of the sandbox to use")
                                 .default_value("default"),
                         )
-                        .arg(Arg::new("command").required(true).help("Command to run"))
-                        .arg(Arg::new("args").num_args(0..).help("Command arguments"))
                         .arg(
                             Arg::new("working-dir")
                                 .short('w')
@@ -266,9 +268,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     match auto_detect_backend() {
                         Ok(backend) => {
                             if backend.name() == "docker" {
-                                // Focus on image pulling and preparation
-                                // The actual container will be created on-demand by enter/run
-                                
                                 // Ensure the image is available, pulling if necessary
                                 let pull_result = std::process::Command::new("docker")
                                     .args(["pull", image])
@@ -278,25 +277,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     Ok(output) => {
                                         if output.status.success() {
                                             info!("Image '{}' is ready", image);
-                                            println!(
-                                                "✓ Sandbox '{}' prepared with backend: {}",
-                                                name,
-                                                backend.name()
-                                            );
-                                            println!("  Image: {}", image);
-                                            println!("  Status: Ready (container will be created on first use)");
                                         } else {
                                             let error_msg = String::from_utf8_lossy(&output.stderr);
                                             // If image already exists, that's fine
                                             if !error_msg.contains("not found") && !error_msg.contains("No such image") {
                                                 info!("Image '{}' is already available", image);
-                                                println!(
-                                                    "✓ Sandbox '{}' prepared with backend: {}",
-                                                    name,
-                                                    backend.name()
-                                                );
-                                                println!("  Image: {}", image);
-                                                println!("  Status: Ready (container will be created on first use)");
                                             } else {
                                                 eprintln!("Failed to pull image: {}", error_msg);
                                                 std::process::exit(1);
@@ -308,6 +293,69 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         std::process::exit(1);
                                     }
                                 }
+
+                                // Set up basic Portage configuration in the container
+                                info!("Setting up basic Portage environment");
+                                
+                                // Ensure container is ready by running a simple command
+                                let _ = backend.run_command(
+                                    name,
+                                    "echo",
+                                    &["Container ready"],
+                                    None
+                                ).await;
+
+                                // Set ACCEPT_KEYWORDS based on host architecture (setup is always for the host)
+                                let host_arch = std::env::consts::ARCH;
+                                let gentoo_arch = crossdev_utils::arch::parse_arch(host_arch);
+                                
+                                // Map Gentoo architecture to ACCEPT_KEYWORDS
+                                let accept_keyword = match gentoo_arch.as_str() {
+                                    "amd64" => "~amd64",
+                                    "arm64" => "~arm64",
+                                    "riscv" => "~riscv",
+                                    "arm" => "~arm",
+                                    "i686" => "~x86",
+                                    "powerpc" => "~ppc",
+                                    "powerpc64" => "~ppc64",
+                                    "hppa" => "~hppa",
+                                    _ => "~amd64", // Default fallback
+                                };
+                                
+                                info!("Detected host architecture: {} (Gentoo: {}) -> ACCEPT_KEYWORDS={}", 
+                                    host_arch, gentoo_arch, accept_keyword);
+                                
+                                let accept_keywords_result = backend.run_command(
+                                    name,
+                                    "sh",
+                                    &["-c", &format!("echo 'ACCEPT_KEYWORDS={}' > /etc/portage/make.conf", accept_keyword)],
+                                    None
+                                ).await;
+
+                                match accept_keywords_result {
+                                    Ok(_) => info!("✓ ACCEPT_KEYWORDS configured"),
+                                    Err(e) => {
+                                        eprintln!("Warning: Failed to set ACCEPT_KEYWORDS: {}", e);
+                                        eprintln!("This is expected if the container doesn't have Portage configured yet.");
+                                    }
+                                }
+
+                                // Note: emerge --sync is skipped in the basic setup as it can take a long time
+                                // Users should run it manually when needed: docker exec -it default emerge --sync
+                                info!("⚠ Skipping emerge --sync (can be run manually later)");
+                                info!("  To sync package database: docker exec -it default emerge --sync");
+
+                                println!(
+                                    "✓ Sandbox '{}' setup complete with backend: {}",
+                                    name,
+                                    backend.name()
+                                );
+                                println!("  Image: {}", image);
+                                println!("  Status: Ready for cross-compilation preparation");
+                                println!("\nNext steps:");
+                                println!("  1. Run 'sandbox prepare' to set up crossdev environment");
+                                println!("  2. Or enter the sandbox with 'sandbox enter'");
+
                             } else {
                                 println!(
                                     "✓ Sandbox '{}' prepared with backend: {}",
@@ -332,28 +380,136 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     info!("Preparing cross-compilation environment for target: {}", target);
 
-                    // This would be the proper prepare command based on the reference
-                    // For now, we'll implement a basic version that sets up the environment
-                    
                     match auto_detect_backend() {
                         Ok(backend) => {
                             if backend.name() == "docker" {
-                                println!("✓ Preparing Docker-based cross-compilation environment");
+                                // Load platform configuration
+                                let config_file = format!("config/platforms/{}.toml", target);
+                                let config = match crossdev_config::PlatformConfig::load_from_file(&config_file) {
+                                    Ok(cfg) => cfg,
+                                    Err(e) => {
+                                        eprintln!("Failed to load platform config: {}", e);
+                                        std::process::exit(1);
+                                    }
+                                };
+
+                                let target_config = &config.target;
+                                let crossdev_root = format!("/usr/{}", target_config.chost);
+                                let crossdev_make_conf = format!("{}/etc/portage/make.conf", crossdev_root);
+
+                                info!("Setting up crossdev environment for {}", target_config.chost);
+
+                                // Initialize crossdev
+                                let init_result = backend.run_command(
+                                    "default",
+                                    "crossdev",
+                                    &[target_config.chost.as_str(), "--init-target"],
+                                    None
+                                ).await;
+
+                                match init_result {
+                                    Ok(_) => info!("✓ Crossdev initialized for {}", target_config.chost),
+                                    Err(e) => {
+                                        eprintln!("Failed to initialize crossdev: {}", e);
+                                        eprintln!("\nNote: The Docker container may not have crossdev installed.");
+                                        eprintln!("To install crossdev in the container, run:");
+                                        eprintln!("  docker exec -it default emerge -av crossdev");
+                                        eprintln!("\nAlternatively, use a pre-configured Gentoo container with crossdev.");
+                                        std::process::exit(1);
+                                    }
+                                }
+
+                                // Set profile
+                                let profile_result = backend.run_command(
+                                    "default",
+                                    "sh",
+                                    &["-c", &format!("PORTAGE_CONFIGROOT={} eselect profile set {}", 
+                                        crossdev_root, config.compilation.profile)],
+                                    None
+                                ).await;
+
+                                match profile_result {
+                                    Ok(_) => info!("✓ Profile set to {}", config.compilation.profile),
+                                    Err(e) => {
+                                        eprintln!("Failed to set profile: {}", e);
+                                        std::process::exit(1);
+                                    }
+                                }
+
+                                // Configure make.conf
+                                let make_conf_result = backend.run_command(
+                                    "default",
+                                    "sh",
+                                    &["-c", &format!(
+                                        "echo 'CFLAGS=\"{}\"' > {} && echo 'LLVM_TARGETS=\"AArch64 RISCV\"' >> {}",
+                                        config.compilation.cflags,
+                                        crossdev_make_conf,
+                                        crossdev_make_conf
+                                    )],
+                                    None
+                                ).await;
+
+                                match make_conf_result {
+                                    Ok(_) => info!("✓ make.conf configured"),
+                                    Err(e) => {
+                                        eprintln!("Failed to configure make.conf: {}", e);
+                                        std::process::exit(1);
+                                    }
+                                }
+
+                                // Setup directories
+                                let setup_dirs_result = backend.run_command(
+                                    "default",
+                                    "sh",
+                                    &["-c", &format!(
+                                        "mkdir -p {}/etc/portage/env && \
+                                         echo 'CFLAGS=\"-O3 -pipe\"' > {}/etc/portage/env/plain.conf && \
+                                         echo 'CXXFLAGS=\"-O3 -pipe\"' >> {}/etc/portage/env/plain.conf && \
+                                         mkdir -p {}/etc/portage/package.env && \
+                                         echo 'dev-lang/rust plain.conf' > {}/etc/portage/package.env/rust && \
+                                         mkdir -p {}/etc/portage/package.use && \
+                                         echo 'dev-lang/rust rustfmt -system-llvm' > {}/etc/portage/package.use/rust",
+                                        crossdev_root,
+                                        crossdev_root,
+                                        crossdev_root,
+                                        crossdev_root,
+                                        crossdev_root,
+                                        crossdev_root,
+                                        crossdev_root
+                                    )],
+                                    None
+                                ).await;
+
+                                match setup_dirs_result {
+                                    Ok(_) => info!("✓ Portage directories configured"),
+                                    Err(e) => {
+                                        eprintln!("Failed to setup directories: {}", e);
+                                        std::process::exit(1);
+                                    }
+                                }
+
+                                // Install crossdev packages
+                                let install_result = backend.run_command(
+                                    "default",
+                                    "crossdev",
+                                    &[target_config.chost.as_str(), "--g", &config.compilation.gcc_version, "--ex-pkg", "sys-devel/clang-crossdev-wrappers", "--ex-pkg", "sys-devel/rust-std"],
+                                    None
+                                ).await;
+
+                                match install_result {
+                                    Ok(_) => info!("✓ Crossdev packages installed"),
+                                    Err(e) => {
+                                        eprintln!("Failed to install crossdev packages: {}", e);
+                                        std::process::exit(1);
+                                    }
+                                }
+
+                                println!("✓ Cross-compilation environment prepared successfully");
                                 println!("  Target: {}", target);
-                                println!("  Backend: {}", backend.name());
+                                println!("  CHOST: {}", target_config.chost);
+                                println!("  Profile: {}", config.compilation.profile);
                                 println!("  Status: Ready for cross-compilation");
-                                
-                                // In a full implementation, this would:
-                                // 1. Initialize crossdev for the target
-                                // 2. Configure Portage settings
-                                // 3. Set up profiles and make.conf
-                                // 4. Install cross-compilation toolchain
-                                
-                                println!("\nNote: Full crossdev preparation would require:");
-                                println!("  - crossdev tool installation");
-                                println!("  - Portage configuration");
-                                println!("  - Target-specific toolchain setup");
-                                println!("  - Profile and package configuration");
+
                             } else {
                                 println!("✓ Preparing sandbox environment for target: {}", target);
                                 println!("  Backend: {}", backend.name());
@@ -443,7 +599,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
                 Some(("run", sub_matches)) => {
-                    let name = sub_matches.get_one::<String>("name").unwrap();
+                    let name = sub_matches.get_one::<String>("name").map(|s| s.as_str()).unwrap_or("default");
                     let command = sub_matches.get_one::<String>("command").unwrap();
                     let args: Vec<String> = sub_matches
                         .get_many::<String>("args")

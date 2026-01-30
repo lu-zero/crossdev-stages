@@ -272,47 +272,80 @@ impl DockerBackend {
     async fn ensure_container_ready(docker: &Docker, container_id: &str) -> SandboxResult<()> {
         info!("Ensuring container '{}' is ready...", container_id);
 
-        // Check if container already exists
-        match docker.inspect_container(container_id, None).await {
-            Ok(inspect) => {
-                info!("✓ Container '{}' already exists", container_id);
-                
-                if let Some(state) = inspect.state {
-                    if state.running.unwrap_or(false) {
-                        info!("✓ Container '{}' is already running", container_id);
-                        return Ok(());
-                    } else {
-                        info!("Container '{}' exists but is stopped, starting it...", container_id);
-                        // Start the existing stopped container
-                        match docker.start_container::<String>(container_id, None).await {
-                            Ok(_) => {
-                                info!("✓ Container '{}' started successfully", container_id);
-                                return Ok(());
+        // First try to check if container exists using docker CLI (more reliable)
+        let check_result = std::process::Command::new("docker")
+            .args(["ps", "-a", "--filter", &format!("name={}", container_id), "--format", "{{.Names}}"])
+            .output();
+
+        match check_result {
+            Ok(output) => {
+                if output.status.success() {
+                    let container_names = String::from_utf8_lossy(&output.stdout);
+                    if container_names.trim() == container_id {
+                        info!("✓ Container '{}' already exists", container_id);
+                        
+                        // Check if it's running
+                        let status_result = std::process::Command::new("docker")
+                            .args(["inspect", "-f", "{{.State.Running}}", container_id])
+                            .output();
+                        
+                        match status_result {
+                            Ok(status_output) => {
+                                if status_output.status.success() {
+                                    let running_status_str = String::from_utf8_lossy(&status_output.stdout);
+                                    let running_status = running_status_str.trim();
+                                    if running_status == "true" {
+                                        info!("✓ Container '{}' is already running", container_id);
+                                        return Ok(());
+                                    } else {
+                                        info!("Container '{}' exists but is stopped, starting it...", container_id);
+                                        // Start the existing stopped container
+                                        let start_result = std::process::Command::new("docker")
+                                            .args(["start", container_id])
+                                            .output();
+                                        
+                                        match start_result {
+                                            Ok(start_output) => {
+                                                if start_output.status.success() {
+                                                    info!("✓ Container '{}' started successfully", container_id);
+                                                    return Ok(());
+                                                } else {
+                                                    let error_msg = String::from_utf8_lossy(&start_output.stderr);
+                                                    info!("Failed to start existing container '{}': {}", container_id, error_msg);
+                                                    // If we can't start it, remove and recreate
+                                                    let _ = std::process::Command::new("docker")
+                                                        .args(["rm", "-f", container_id])
+                                                        .output();
+                                                }
+                                            }
+                                            Err(e) => {
+                                                info!("Failed to start existing container '{}': {}", container_id, e);
+                                                // If we can't start it, remove and recreate
+                                                let _ = std::process::Command::new("docker")
+                                                    .args(["rm", "-f", container_id])
+                                                    .output();
+                                            }
+                                        }
+                                    }
+                                }
                             }
                             Err(e) => {
-                                info!("Failed to start existing container '{}': {}", container_id, e);
-                                // If we can't start it, remove and recreate
-                                let _ = docker.remove_container(
-                                    container_id,
-                                    Some(bollard::container::RemoveContainerOptions {
-                                        force: true,
-                                        ..Default::default()
-                                    }),
-                                ).await;
+                                info!("Failed to check container status '{}': {}", container_id, e);
+                                // If we can't check status, remove and recreate
+                                let _ = std::process::Command::new("docker")
+                                    .args(["rm", "-f", container_id])
+                                    .output();
                             }
                         }
                     }
                 }
             }
-            Err(e) if e.to_string().contains("No such container") => {
-                info!("Container '{}' doesn't exist, creating it...", container_id);
-            }
             Err(e) => {
-                return Err(SandboxError::CommandExecutionFailed(format!(
-                    "Error checking container '{}': {}", container_id, e
-                )));
+                info!("Failed to check for existing container '{}': {}", container_id, e);
             }
         }
+
+        info!("Container '{}' doesn't exist, creating it...", container_id);
 
         // Create new container using docker run
         let args = vec![
