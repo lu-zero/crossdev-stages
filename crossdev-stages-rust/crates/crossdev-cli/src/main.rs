@@ -335,8 +335,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 match accept_keywords_result {
                                     Ok(_) => info!("✓ ACCEPT_KEYWORDS configured"),
                                     Err(e) => {
-                                        eprintln!("Warning: Failed to set ACCEPT_KEYWORDS: {}", e);
-                                        eprintln!("This is expected if the container doesn't have Portage configured yet.");
+                                        eprintln!("Error: Failed to set ACCEPT_KEYWORDS: {}", e);
+                                        std::process::exit(1);
                                     }
                                 }
 
@@ -352,7 +352,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 match uboot_use_result {
                                     Ok(_) => info!("✓ package.use/u-boot-tools configured with python USE flag"),
                                     Err(e) => {
-                                        eprintln!("Warning: Failed to configure u-boot-tools USE flags: {}", e);
+                                        eprintln!("Error: Failed to configure u-boot-tools USE flags: {}", e);
+                                        std::process::exit(1);
                                     }
                                 }
 
@@ -368,8 +369,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 match sync_result {
                                     Ok(_) => info!("✓ Package database synchronized"),
                                     Err(e) => {
-                                        eprintln!("Warning: Failed to sync package database: {}", e);
-                                        eprintln!("This can happen if the network is unavailable or repos are misconfigured.");
+                                        eprintln!("Error: Failed to sync package database: {}", e);
+                                        std::process::exit(1);
                                     }
                                 }
 
