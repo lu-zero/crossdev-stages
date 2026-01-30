@@ -341,21 +341,56 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
 
                                 // Install essential packages for cross-compilation
+                                // Following proper Portage setup order:
+                                // 1. ACCEPT_KEYWORDS configured ✓
+                                // 2. emerge --sync (skipped for speed)
+                                // 3. Install packages (current step)
+                                // 4. Repository setup (next step)
                                 info!("Installing cross-compilation prerequisites...");
                                 
-                                // Install crossdev (the main cross-compilation tool)
-                                let crossdev_result = backend.run_command(
+                                // Install all required dependencies from README.md
+                                // Note: We may want to cache these packages later for faster setup
+                                let packages = [
+                                    // Needed to build all the stages
+                                    "crossdev", "merge-usr", "dev-vcs/git",
+                                    // Needed to build the bootloader and kernel
+                                    "sys-boot/u-boot-tools", "sys-devel/dtc", "sys-kernel/dracut", "sys-apps/busybox",
+                                    // Needed to assemble the whole image
+                                    "sys-fs/genimage", "app-arch/xz-utils",
+                                    // crossdev repository setup
+                                    "app-eselect/eselect-repository"
+                                ];
+                                
+                                for package in packages.iter() {
+                                    info!("Installing {}...", package);
+                                    let result = backend.run_command(
+                                        "default",
+                                        "emerge",
+                                        &["-v", package],
+                                        None
+                                    ).await;
+                                    
+                                    match result {
+                                        Ok(_) => info!("✓ {} installed", package),
+                                        Err(e) => {
+                                            eprintln!("Warning: Failed to install {}: {}", package, e);
+                                        }
+                                    }
+                                }
+                                
+                                // Set up crossdev repository
+                                info!("Setting up crossdev repository...");
+                                let repo_result = backend.run_command(
                                     "default",
-                                    "emerge",
-                                    &["-v", "crossdev"],
+                                    "eselect",
+                                    &["repository", "create", "crossdev"],
                                     None
                                 ).await;
-
-                                match crossdev_result {
-                                    Ok(_) => info!("✓ crossdev installed"),
+                                
+                                match repo_result {
+                                    Ok(_) => info!("✓ crossdev repository created"),
                                     Err(e) => {
-                                        eprintln!("Warning: Failed to install crossdev: {}", e);
-                                        eprintln!("You may need to install it manually: docker exec -it default emerge -v crossdev");
+                                        eprintln!("Warning: Failed to create crossdev repository: {}", e);
                                     }
                                 }
 
