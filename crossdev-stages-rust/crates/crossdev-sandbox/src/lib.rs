@@ -374,15 +374,14 @@ impl DockerBackend {
         info!("Container '{}' doesn't exist, creating it...", container_id);
 
         // Create new container using docker create (better for reusable instances)
-        // Use tail -f /dev/null to keep container running (better than sleep infinity)
+        // Use sleep infinity to keep container running (simple and reliable)
         let args = vec![
             "create".to_string(), // Use create instead of run for better lifecycle management
             "--name".to_string(),
             container_id.to_string(),
             "gentoo/stage3".to_string(),
-            "tail".to_string(),
-            "-f".to_string(),
-            "/dev/null".to_string(), // Keep container running without consuming CPU
+            "sleep".to_string(),
+            "infinity".to_string(), // Keep container running indefinitely
         ];
 
         match std::process::Command::new("docker").args(&args).output() {
