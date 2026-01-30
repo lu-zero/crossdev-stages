@@ -327,7 +327,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 ).await;
 
                                 match accept_keywords_result {
-                                    Ok(_) => info!("✓ ACCEPT_KEYWORDS configured"),
+                                    Ok(_) => {
+                                        info!("✓ ACCEPT_KEYWORDS configured to {}", accept_keyword);
+                                        info!("  This allows testing/unstable packages for the detected architecture");
+                                    }
                                     Err(e) => {
                                         eprintln!("Error: Failed to set ACCEPT_KEYWORDS: {}", e);
                                         std::process::exit(1);
@@ -336,6 +339,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 // Set MAKEOPTS for parallel builds (adjust based on available CPU cores)
                                 info!("Configuring MAKEOPTS and EMERGE_DEFAULT_OPTS for optimal performance");
+                                info!("  MAKEOPTS will use all available CPU cores with proper load averaging");
+                                info!("  EMERGE_DEFAULT_OPTS will enable parallel package installation");
                                 let makeopts_result = backend.run_command(
                                     name,
                                     "sh",
@@ -344,7 +349,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 ).await;
 
                                 match makeopts_result {
-                                    Ok(_) => info!("✓ MAKEOPTS and EMERGE_DEFAULT_OPTS configured"),
+                                    Ok(_) => {
+                                        info!("✓ MAKEOPTS and EMERGE_DEFAULT_OPTS configured");
+                                        info!("  Configuration:");
+                                        info!(
+                                            "    - MAKEOPTS=\"-j$(nproc) --load-average=$(nproc)\""
+                                        );
+                                        info!("    - EMERGE_DEFAULT_OPTS=\"--jobs=$(nproc) --load-average=$(nproc) --quiet-build y\"");
+                                    }
                                     Err(e) => {
                                         eprintln!("Warning: Failed to set MAKEOPTS/EMERGE_DEFAULT_OPTS: {}", e);
                                         eprintln!("  Build performance may be suboptimal");
