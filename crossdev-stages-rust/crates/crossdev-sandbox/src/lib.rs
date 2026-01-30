@@ -6,8 +6,10 @@
 use async_trait::async_trait;
 use bollard::Docker;
 use futures_util::stream::StreamExt;
-use log::info;
+use log::{info, warn};
 use std::path::Path;
+use std::thread;
+use std::time;
 use thiserror::Error;
 
 mod docker_wrapper;
@@ -326,7 +328,54 @@ impl DockerBackend {
                                                         "✓ Container '{}' started successfully",
                                                         container_id
                                                     );
-                                                    return Ok(());
+
+                                                    // Wait for container to be fully ready (up to 5 seconds)
+                                                    let start_time = std::time::Instant::now();
+                                                    let timeout = std::time::Duration::from_secs(5);
+
+                                                    while start_time.elapsed() < timeout {
+                                                        // Check if container is running
+                                                        let ready_check =
+                                                            std::process::Command::new("docker")
+                                                                .args([
+                                                                    "inspect",
+                                                                    "-f",
+                                                                    "{{.State.Running}}",
+                                                                    container_id,
+                                                                ])
+                                                                .output();
+
+                                                        match ready_check {
+                                                            Ok(check_output) => {
+                                                                if check_output.status.success() {
+                                                                    let running_status_str =
+                                                                        String::from_utf8_lossy(
+                                                                            &check_output.stdout,
+                                                                        );
+                                                                    let running_status =
+                                                                        running_status_str.trim();
+                                                                    if running_status == "true" {
+                                                                        info!("✓ Container '{}' is fully ready", container_id);
+                                                                        return Ok(());
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(_) => {
+                                                                // Ignore errors and keep waiting
+                                                            }
+                                                        }
+
+                                                        // Small delay to avoid busy waiting
+                                                        std::thread::sleep(
+                                                            std::time::Duration::from_millis(100),
+                                                        );
+                                                    }
+
+                                                    info!("⚠ Container '{}' did not become ready within timeout", container_id);
+                                                    return Err(SandboxError::CommandExecutionFailed(format!(
+                                                        "Container '{}' did not become ready within 5 seconds",
+                                                        container_id
+                                                    )));
                                                 } else {
                                                     let error_msg = String::from_utf8_lossy(
                                                         &start_output.stderr,
