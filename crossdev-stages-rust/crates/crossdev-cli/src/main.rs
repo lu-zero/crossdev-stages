@@ -9,6 +9,9 @@ use crossdev_stage3::Stage3Fetcher;
 use crossdev_utils::arch;
 use log::{info, LevelFilter};
 
+mod crossdev;
+use crossdev::CrossdevEnvironment;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
@@ -518,125 +521,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 let target_config = &config.target;
                                 let crossdev_root = format!("/usr/{}", target_config.chost);
-                                let crossdev_make_conf =
-                                    format!("{}/etc/portage/make.conf", crossdev_root);
 
                                 info!(
                                     "Setting up crossdev environment for {}",
                                     target_config.chost
                                 );
 
-                                // Initialize crossdev with proper overlay output
-                                let init_result = backend
-                                    .run_command(
-                                        "default",
-                                        "crossdev",
-                                        &[
-                                            "--ov-output",
-                                            "/var/db/repos/crossdev",
-                                            target_config.chost.as_str(),
-                                            "--init-target",
-                                        ],
-                                        None,
-                                    )
-                                    .await;
+                                // Use our structured crossdev environment setup
+                                let crossdev_env = CrossdevEnvironment::new(
+                                    &target_config.chost,
+                                    &crossdev_root,
+                                    &config.compilation.profile,
+                                );
 
-                                match init_result {
+                                match crossdev_env.initialize(&*backend).await {
                                     Ok(_) => {
-                                        info!("✓ Crossdev initialized for {}", target_config.chost)
+                                        info!("✓ Crossdev environment setup complete");
                                     }
                                     Err(e) => {
-                                        eprintln!("Failed to initialize crossdev: {}", e);
-                                        eprintln!("\nNote: The Docker container may not have crossdev installed.");
-                                        eprintln!("To install crossdev in the container, run:");
-                                        eprintln!("  docker exec -it default emerge -av crossdev");
-                                        eprintln!("\nAlternatively, use a pre-configured Gentoo container with crossdev.");
-                                        std::process::exit(1);
-                                    }
-                                }
-
-                                // Set profile
-                                let profile_result = backend
-                                    .run_command(
-                                        "default",
-                                        "sh",
-                                        &[
-                                            "-c",
-                                            &format!(
-                                                "PORTAGE_CONFIGROOT={} eselect profile set {}",
-                                                crossdev_root, config.compilation.profile
-                                            ),
-                                        ],
-                                        None,
-                                    )
-                                    .await;
-
-                                match profile_result {
-                                    Ok(_) => {
-                                        info!("✓ Profile set to {}", config.compilation.profile)
-                                    }
-                                    Err(e) => {
-                                        eprintln!("Failed to set profile: {}", e);
-                                        std::process::exit(1);
-                                    }
-                                }
-
-                                // Configure make.conf
-                                let make_conf_result = backend.run_command(
-                                    "default",
-                                    "sh",
-                                    &["-c", &format!(
-                                        "echo 'CFLAGS=\"{}\"' > {} && echo 'LLVM_TARGETS=\"AArch64 RISCV\"' >> {}",
-                                        config.compilation.cflags,
-                                        crossdev_make_conf,
-                                        crossdev_make_conf
-                                    )],
-                                    None
-                                ).await;
-
-                                match make_conf_result {
-                                    Ok(_) => info!("✓ make.conf configured"),
-                                    Err(e) => {
-                                        eprintln!("Failed to configure make.conf: {}", e);
-                                        std::process::exit(1);
-                                    }
-                                }
-
-                                // Setup directories
-                                let setup_dirs_result = backend.run_command(
-                                    "default",
-                                    "sh",
-                                    &["-c", &format!(
-                                        "mkdir -p {}/etc/portage/env && \
-                                         echo 'CFLAGS=\"-O3 -pipe\"' > {}/etc/portage/env/plain.conf && \
-                                         echo 'CXXFLAGS=\"-O3 -pipe\"' >> {}/etc/portage/env/plain.conf && \
-                                         mkdir -p {}/etc/portage/package.env && \
-                                         echo 'dev-lang/rust plain.conf' > {}/etc/portage/package.env/rust && \
-                                         mkdir -p {}/etc/portage/package.use && \
-                                         echo 'dev-lang/rust rustfmt -system-llvm' > {}/etc/portage/package.use/rust && \
-                                         echo -e '>=virtual/libcrypt-2-r1 static-libs\\n>=sys-libs/libxcrypt-4.4.36-r3 static-libs\\n>=sys-apps/busybox-1.36.1-r3 -pam static' > {}/etc/portage/package.use/busybox && \
-                                         echo 'llvm-core/clang -extra' > {}/etc/portage/package.use/clang && \
-                                         echo 'dev-vcs/git -iconv' > {}/etc/portage/package.use/git && \
-                                         mkdir -p {}/bin",
-                                        crossdev_root,
-                                        crossdev_root,
-                                        crossdev_root,
-                                        crossdev_root,
-                                        crossdev_root,
-                                        crossdev_root,
-                                        crossdev_root,
-                                        crossdev_root,
-                                        crossdev_root,
-                                        crossdev_root,
-                                        crossdev_root
-                                    )],
-                                    None
-                                ).await;
-
-                                match setup_dirs_result {
-                                    Ok(_) => info!("✓ Portage directories configured"),
-                                    Err(e) => {
-                                        eprintln!("Failed to setup directories: {}", e);
+                                        eprintln!(
+                                            "Error: Failed to setup crossdev environment: {}",
+                                            e
+                                        );
                                         std::process::exit(1);
                                     }
                                 }
