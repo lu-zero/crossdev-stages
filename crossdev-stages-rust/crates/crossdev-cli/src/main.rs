@@ -340,6 +340,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
 
+                                // Install essential packages for cross-compilation
+                                info!("Installing cross-compilation prerequisites...");
+                                
+                                // Install crossdev (the main cross-compilation tool)
+                                let crossdev_result = backend.run_command(
+                                    "default",
+                                    "emerge",
+                                    &["-v", "crossdev"],
+                                    None
+                                ).await;
+
+                                match crossdev_result {
+                                    Ok(_) => info!("✓ crossdev installed"),
+                                    Err(e) => {
+                                        eprintln!("Warning: Failed to install crossdev: {}", e);
+                                        eprintln!("You may need to install it manually: docker exec -it default emerge -v crossdev");
+                                    }
+                                }
+
                                 // Note: emerge --sync is skipped in the basic setup as it can take a long time
                                 // Users should run it manually when needed: docker exec -it default emerge --sync
                                 info!("⚠ Skipping emerge --sync (can be run manually later)");
@@ -399,11 +418,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 info!("Setting up crossdev environment for {}", target_config.chost);
 
-                                // Initialize crossdev
+                                // Initialize crossdev with proper overlay output
                                 let init_result = backend.run_command(
                                     "default",
                                     "crossdev",
-                                    &[target_config.chost.as_str(), "--init-target"],
+                                    &["--ov-output", "/var/db/repos/crossdev", target_config.chost.as_str(), "--init-target"],
                                     None
                                 ).await;
 
@@ -468,7 +487,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                          mkdir -p {}/etc/portage/package.env && \
                                          echo 'dev-lang/rust plain.conf' > {}/etc/portage/package.env/rust && \
                                          mkdir -p {}/etc/portage/package.use && \
-                                         echo 'dev-lang/rust rustfmt -system-llvm' > {}/etc/portage/package.use/rust",
+                                         echo 'dev-lang/rust rustfmt -system-llvm' > {}/etc/portage/package.use/rust && \
+                                         echo -e '>=virtual/libcrypt-2-r1 static-libs\\n>=sys-libs/libxcrypt-4.4.36-r3 static-libs\\n>=sys-apps/busybox-1.36.1-r3 -pam static' > {}/etc/portage/package.use/busybox && \
+                                         echo 'llvm-core/clang -extra' > {}/etc/portage/package.use/clang && \
+                                         echo 'dev-vcs/git -iconv' > {}/etc/portage/package.use/git && \
+                                         mkdir -p {}/bin",
+                                        crossdev_root,
+                                        crossdev_root,
+                                        crossdev_root,
+                                        crossdev_root,
                                         crossdev_root,
                                         crossdev_root,
                                         crossdev_root,
@@ -485,6 +512,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     Err(e) => {
                                         eprintln!("Failed to setup directories: {}", e);
                                         std::process::exit(1);
+                                    }
+                                }
+
+                                // Workaround crossdev unmasking improperly
+                                let unmask_result = backend.run_command(
+                                    "default",
+                                    "sh",
+                                    &["-c", &format!(
+                                        "mkdir -p /etc/portage/package.{{accept_keywords,mask}} && \
+                                         echo \"cross-{}/rust-std **\" > /etc/portage/package.accept_keywords/rust-std && \
+                                         echo \"=cross-{}/gcc-15*\" > /etc/portage/package.mask/cross-{}-fixup",
+                                        target_config.chost, target_config.chost, target_config.chost
+                                    )],
+                                    None
+                                ).await;
+
+                                match unmask_result {
+                                    Ok(_) => info!("✓ Crossdev unmasking workarounds applied"),
+                                    Err(e) => {
+                                        eprintln!("Warning: Failed to apply unmasking workarounds: {}", e);
+                                    }
+                                }
+
+                                // crossdev starts as split_usr layout - convert to merged usr
+                                let merge_usr_result = backend.run_command(
+                                    "default",
+                                    "merge-usr",
+                                    &["--root", &crossdev_root],
+                                    None
+                                ).await;
+
+                                match merge_usr_result {
+                                    Ok(_) => info!("✓ merge-usr completed"),
+                                    Err(e) => {
+                                        eprintln!("Warning: Failed to run merge-usr: {}", e);
+                                        eprintln!("This is expected if merge-usr is not available in the container.");
                                     }
                                 }
 
