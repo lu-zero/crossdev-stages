@@ -334,6 +334,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 }
 
+                                // Set MAKEOPTS for parallel builds (adjust based on available CPU cores)
+                                info!("Configuring MAKEOPTS and EMERGE_DEFAULT_OPTS for optimal performance");
+                                let makeopts_result = backend.run_command(
+                                    name,
+                                    "sh",
+                                    &["-c", "echo 'MAKEOPTS=\"-j$(nproc) --load-average=$(nproc)\"' >> /etc/portage/make.conf && echo 'EMERGE_DEFAULT_OPTS=\"--jobs=$(nproc) --load-average=$(nproc) --quiet-build y\"' >> /etc/portage/make.conf"],
+                                    None
+                                ).await;
+
+                                match makeopts_result {
+                                    Ok(_) => info!("✓ MAKEOPTS and EMERGE_DEFAULT_OPTS configured"),
+                                    Err(e) => {
+                                        eprintln!("Warning: Failed to set MAKEOPTS/EMERGE_DEFAULT_OPTS: {}", e);
+                                        eprintln!("  Build performance may be suboptimal");
+                                    }
+                                }
+
                                 // Set up package.use for u-boot-tools with python USE flag
                                 info!("Setting up package.use configurations...");
                                 let uboot_use_result = backend.run_command(
