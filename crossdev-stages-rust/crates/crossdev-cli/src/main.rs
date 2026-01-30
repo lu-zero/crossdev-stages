@@ -352,7 +352,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // Note: We may want to cache these packages later for faster setup
                                 let packages = [
                                     // Needed to build all the stages
-                                    "crossdev", "merge-usr", "dev-vcs/git",
+                                    "sys-devel/crossdev", "sys-apps/merge-usr", "dev-vcs/git",
                                     // Needed to build the bootloader and kernel
                                     "sys-boot/u-boot-tools", "sys-devel/dtc", "sys-kernel/dracut", "sys-apps/busybox",
                                     // Needed to assemble the whole image
