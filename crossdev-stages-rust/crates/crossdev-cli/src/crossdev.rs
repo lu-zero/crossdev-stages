@@ -1,5 +1,6 @@
 //! Crossdev environment setup
 
+use crossdev_utils::arch_to_llvm_target;
 use log::info;
 use thiserror::Error;
 
@@ -145,7 +146,24 @@ impl CrossdevEnvironment {
             ));
         }
 
-        // Add LLVM_TARGETS
+        // Add LLVM_TARGETS including both host and target architectures
+        let target_llvm_target = arch_to_llvm_target(&self.target);
+
+        // Get host architecture and map to LLVM target
+        let host_arch = std::env::consts::ARCH;
+        let host_llvm_target = arch_to_llvm_target(host_arch);
+
+        // Combine host and target LLVM targets, avoiding duplicates
+        let mut llvm_targets = target_llvm_target.clone();
+        if !llvm_targets.contains(&host_llvm_target) {
+            llvm_targets.push(' ');
+            llvm_targets.push_str(&host_llvm_target);
+        }
+
+        info!("Setting LLVM_TARGETS to: {}", llvm_targets);
+        info!("  Host LLVM target: {}", host_llvm_target);
+        info!("  Target LLVM target: {}", target_llvm_target);
+
         let result = backend
             .run_command(
                 "default",
@@ -153,8 +171,8 @@ impl CrossdevEnvironment {
                 &[
                     "-c",
                     &format!(
-                        "echo 'LLVM_TARGETS=\"AArch64 RISCV\"' >> {}/etc/portage/make.conf",
-                        self.root
+                        "echo 'LLVM_TARGETS=\"{}\"' >> {}/etc/portage/make.conf",
+                        llvm_targets, self.root
                     ),
                 ],
                 None,

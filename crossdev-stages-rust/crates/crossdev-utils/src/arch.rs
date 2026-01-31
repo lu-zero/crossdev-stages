@@ -79,6 +79,67 @@ pub fn get_default_arch_for_clap() -> &'static str {
     parse_arch(std::env::consts::ARCH).leak()
 }
 
+/// Map Gentoo architecture to LLVM target
+///
+/// Returns the appropriate LLVM_TARGETS value for a given Gentoo architecture
+/// This is used to configure LLVM for cross-compilation
+pub fn arch_to_llvm_target(arch: &str) -> String {
+    // Extract architecture from full target string (e.g., "riscv64-unknown-linux-gnu" -> "riscv64")
+    let arch_part = if arch.contains('-') {
+        // Extract the first part before the first hyphen
+        arch.split('-').next().unwrap_or(arch)
+    } else {
+        arch
+    };
+
+    // First normalize the architecture
+    let normalized_arch = parse_arch(arch_part);
+
+    match normalized_arch.as_str() {
+        // RISC-V architectures
+        "riscv" | "riscv64" => "RISCV".to_string(),
+
+        // ARM architectures
+        "arm" | "arm64" => "AArch64".to_string(),
+
+        // x86 architectures
+        "amd64" | "i386" | "i486" | "i586" | "i686" => "X86".to_string(),
+
+        // PowerPC architectures
+        "ppc" | "ppc64" | "powerpc" | "powerpc64" => "PowerPC".to_string(),
+
+        // MIPS architectures
+        "mips" | "mipsel" | "mips64" | "mips64el" => "MIPS".to_string(),
+
+        // System Z architectures
+        "s390" | "s390x" => "SystemZ".to_string(),
+
+        // SPARC architectures
+        "sparc" | "sparc64" => "Sparc".to_string(),
+
+        // ARM big-endian
+        "armeb" => "ARM".to_string(),
+
+        // Hexagon
+        "hexagon" => "Hexagon".to_string(),
+
+        // NVPTX (NVIDIA PTX)
+        "nvptx" | "nvptx64" => "NVPTX".to_string(),
+
+        // AMDGPU
+        "amdgpu" => "AMDGPU".to_string(),
+
+        // WebAssembly
+        "wasm32" | "wasm64" => "WebAssembly".to_string(),
+
+        // AArch64 big-endian
+        "aarch64_be" => "AArch64".to_string(),
+
+        // Default case - include common targets for unknown architectures
+        _ => "AArch64 RISCV X86".to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,5 +174,37 @@ mod tests {
         assert_eq!(get_default_flavor("riscv"), "rv32_ilp32d-openrc");
         assert_eq!(get_default_flavor("amd64"), "amd64-openrc");
         assert_eq!(get_default_flavor("arm64"), "arm64-openrc");
+    }
+
+    #[test]
+    fn test_arch_to_llvm_target() {
+        // Test RISC-V
+        assert_eq!(arch_to_llvm_target("riscv"), "RISCV");
+        assert_eq!(arch_to_llvm_target("riscv64"), "RISCV");
+        assert_eq!(arch_to_llvm_target("riscv64-unknown-linux-gnu"), "RISCV");
+
+        // Test ARM
+        assert_eq!(arch_to_llvm_target("arm"), "AArch64");
+        assert_eq!(arch_to_llvm_target("arm64"), "AArch64");
+        assert_eq!(arch_to_llvm_target("aarch64"), "AArch64");
+        assert_eq!(arch_to_llvm_target("aarch64-unknown-linux-gnu"), "AArch64");
+
+        // Test x86
+        assert_eq!(arch_to_llvm_target("amd64"), "X86");
+        assert_eq!(arch_to_llvm_target("x86_64"), "X86");
+        assert_eq!(arch_to_llvm_target("i686"), "X86");
+        assert_eq!(arch_to_llvm_target("x86_64-pc-linux-gnu"), "X86");
+
+        // Test PowerPC
+        assert_eq!(arch_to_llvm_target("ppc"), "PowerPC");
+        assert_eq!(arch_to_llvm_target("ppc64"), "PowerPC");
+        assert_eq!(arch_to_llvm_target("powerpc-unknown-linux-gnu"), "PowerPC");
+
+        // Test default case
+        assert_eq!(arch_to_llvm_target("unknown"), "AArch64 RISCV X86");
+        assert_eq!(
+            arch_to_llvm_target("unknown-vendor-os"),
+            "AArch64 RISCV X86"
+        );
     }
 }
