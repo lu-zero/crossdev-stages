@@ -12,7 +12,7 @@ pub mod ldconfig;
 
 pub use arch::{
     arch_to_llvm_target, get_arch_aliases, get_default_arch_for_clap, get_default_flavor,
-    parse_arch,
+    parse_arch, Arch,
 };
 pub use bubblewrap::BubblewrapRunner;
 pub use ldconfig::LdconfigManager;

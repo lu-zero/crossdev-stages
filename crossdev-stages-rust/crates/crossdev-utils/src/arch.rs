@@ -4,6 +4,106 @@
 //! selection functionality that can be used across all crates.
 
 use std::collections::HashMap;
+use std::fmt;
+use std::str::FromStr;
+
+/// Supported architectures for crossdev-stages
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Arch {
+    /// ARM 32-bit architecture
+    Arm,
+    /// ARM 64-bit architecture (AArch64)
+    AArch64,
+    /// x86 32-bit architecture
+    X86,
+    /// x86 64-bit architecture
+    X86_64,
+    /// RISC-V 32-bit architecture
+    Riscv32,
+    /// RISC-V 64-bit architecture
+    Riscv64,
+    /// PowerPC 32-bit architecture
+    Powerpc,
+    /// PowerPC 64-bit architecture
+    Powerpc64,
+}
+
+impl FromStr for Arch {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let arch_str = s.to_lowercase();
+
+        match arch_str.as_str() {
+            // ARM variants
+            "arm" | "armv7" | "armv7a" | "armv7l" | "armv7hl" => Ok(Arch::Arm),
+            // AArch64 variants
+            "aarch64" | "arm64" | "armv8" | "armv8a" => Ok(Arch::AArch64),
+            // x86 variants
+            "x86" | "i386" | "i486" | "i586" | "i686" => Ok(Arch::X86),
+            // x86_64 variants
+            "x86_64" | "amd64" => Ok(Arch::X86_64),
+            // RISC-V 32-bit variants
+            "riscv" | "riscv32" => Ok(Arch::Riscv32),
+            // RISC-V 64-bit variants
+            "riscv64" => Ok(Arch::Riscv64),
+            // PowerPC variants
+            "ppc" | "powerpc" => Ok(Arch::Powerpc),
+            // PowerPC 64-bit variants
+            "ppc64" | "powerpc64" => Ok(Arch::Powerpc64),
+            _ => Err(format!("Unsupported architecture: {}", s)),
+        }
+    }
+}
+
+impl Arch {
+    /// Convert architecture to LLVM target name
+    pub fn as_llvm_target(&self) -> &'static str {
+        match self {
+            Arch::Arm | Arch::AArch64 => "AArch64",
+            Arch::X86 | Arch::X86_64 => "X86",
+            Arch::Riscv32 | Arch::Riscv64 => "RISCV",
+            Arch::Powerpc | Arch::Powerpc64 => "PowerPC",
+        }
+    }
+
+    /// Convert architecture to Gentoo keyword
+    pub fn as_gentoo_keyword(&self) -> &'static str {
+        match self {
+            Arch::Arm => "arm",
+            Arch::AArch64 => "arm64",
+            Arch::X86 => "x86",
+            Arch::X86_64 => "amd64",
+            Arch::Riscv32 | Arch::Riscv64 => "riscv",
+            Arch::Powerpc => "ppc",
+            Arch::Powerpc64 => "ppc64",
+        }
+    }
+
+    /// Get the bitness of the architecture
+    pub fn bitness(&self) -> u32 {
+        match self {
+            Arch::Arm | Arch::X86 | Arch::Riscv32 | Arch::Powerpc => 32,
+            Arch::AArch64 | Arch::X86_64 | Arch::Riscv64 | Arch::Powerpc64 => 64,
+        }
+    }
+}
+
+impl fmt::Display for Arch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let discriminant = match self {
+            Arch::Arm => "arm",
+            Arch::AArch64 => "aarch64",
+            Arch::X86 => "x86",
+            Arch::X86_64 => "x86_64",
+            Arch::Riscv32 => "riscv32",
+            Arch::Riscv64 => "riscv64",
+            Arch::Powerpc => "powerpc",
+            Arch::Powerpc64 => "powerpc64",
+        };
+        write!(f, "{} ({})", discriminant, self.as_gentoo_keyword())
+    }
+}
 
 /// Parse architecture name and return normalized version
 ///
@@ -206,5 +306,92 @@ mod tests {
             arch_to_llvm_target("unknown-vendor-os"),
             "AArch64 RISCV X86"
         );
+    }
+
+    #[test]
+    fn test_arch_enum_from_str() {
+        // Test ARM variants
+        assert_eq!("arm".parse::<Arch>(), Ok(Arch::Arm));
+        assert_eq!("armv7".parse::<Arch>(), Ok(Arch::Arm));
+        assert_eq!("armv7a".parse::<Arch>(), Ok(Arch::Arm));
+
+        // Test AArch64 variants
+        assert_eq!("aarch64".parse::<Arch>(), Ok(Arch::AArch64));
+        assert_eq!("arm64".parse::<Arch>(), Ok(Arch::AArch64));
+        assert_eq!("armv8".parse::<Arch>(), Ok(Arch::AArch64));
+
+        // Test x86 variants
+        assert_eq!("x86".parse::<Arch>(), Ok(Arch::X86));
+        assert_eq!("i686".parse::<Arch>(), Ok(Arch::X86));
+
+        // Test x86_64 variants
+        assert_eq!("x86_64".parse::<Arch>(), Ok(Arch::X86_64));
+        assert_eq!("amd64".parse::<Arch>(), Ok(Arch::X86_64));
+
+        // Test RISC-V variants
+        assert_eq!("riscv".parse::<Arch>(), Ok(Arch::Riscv32));
+        assert_eq!("riscv32".parse::<Arch>(), Ok(Arch::Riscv32));
+        assert_eq!("riscv64".parse::<Arch>(), Ok(Arch::Riscv64));
+
+        // Test PowerPC variants
+        assert_eq!("ppc".parse::<Arch>(), Ok(Arch::Powerpc));
+        assert_eq!("powerpc".parse::<Arch>(), Ok(Arch::Powerpc));
+        assert_eq!("ppc64".parse::<Arch>(), Ok(Arch::Powerpc64));
+        assert_eq!("powerpc64".parse::<Arch>(), Ok(Arch::Powerpc64));
+
+        // Test unsupported architecture
+        assert!("mips".parse::<Arch>().is_err());
+        assert!("sparc".parse::<Arch>().is_err());
+    }
+
+    #[test]
+    fn test_arch_enum_methods() {
+        // Test LLVM targets
+        assert_eq!(Arch::Arm.as_llvm_target(), "AArch64");
+        assert_eq!(Arch::AArch64.as_llvm_target(), "AArch64");
+        assert_eq!(Arch::X86.as_llvm_target(), "X86");
+        assert_eq!(Arch::X86_64.as_llvm_target(), "X86");
+        assert_eq!(Arch::Riscv32.as_llvm_target(), "RISCV");
+        assert_eq!(Arch::Riscv64.as_llvm_target(), "RISCV");
+        assert_eq!(Arch::Powerpc.as_llvm_target(), "PowerPC");
+        assert_eq!(Arch::Powerpc64.as_llvm_target(), "PowerPC");
+
+        // Test Gentoo keywords
+        assert_eq!(Arch::Arm.as_gentoo_keyword(), "arm");
+        assert_eq!(Arch::AArch64.as_gentoo_keyword(), "arm64");
+        assert_eq!(Arch::X86.as_gentoo_keyword(), "x86");
+        assert_eq!(Arch::X86_64.as_gentoo_keyword(), "amd64");
+        assert_eq!(Arch::Riscv32.as_gentoo_keyword(), "riscv");
+        assert_eq!(Arch::Riscv64.as_gentoo_keyword(), "riscv");
+        assert_eq!(Arch::Powerpc.as_gentoo_keyword(), "ppc");
+        assert_eq!(Arch::Powerpc64.as_gentoo_keyword(), "ppc64");
+
+        // Test bitness
+        assert_eq!(Arch::Arm.bitness(), 32);
+        assert_eq!(Arch::AArch64.bitness(), 64);
+        assert_eq!(Arch::X86.bitness(), 32);
+        assert_eq!(Arch::X86_64.bitness(), 64);
+        assert_eq!(Arch::Riscv32.bitness(), 32);
+        assert_eq!(Arch::Riscv64.bitness(), 64);
+        assert_eq!(Arch::Powerpc.bitness(), 32);
+        assert_eq!(Arch::Powerpc64.bitness(), 64);
+
+        // Test Display trait
+        assert_eq!(Arch::Arm.to_string(), "arm (arm)");
+        assert_eq!(Arch::AArch64.to_string(), "aarch64 (arm64)");
+        assert_eq!(Arch::X86.to_string(), "x86 (x86)");
+        assert_eq!(Arch::X86_64.to_string(), "x86_64 (amd64)");
+    }
+
+    #[test]
+    fn test_arch_enum_case_insensitive() {
+        assert_eq!("ARM".parse::<Arch>(), Ok(Arch::Arm));
+        assert_eq!("AARCH64".parse::<Arch>(), Ok(Arch::AArch64));
+        assert_eq!("X86".parse::<Arch>(), Ok(Arch::X86));
+        assert_eq!("X86_64".parse::<Arch>(), Ok(Arch::X86_64));
+        assert_eq!("RISCV".parse::<Arch>(), Ok(Arch::Riscv32));
+        assert_eq!("RISCV64".parse::<Arch>(), Ok(Arch::Riscv64));
+        assert_eq!("PPC".parse::<Arch>(), Ok(Arch::Powerpc));
+        assert_eq!("PPC64".parse::<Arch>(), Ok(Arch::Powerpc64));
     }
 }
