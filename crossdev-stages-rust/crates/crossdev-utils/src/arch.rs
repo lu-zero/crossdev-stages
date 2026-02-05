@@ -3,6 +3,7 @@
 //! This module provides architecture parsing, normalization, and default flavor
 //! selection functionality that can be used across all crates.
 
+use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
@@ -53,6 +54,16 @@ impl FromStr for Arch {
             "ppc64" | "powerpc64" => Ok(Arch::Powerpc64),
             _ => Err(format!("Unsupported architecture: {}", s)),
         }
+    }
+}
+
+impl<'de> Deserialize<'de> for Arch {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        s.parse::<Arch>().map_err(serde::de::Error::custom)
     }
 }
 

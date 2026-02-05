@@ -2,7 +2,6 @@
 arch = "riscv64"
 chost = "riscv64-unknown-linux-gnu"
 flavor = "rv64_lp64d-openrc"
-keyword = "riscv"
 
 [compilation]
 cflags = "-O3 -march=rv64gcv_zvl256b -pipe"

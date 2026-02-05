@@ -26,10 +26,9 @@ pub enum ConfigError {
 /// Target architecture configuration
 #[derive(Debug, Deserialize, Clone)]
 pub struct TargetConfig {
-    pub arch: String,
+    pub arch: crossdev_utils::arch::Arch,
     pub chost: String,
     pub flavor: String,
-    pub keyword: String,
 }
 
 /// Compilation settings configuration
@@ -117,21 +116,26 @@ impl PlatformConfig {
     /// Validate configuration
     fn validate(&self) -> Result<(), ConfigError> {
         // Check required fields are not empty
-        if self.target.arch.is_empty() {
-            return Err(ConfigError::ValidationError(
-                "target.arch cannot be empty".to_string(),
-            ));
-        }
-
         if self.target.chost.is_empty() {
             return Err(ConfigError::ValidationError(
                 "target.chost cannot be empty".to_string(),
             ));
         }
 
+        if self.target.flavor.is_empty() {
+            return Err(ConfigError::ValidationError(
+                "target.flavor cannot be empty".to_string(),
+            ));
+        }
+
         // Add more validation as needed
 
         Ok(())
+    }
+
+    /// Get the Gentoo keyword for this target
+    pub fn gentoo_keyword(&self) -> String {
+        self.target.arch.as_gentoo_keyword().to_string()
     }
 
     /// Get the cross-compile prefix (e.g., "riscv64-unknown-linux-gnu-")
@@ -180,7 +184,6 @@ mod tests {
             arch = "riscv64"
             chost = "riscv64-unknown-linux-gnu"
             flavor = "rv64_lp64d-openrc"
-            keyword = "riscv"
             
             [compilation]
             cflags = "-O3 -march=rv64gcv_zvl256b -pipe"
@@ -214,7 +217,7 @@ mod tests {
 
         let config = PlatformConfig::load_from_file(&config_path).unwrap();
 
-        assert_eq!(config.target.arch, "riscv64");
+        assert_eq!(config.target.arch.as_gentoo_keyword(), "riscv");
         assert_eq!(config.target.chost, "riscv64-unknown-linux-gnu");
         assert_eq!(
             config.compilation.cflags,
@@ -256,10 +259,9 @@ mod tests {
     fn test_cross_compile_prefix() {
         let config = PlatformConfig {
             target: TargetConfig {
-                arch: "riscv64".to_string(),
+                arch: "riscv64".parse().unwrap(),
                 chost: "riscv64-unknown-linux-gnu".to_string(),
                 flavor: "test".to_string(),
-                keyword: "test".to_string(),
             },
             compilation: CompilationConfig {
                 cflags: "test".to_string(),

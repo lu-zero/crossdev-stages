@@ -305,7 +305,7 @@ impl Stage3Fetcher {
                         ),
                         size,
                         date,
-                        arch: self.config.target.arch.clone(),
+                        arch: self.config.target.arch.to_string(),
                         flavor: actual_flavor,
                     });
                 }
@@ -403,7 +403,7 @@ impl Stage3Fetcher {
                         ),
                         size,
                         date,
-                        arch: self.config.target.arch.clone(),
+                        arch: self.config.target.arch.to_string(),
                         flavor: actual_flavor,
                     });
                 }
@@ -593,7 +593,7 @@ impl Stage3Fetcher {
                             url: String::new(), // Would need to reconstruct or store
                             size: entry.metadata()?.len(),
                             date: "unknown".to_string(),
-                            arch: self.config.target.arch.clone(),
+                            arch: self.config.target.arch.to_string(),
                             flavor: self.config.target.flavor.clone(),
                         });
                     }
@@ -711,15 +711,16 @@ mod tests {
     fn test_parse_stage3_list() {
         let config = PlatformConfig {
             target: crossdev_config::TargetConfig {
-                arch: "riscv64".to_string(),
+                arch: "riscv64".parse().unwrap(),
                 chost: "riscv64-unknown-linux-gnu".to_string(),
                 flavor: "rv64_lp64d-openrc".to_string(),
-                keyword: "riscv".to_string(),
             },
             compilation: crossdev_config::CompilationConfig {
                 cflags: "test".to_string(),
                 gcc_version: "test".to_string(),
                 profile: "test".to_string(),
+                makeopts: "test".to_string(),
+                emerge_default_opts: "test".to_string(),
             },
             repositories: crossdev_config::RepositoryConfig {
                 opensbi_repo: "test".to_string(),
@@ -763,15 +764,16 @@ stage3-riscv64-openrc-20231017T010001Z.tar.xz 123456788 SHA256 def456...
     fn test_find_latest_stage3() {
         let config = PlatformConfig {
             target: crossdev_config::TargetConfig {
-                arch: "riscv64".to_string(),
+                arch: "riscv64".parse().unwrap(),
                 chost: "riscv64-unknown-linux-gnu".to_string(),
                 flavor: "rv64_lp64d-openrc".to_string(),
-                keyword: "riscv".to_string(),
             },
             compilation: crossdev_config::CompilationConfig {
                 cflags: "test".to_string(),
                 gcc_version: "test".to_string(),
                 profile: "test".to_string(),
+                makeopts: "test".to_string(),
+                emerge_default_opts: "test".to_string(),
             },
             repositories: crossdev_config::RepositoryConfig {
                 opensbi_repo: "test".to_string(),
@@ -831,15 +833,16 @@ stage3-riscv64-openrc-20231017T010001Z.tar.xz 123456788 SHA256 def456...
 
         let config = PlatformConfig {
             target: crossdev_config::TargetConfig {
-                arch: "test".to_string(),
+                arch: "x86".parse().unwrap(),
                 chost: "test".to_string(),
                 flavor: "test".to_string(),
-                keyword: "test".to_string(),
             },
             compilation: crossdev_config::CompilationConfig {
                 cflags: "test".to_string(),
                 gcc_version: "test".to_string(),
                 profile: "test".to_string(),
+                makeopts: "test".to_string(),
+                emerge_default_opts: "test".to_string(),
             },
             repositories: crossdev_config::RepositoryConfig {
                 opensbi_repo: "test".to_string(),
@@ -881,15 +884,16 @@ stage3-riscv64-openrc-20231017T010001Z.tar.xz 123456788 SHA256 def456...
     fn test_list_available_flavors() {
         let config = PlatformConfig {
             target: crossdev_config::TargetConfig {
-                arch: "riscv64".to_string(),
+                arch: "riscv64".parse().unwrap(),
                 chost: "riscv64-unknown-linux-gnu".to_string(),
                 flavor: "rv64_lp64d-openrc".to_string(),
-                keyword: "riscv".to_string(),
             },
             compilation: crossdev_config::CompilationConfig {
                 cflags: "test".to_string(),
                 gcc_version: "test".to_string(),
                 profile: "test".to_string(),
+                makeopts: "test".to_string(),
+                emerge_default_opts: "test".to_string(),
             },
             repositories: crossdev_config::RepositoryConfig {
                 opensbi_repo: "test".to_string(),
