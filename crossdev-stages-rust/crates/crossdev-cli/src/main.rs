@@ -204,7 +204,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("\nTotal: {} flavor(s) available", flavors.len());
                     println!("\nTo use a specific flavor, specify it with the --flavor option:");
                     println!(
-                        "  cargo run -- fetch --arch {} --flavor {}",
+                        "  {} fetch --arch {} --flavor {}",
+                        std::env::args().next().unwrap_or_else(|| "crossdev-stages".to_string()),
                         arch,
                         flavors.first().unwrap_or(&"unknown".to_string())
                     );
