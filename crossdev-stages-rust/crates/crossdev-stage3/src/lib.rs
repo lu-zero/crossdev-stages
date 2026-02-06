@@ -2,7 +2,10 @@
 //!
 //! This crate handles fetching, caching, and extracting Gentoo stage3 images.
 
-use crossdev_config::{ConfigError, CompilationConfig, ImageConfig, PackageConfig, PlatformConfig, RepositoryConfig, TargetConfig};
+use crossdev_config::{
+    CompilationConfig, ConfigError, ImageConfig, PackageConfig, PlatformConfig, RepositoryConfig,
+    TargetConfig,
+};
 use log::info;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -85,7 +88,11 @@ impl Stage3Fetcher {
     /// # Returns
     ///
     /// A new Stage3Fetcher instance with minimal configuration
-    pub fn new_for_fetch(target_config: TargetConfig, cache_dir: impl AsRef<Path>, mirror_url: &str) -> Self {
+    pub fn new_for_fetch(
+        target_config: TargetConfig,
+        cache_dir: impl AsRef<Path>,
+        mirror_url: &str,
+    ) -> Self {
         // Create a minimal PlatformConfig with only the target information
         // Other fields are set to default values since they're not used for fetching
         let config = PlatformConfig {

@@ -2,7 +2,7 @@
 //!
 //! This is the entry point for the crossdev-stages Rust implementation.
 
-use clap::{Arg, Command};
+use clap::{Parser, Subcommand};
 use crossdev_sandbox::auto_detect_backend;
 use crossdev_stage3::Stage3Fetcher;
 use crossdev_utils::arch;
@@ -11,6 +11,124 @@ use log::{info, warn, LevelFilter};
 mod crossdev;
 use crossdev::CrossdevEnvironment;
 
+/// Main CLI for crossdev-stages
+#[derive(Parser, Debug)]
+#[command(version = "0.1.0", about = "Gentoo cross-compilation stage builder")]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand, Debug)]
+enum Commands {
+    /// Fetch latest stage3 image or list available flavors
+    Fetch(FetchArgs),
+    /// Manage sandbox/container operations
+    #[command(subcommand)]
+    Sandbox(SandboxCommands),
+}
+
+#[derive(clap::Args, Debug)]
+struct FetchArgs {
+    /// Target architecture
+    #[arg(short, long, default_value = crossdev_utils::arch::get_default_arch_for_clap())]
+    arch: String,
+
+    /// Stage3 flavor (e.g., amd64-openrc)
+    #[arg(short, long)]
+    flavor: Option<String>,
+
+    /// Gentoo mirror URL
+    #[arg(short, long, default_value = "https://distfiles.gentoo.org")]
+    mirror: String,
+
+    /// Cache directory
+    #[arg(short = 'C', long, default_value = "/tmp/crossdev-stage3-cache")]
+    cache: String,
+
+    /// Extract to directory
+    #[arg(short, long)]
+    extract: Option<String>,
+
+    /// List available stage3 flavors instead of fetching
+    #[arg(short, long)]
+    list: bool,
+}
+
+#[derive(Subcommand, Debug)]
+enum SandboxCommands {
+    /// Prepare a sandbox environment
+    Setup(SandboxSetupArgs),
+    /// Prepare cross-compilation environment (setup crossdev)
+    Prepare(SandboxPrepareArgs),
+    /// Enter a sandbox (setup if not prepared)
+    Enter(SandboxEnterArgs),
+    /// List available sandboxes
+    List,
+    /// Run a command in the sandbox (setup if not prepared)
+    Run(SandboxRunArgs),
+    /// Delete a sandbox container
+    Delete(SandboxDeleteArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct SandboxSetupArgs {
+    /// Name for the sandbox
+    #[arg(default_value = "default")]
+    name: String,
+
+    /// Docker image to use
+    #[arg(short, long, default_value = "gentoo/stage3")]
+    image: String,
+}
+
+#[derive(clap::Args, Debug)]
+struct SandboxPrepareArgs {
+    /// Target architecture
+    #[arg(short, long, default_value = "riscv64-k1")]
+    target: String,
+}
+
+#[derive(clap::Args, Debug)]
+struct SandboxEnterArgs {
+    /// Name of the sandbox to enter
+    #[arg(default_value = "default")]
+    name: String,
+
+    /// Working directory inside sandbox
+    #[arg(short, long)]
+    working_dir: Option<String>,
+}
+
+#[derive(clap::Args, Debug)]
+struct SandboxRunArgs {
+    /// Command to run
+    command: String,
+
+    /// Command arguments
+    #[arg(num_args = 0..)]
+    args: Vec<String>,
+
+    /// Name of the sandbox to use
+    #[arg(short, long, default_value = "default")]
+    name: String,
+
+    /// Working directory inside sandbox
+    #[arg(short, long)]
+    working_dir: Option<String>,
+}
+
+#[derive(clap::Args, Debug)]
+struct SandboxDeleteArgs {
+    /// Name of the sandbox to delete
+    #[arg(default_value = "default")]
+    name: String,
+
+    /// Force removal of running container
+    #[arg(short, long)]
+    force: bool,
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
@@ -18,156 +136,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .filter_level(LevelFilter::Info)
         .init();
 
-    // Parse command line arguments
-    let matches = Command::new("crossdev-stages")
-        .version("0.1.0")
-        .about("Gentoo cross-compilation stage builder")
-        .subcommand(
-            Command::new("fetch")
-                .about("Fetch latest stage3 image or list available flavors")
-                .arg(
-                    Arg::new("arch")
-                        .short('a')
-                        .long("arch")
-                        .value_name("ARCH")
-                        .help("Target architecture")
-                        .default_value(arch::get_default_arch_for_clap()),
-                )
-                .arg(
-                    Arg::new("flavor")
-                        .short('f')
-                        .long("flavor")
-                        .value_name("FLAVOR")
-                        .help("Stage3 flavor (e.g., amd64-openrc)"),
-                )
-                .arg(
-                    Arg::new("mirror")
-                        .short('m')
-                        .long("mirror")
-                        .value_name("URL")
-                        .help("Gentoo mirror URL")
-                        .default_value("https://distfiles.gentoo.org"),
-                )
-                .arg(
-                    Arg::new("cache")
-                        .short('C')
-                        .long("cache")
-                        .value_name("DIR")
-                        .help("Cache directory")
-                        .default_value("/tmp/crossdev-stage3-cache"),
-                )
-                .arg(
-                    Arg::new("extract")
-                        .short('e')
-                        .long("extract")
-                        .value_name("DIR")
-                        .help("Extract to directory"),
-                )
-                .arg(
-                    Arg::new("list")
-                        .short('l')
-                        .long("list")
-                        .help("List available stage3 flavors instead of fetching")
-                        .action(clap::ArgAction::SetTrue),
-                ),
-        )
-        .subcommand(
-            Command::new("sandbox")
-                .about("Manage sandbox/container operations")
-                .subcommand(
-                    Command::new("setup")
-                        .about("Prepare a sandbox environment")
-                        .arg(
-                            Arg::new("name")
-                                .help("Name for the sandbox")
-                                .default_value("default"),
-                        )
-                        .arg(
-                            Arg::new("image")
-                                .short('i')
-                                .long("image")
-                                .help("Docker image to use")
-                                .default_value("gentoo/stage3"),
-                        ),
-                )
-                .subcommand(
-                    Command::new("prepare")
-                        .about("Prepare cross-compilation environment (setup crossdev)")
-                        .arg(
-                            Arg::new("target")
-                                .short('t')
-                                .long("target")
-                                .help("Target architecture")
-                                .default_value("riscv64-k1"),
-                        ),
-                )
-                .subcommand(
-                    Command::new("enter")
-                        .about("Enter a sandbox (setup if not prepared)")
-                        .arg(
-                            Arg::new("name")
-                                .help("Name of the sandbox to enter")
-                                .default_value("default"),
-                        )
-                        .arg(
-                            Arg::new("working-dir")
-                                .short('w')
-                                .long("working-dir")
-                                .value_name("DIR")
-                                .help("Working directory inside sandbox"),
-                        ),
-                )
-                .subcommand(Command::new("list").about("List available sandboxes"))
-                .subcommand(
-                    Command::new("run")
-                        .about("Run a command in the sandbox (setup if not prepared)")
-                        .arg(Arg::new("command").required(true).help("Command to run"))
-                        .arg(Arg::new("args").num_args(0..).help("Command arguments"))
-                        .arg(
-                            Arg::new("name")
-                                .short('n')
-                                .long("name")
-                                .help("Name of the sandbox to use")
-                                .default_value("default"),
-                        )
-                        .arg(
-                            Arg::new("working-dir")
-                                .short('w')
-                                .long("working-dir")
-                                .value_name("DIR")
-                                .help("Working directory inside sandbox"),
-                        ),
-                )
-                .subcommand(
-                    Command::new("delete")
-                        .about("Delete a sandbox container")
-                        .arg(
-                            Arg::new("name")
-                                .help("Name of the sandbox to delete")
-                                .default_value("default"),
-                        )
-                        .arg(
-                            Arg::new("force")
-                                .short('f')
-                                .long("force")
-                                .help("Force removal of running container")
-                                .action(clap::ArgAction::SetTrue),
-                        ),
-                ),
-        )
-        .get_matches();
+    // Parse command line arguments using derive
+    let cli = Cli::parse();
 
-    match matches.subcommand() {
-        Some(("fetch", sub_matches)) => {
-            let arch = sub_matches.get_one::<String>("arch").unwrap();
-            let flavor = sub_matches.get_one::<String>("flavor");
-            let mirror = sub_matches.get_one::<String>("mirror").unwrap();
-            let cache_dir = sub_matches.get_one::<String>("cache").unwrap();
-            let extract_dir = sub_matches.get_one::<String>("extract");
+    match cli.command {
+        Commands::Fetch(args) => {
+            let arch = args.arch;
+            let flavor = args.flavor;
+            let mirror = args.mirror;
+            let cache_dir = args.cache;
+            let extract_dir = args.extract;
 
             // Determine flavor - use architecture-specific defaults
             let flavor = if let Some(f) = flavor {
-                f.clone()
+                f
             } else {
                 // Use the shared function from the utils crate
                 arch::get_default_flavor(&arch)
@@ -182,10 +164,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             // Create stage3 fetcher using simplified constructor
-            let fetcher = Stage3Fetcher::new_for_fetch(target_config, cache_dir, mirror);
+            let fetcher = Stage3Fetcher::new_for_fetch(target_config, &cache_dir, &mirror);
 
             // Check if we should list flavors instead of fetching
-            if sub_matches.get_flag("list") {
+            if args.list {
                 info!("Listing available stage3 flavors");
                 let flavors = fetcher.list_available_flavors()?;
 
@@ -205,7 +187,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("\nTo use a specific flavor, specify it with the --flavor option:");
                     println!(
                         "  {} fetch --arch {} --flavor {}",
-                        std::env::args().next().unwrap_or_else(|| "crossdev-stages".to_string()),
+                        std::env::args()
+                            .next()
+                            .unwrap_or_else(|| "crossdev-stages".to_string()),
                         arch,
                         flavors.first().unwrap_or(&"unknown".to_string())
                     );
@@ -231,11 +215,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Some(("sandbox", sub_matches)) => {
-            match sub_matches.subcommand() {
-                Some(("setup", sub_matches)) => {
-                    let name = sub_matches.get_one::<String>("name").unwrap();
-                    let image = sub_matches.get_one::<String>("image").unwrap();
+        Commands::Sandbox(sandbox_cmd) => {
+            match sandbox_cmd {
+                SandboxCommands::Setup(args) => {
+                    let name = args.name;
+                    let image = args.image;
 
                     info!("Setting up sandbox '{}' with image '{}'", name, image);
 
@@ -244,7 +228,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             if backend.name() == "docker" {
                                 // Ensure the image is available, pulling if necessary
                                 let pull_result = std::process::Command::new("docker")
-                                    .args(["pull", image])
+                                    .args(["pull", &image])
                                     .output();
 
                                 match pull_result {
@@ -275,7 +259,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 // Ensure container is ready by running a simple command
                                 let _ = backend
-                                    .run_command(name, "echo", &["Container ready"], None)
+                                    .run_command(&name, "echo", &["Container ready"], None)
                                     .await;
 
                                 // Set ACCEPT_KEYWORDS based on host architecture (setup is always for the host)
@@ -291,7 +275,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 info!("Preserving existing make.conf content and updating ACCEPT_KEYWORDS");
 
                                 let accept_keywords_result = backend.run_command(
-                                    name,
+                                    &name,
                                     "sh",
                                     &["-c", &format!("if [ -f /etc/portage/make.conf ]; then sed -i '/^ACCEPT_KEYWORDS=/d' /etc/portage/make.conf; fi && echo 'ACCEPT_KEYWORDS={}' >> /etc/portage/make.conf", accept_keyword)],
                                     None
@@ -323,7 +307,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 info!("  Using EMERGE_DEFAULT_OPTS: {}", emerge_opts);
 
                                 let makeopts_result = backend.run_command(
-                                    name,
+                                    &name,
                                     "sh",
                                     &["-c", &format!("echo 'MAKEOPTS=\"{}\"' >> /etc/portage/make.conf && echo 'EMERGE_DEFAULT_OPTS=\"{}\"' >> /etc/portage/make.conf", makeopts, emerge_opts)],
                                     None
@@ -493,11 +477,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
 
-                Some(("prepare", sub_matches)) => {
-                    let default_target = String::from("riscv64-k1");
-                    let target = sub_matches
-                        .get_one::<String>("target")
-                        .unwrap_or(&default_target);
+                SandboxCommands::Prepare(args) => {
+                    let target = args.target;
 
                     info!(
                         "Preparing cross-compilation environment for target: {}",
@@ -631,9 +612,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                Some(("enter", sub_matches)) => {
-                    let name = sub_matches.get_one::<String>("name").unwrap();
-                    let working_dir = sub_matches.get_one::<String>("working-dir");
+                SandboxCommands::Enter(args) => {
+                    let name = args.name;
+                    let working_dir = args.working_dir;
 
                     info!("Entering sandbox '{}'", name);
 
@@ -645,20 +626,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // Use bash -li for proper login interactive shell
                                 let command = ["bash", "-li"];
 
-                                let working_dir_path = working_dir.map(std::path::Path::new);
+                                let working_dir_path =
+                                    working_dir.as_deref().map(std::path::Path::new);
                                 match backend
-                                    .exec_interactive(name, &command, working_dir_path)
+                                    .exec_interactive(&name, &command, working_dir_path)
                                     .await
                                 {
                                     Ok(_) => {
                                         println!("Interactive session completed");
 
                                         // Stop the container after use to free resources
-                                        self::cleanup_container(name).await;
+                                        self::cleanup_container(&name).await;
                                     }
                                     Err(e) => {
                                         eprintln!("Failed to start interactive session: {}", e);
-                                        self::cleanup_container(name).await;
+                                        self::cleanup_container(&name).await;
                                         std::process::exit(1);
                                     }
                                 }
@@ -670,7 +652,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
                                 println!(
                                     "  Working directory: {}",
-                                    working_dir.map(|d| d.as_str()).unwrap_or("default")
+                                    working_dir.as_deref().unwrap_or("default")
                                 );
                                 println!("  Status: Active");
 
@@ -691,7 +673,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                Some(("list", _)) => {
+                SandboxCommands::List => {
                     info!("Listing available sandboxes...");
 
                     match auto_detect_backend() {
@@ -707,31 +689,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                Some(("run", sub_matches)) => {
-                    let name = sub_matches
-                        .get_one::<String>("name")
-                        .map(|s| s.as_str())
-                        .unwrap_or("default");
-                    let command = sub_matches.get_one::<String>("command").unwrap();
-                    let args: Vec<String> = sub_matches
-                        .get_many::<String>("args")
-                        .map(|vals| vals.cloned().collect())
-                        .unwrap_or_default();
-                    let args_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-                    let working_dir = sub_matches.get_one::<String>("working-dir");
+                SandboxCommands::Run(args) => {
+                    let name = args.name;
+                    let command = args.command;
+                    let args_refs: Vec<&str> = args.args.iter().map(|s| s.as_str()).collect();
+                    let working_dir = args.working_dir;
 
                     info!(
                         "Running command in sandbox '{}': {} {}",
                         name,
                         command,
-                        args.join(" ")
+                        args_refs.join(" ")
                     );
 
                     match auto_detect_backend() {
                         Ok(backend) => {
-                            let working_dir_path = working_dir.map(std::path::Path::new);
+                            let working_dir_path = working_dir.as_deref().map(std::path::Path::new);
                             match backend
-                                .run_command(name, command, &args_refs, working_dir_path)
+                                .run_command(&name, &command, &args_refs, working_dir_path)
                                 .await
                             {
                                 Ok(output) => {
@@ -742,14 +717,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     println!("{}", output);
 
                                     // Stop the container after use to free resources
-                                    self::cleanup_container(name).await;
+                                    self::cleanup_container(&name).await;
                                 }
                                 Err(e) => {
                                     eprintln!(
                                         "Error executing command in sandbox '{}': {}",
                                         name, e
                                     );
-                                    self::cleanup_container(name).await;
+                                    self::cleanup_container(&name).await;
                                     std::process::exit(1);
                                 }
                             }
@@ -760,9 +735,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                Some(("delete", sub_matches)) => {
-                    let name = sub_matches.get_one::<String>("name").unwrap();
-                    let force = sub_matches.get_flag("force");
+                SandboxCommands::Delete(args) => {
+                    let name = args.name;
+                    let force = args.force;
 
                     info!("Deleting sandbox '{}'", name);
 
@@ -780,11 +755,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 };
 
                                 // First try to stop the container if it's running
-                                let _ = docker.stop_container(name, None).await;
+                                let _ = docker.stop_container(&name, None).await;
 
                                 match docker
                                     .remove_container(
-                                        name,
+                                        &name,
                                         Some(bollard::container::RemoveContainerOptions {
                                             force,
                                             link: false,
@@ -825,15 +800,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                _ => {
-                    eprintln!("No sandbox subcommand specified. Use --help for usage.");
-                    std::process::exit(1);
-                }
             }
-        }
-        _ => {
-            eprintln!("No subcommand specified. Use --help for usage.");
-            std::process::exit(1);
         }
     }
 
