@@ -2,6 +2,7 @@
 //!
 //! This is the entry point for the crossdev-stages Rust implementation.
 
+use clap::builder::styling::{AnsiColor, Color, Style, Styles};
 use clap::{Parser, Subcommand};
 use crossdev_sandbox::auto_detect_backend;
 use crossdev_stage3::Stage3Fetcher;
@@ -13,7 +14,18 @@ use crossdev::CrossdevEnvironment;
 
 /// Main CLI for crossdev-stages
 #[derive(Parser, Debug)]
-#[command(version = "0.1.0", about = "Gentoo cross-compilation stage builder")]
+#[command(
+    version = "0.1.0",
+    about = "Gentoo cross-compilation stage builder",
+    styles = Styles::styled()
+        .header(AnsiColor::BrightGreen.on_default().bold())
+        .usage(AnsiColor::BrightGreen.on_default().bold())
+        .literal(AnsiColor::BrightCyan.on_default().bold())
+        .placeholder(AnsiColor::Cyan.on_default())
+        .error(AnsiColor::BrightRed.on_default().bold())
+        .invalid(AnsiColor::BrightYellow.on_default().bold())
+        .valid(AnsiColor::BrightCyan.on_default().bold())
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -270,7 +282,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // Since arch parsing returns the correct Gentoo architecture names
                                 let accept_keyword = format!("~{}", gentoo_arch);
 
-                                info!("Detected host architecture: {} (Gentoo: {}) -> ACCEPT_KEYWORDS={}", 
+                                info!("Detected host architecture: {} (Gentoo: {}) -> ACCEPT_KEYWORDS={}",
                                     host_arch, gentoo_arch, accept_keyword);
                                 info!("Preserving existing make.conf content and updating ACCEPT_KEYWORDS");
 
