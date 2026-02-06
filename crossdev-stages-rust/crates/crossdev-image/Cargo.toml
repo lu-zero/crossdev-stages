@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 crossdev-config = { path = "../crossdev-config" }
-crossdev-stage3 = { path = "../crossdev-stage3" }
+crossdev-stages = { path = "../crossdev-stages" }
 crossdev-utils = { path = "../crossdev-utils" }
 thiserror.workspace = true
 log.workspace = true

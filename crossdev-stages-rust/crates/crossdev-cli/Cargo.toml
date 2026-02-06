@@ -12,12 +12,11 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
-crossdev-cache = { path = "../crossdev-cache" }
+crossdev-stages = { path = "../crossdev-stages" }
 crossdev-config = { path = "../crossdev-config" }
 crossdev-core = { path = "../crossdev-core" }
 crossdev-image = { path = "../crossdev-image" }
 crossdev-sandbox = { path = "../crossdev-sandbox" }
-crossdev-stage3 = { path = "../crossdev-stage3" }
 crossdev-utils = { path = "../crossdev-utils" }
 thiserror.workspace = true
 log.workspace = true

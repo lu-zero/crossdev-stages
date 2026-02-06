@@ -4,9 +4,8 @@
 
 use clap::builder::styling::{AnsiColor, Styles};
 use clap::{Parser, Subcommand};
-use crossdev_cache::{CacheConfig, CacheStrategy, CrossdevCache};
 use crossdev_sandbox::auto_detect_backend;
-use crossdev_stage3::Stage3Fetcher;
+use crossdev_stages::{CacheConfig, CacheStrategy, CrossdevCache, Stage3Fetcher};
 use crossdev_utils::arch;
 use glob::Pattern;
 use jiff::Timestamp;

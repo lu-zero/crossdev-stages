@@ -3,9 +3,9 @@ members = [
     "crates/crossdev-config",
     "crates/crossdev-core",
     "crates/crossdev-image",
-    "crates/crossdev-stage3",
+    "crates/crossdev-stages",
     "crates/crossdev-utils",
-    "crates/crossdev-cli", "crates/crossdev-sandbox", "crates/crossdev-cache",
+    "crates/crossdev-cli", "crates/crossdev-sandbox",
 ]
 resolver = "2"
 
