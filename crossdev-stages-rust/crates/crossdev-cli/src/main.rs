@@ -159,7 +159,7 @@ struct StageDeleteArgs {
 #[derive(clap::Args, Debug)]
 struct StageLoadArgs {
     /// Name of the sandbox to load the stage into
-    #[arg(required = true)]
+    #[arg(short = 'S', long, required = true)]
     sandbox: String,
 
     /// Name of the stage to load (from cache)
@@ -178,7 +178,7 @@ struct StageLoadArgs {
 #[derive(clap::Args, Debug)]
 struct StageSaveArgs {
     /// Name of the sandbox to save as a stage
-    #[arg(required = true)]
+    #[arg(short = 'S', long, required = true)]
     sandbox: String,
 
     /// Name for the new stage (defaults to stage3-{arch}-{flavor}-cx pattern)
@@ -205,7 +205,7 @@ struct StageSaveArgs {
 #[derive(clap::Args, Debug)]
 struct StageWipeArgs {
     /// Name of the sandbox to wipe stage files from
-    #[arg(required = true)]
+    #[arg(short = 'S', long, required = true)]
     sandbox: String,
 
     /// Force deletion without confirmation
@@ -1261,7 +1261,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cache_dir = args.cache;
         let force = args.force;
 
-        info!("Saving sandbox '{}' as stage3 '{}'", sandbox_name, stage_name);
+        info!(
+            "Saving sandbox '{}' as stage3 '{}'",
+            sandbox_name, stage_name
+        );
 
         // Get sandbox directory
         let sandbox_dir = format!("./sandboxes/{}", sandbox_name);
