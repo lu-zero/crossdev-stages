@@ -159,11 +159,11 @@ struct StageDeleteArgs {
 #[derive(clap::Args, Debug)]
 struct StageLoadArgs {
     /// Name of the sandbox to load the stage into
-    #[arg(short = 'b', long, required = true)]
+    #[arg(required = true)]
     sandbox: String,
 
     /// Name of the stage to load (from cache)
-    #[arg(short = 't', long, required = true)]
+    #[arg(required = true)]
     stage: String,
 
     /// Cache directory
@@ -178,12 +178,12 @@ struct StageLoadArgs {
 #[derive(clap::Args, Debug)]
 struct StageSaveArgs {
     /// Name of the sandbox to save as a stage
-    #[arg(short, long, required = true)]
+    #[arg(required = true)]
     sandbox: String,
 
     /// Name for the new stage (defaults to stage3-{arch}-{flavor}-cx pattern)
-    #[arg(short = 'n', long)]
-    name: Option<String>,
+    #[arg(required = true)]
+    name: String,
 
     /// Cache directory to save the new stage
     #[arg(short = 'C', long, default_value = get_default_cache_dir())]
@@ -205,7 +205,7 @@ struct StageSaveArgs {
 #[derive(clap::Args, Debug)]
 struct StageWipeArgs {
     /// Name of the sandbox to wipe stage files from
-    #[arg(short, long, required = true)]
+    #[arg(required = true)]
     sandbox: String,
 
     /// Force deletion without confirmation
@@ -1206,7 +1206,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let cache_dir = args.cache;
         let force = args.force;
 
-        info!("Loading stage '{}' into sandbox '{}'", stage_name, sandbox_name);
+        info!(
+            "Loading stage '{}' into sandbox '{}'",
+            stage_name, sandbox_name
+        );
 
         // Find the stage file in cache
         let stage_path = format!("{}/{}", cache_dir, stage_name);
@@ -1223,7 +1226,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(format!(
                 "Stage '{}' already exists in sandbox '{}'. Use --force to overwrite.",
                 stage_name, sandbox_name
-            ).into());
+            )
+            .into());
         }
 
         // Create stages directory
@@ -1231,7 +1235,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Extract the stage3 archive
         info!("Extracting stage3 archive to: {}", stages_dir);
-        
+
         // Use tar command to extract (cross-platform approach)
         let status = std::process::Command::new("tar")
             .args(["-xzf", &stage_path, "-C", &stages_dir])
@@ -1241,7 +1245,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err("Failed to extract stage3 archive".into());
         }
 
-        info!("Stage '{}' successfully loaded into sandbox '{}'", stage_name, sandbox_name);
+        info!(
+            "Stage '{}' successfully loaded into sandbox '{}'",
+            stage_name, sandbox_name
+        );
         println!("✓ Stage loaded: {} -> {}", stage_name, sandbox_name);
 
         Ok(())
@@ -1250,13 +1257,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// Handle stage save command
     async fn handle_stage_save(args: StageSaveArgs) -> Result<(), Box<dyn std::error::Error>> {
         let sandbox_name = args.sandbox;
-        let custom_name = args.name;
+        let stage_name = args.name;
         let cache_dir = args.cache;
-        let arch = args.arch.unwrap_or_else(|| "unknown".to_string());
-        let flavor = args.flavor.unwrap_or_else(|| "generic".to_string());
         let force = args.force;
 
-        info!("Saving sandbox '{}' as stage3", sandbox_name);
+        info!("Saving sandbox '{}' as stage3 '{}'", sandbox_name, stage_name);
 
         // Get sandbox directory
         let sandbox_dir = format!("./sandboxes/{}", sandbox_name);
@@ -1264,20 +1269,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(format!("Sandbox '{}' not found", sandbox_name).into());
         }
 
-        // Determine stage name
-        let stage_name = if let Some(name) = custom_name {
-            name
-        } else {
-            format!("stage3-{}-{}-cx", arch, flavor)
-        };
-
         // Check if stage already exists
         let stage_path = format!("{}/{}", cache_dir, stage_name);
         if std::path::Path::new(&stage_path).exists() && !force {
             return Err(format!(
                 "Stage '{}' already exists. Use --force to overwrite.",
                 stage_name
-            ).into());
+            )
+            .into());
         }
 
         // Create cache directory if it doesn't exist
@@ -1285,7 +1284,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Create the stage3 archive
         info!("Creating stage3 archive: {}", stage_path);
-        
+
         // Use tar command to create archive (cross-platform approach)
         let status = std::process::Command::new("tar")
             .args(["-czf", &stage_path, "-C", &sandbox_dir, "."])
@@ -1295,7 +1294,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err("Failed to create stage3 archive".into());
         }
 
-        info!("Sandbox '{}' successfully saved as stage '{}'", sandbox_name, stage_name);
+        info!(
+            "Sandbox '{}' successfully saved as stage '{}'",
+            sandbox_name, stage_name
+        );
         println!("✓ Stage saved: {} -> {}", sandbox_name, stage_name);
 
         Ok(())
@@ -1318,9 +1320,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Check if we should proceed
         if !force {
-            println!("This will delete all stage files from sandbox '{}':", sandbox_name);
+            println!(
+                "This will delete all stage files from sandbox '{}':",
+                sandbox_name
+            );
             println!("  {}", stages_dir);
-            
+
             if !confirm_deletion(&[stages_dir.clone()]) {
                 println!("Wipe cancelled by user.");
                 return Ok(());
@@ -1330,7 +1335,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Remove the stages directory
         fs::remove_dir_all(&stages_dir)?;
 
-        info!("Stage files successfully wiped from sandbox '{}'", sandbox_name);
+        info!(
+            "Stage files successfully wiped from sandbox '{}'",
+            sandbox_name
+        );
         println!("✓ Stage files wiped from: {}", sandbox_name);
 
         Ok(())
