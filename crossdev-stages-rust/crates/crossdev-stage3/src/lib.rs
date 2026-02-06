@@ -712,13 +712,13 @@ mod tests {
         let config = PlatformConfig {
             target: crossdev_config::TargetConfig {
                 arch: "riscv64".parse().unwrap(),
-                chost: "riscv64-unknown-linux-gnu".to_string(),
                 flavor: "rv64_lp64d-openrc".to_string(),
             },
             compilation: crossdev_config::CompilationConfig {
                 cflags: "test".to_string(),
                 gcc_version: "test".to_string(),
                 profile: "test".to_string(),
+                chost: "riscv64-unknown-linux-gnu".to_string(),
                 makeopts: "test".to_string(),
                 emerge_default_opts: "test".to_string(),
             },
@@ -765,13 +765,13 @@ stage3-riscv64-openrc-20231017T010001Z.tar.xz 123456788 SHA256 def456...
         let config = PlatformConfig {
             target: crossdev_config::TargetConfig {
                 arch: "riscv64".parse().unwrap(),
-                chost: "riscv64-unknown-linux-gnu".to_string(),
                 flavor: "rv64_lp64d-openrc".to_string(),
             },
             compilation: crossdev_config::CompilationConfig {
                 cflags: "test".to_string(),
                 gcc_version: "test".to_string(),
                 profile: "test".to_string(),
+                chost: "riscv64-unknown-linux-gnu".to_string(),
                 makeopts: "test".to_string(),
                 emerge_default_opts: "test".to_string(),
             },
@@ -834,13 +834,13 @@ stage3-riscv64-openrc-20231017T010001Z.tar.xz 123456788 SHA256 def456...
         let config = PlatformConfig {
             target: crossdev_config::TargetConfig {
                 arch: "x86".parse().unwrap(),
-                chost: "test".to_string(),
                 flavor: "test".to_string(),
             },
             compilation: crossdev_config::CompilationConfig {
                 cflags: "test".to_string(),
                 gcc_version: "test".to_string(),
                 profile: "test".to_string(),
+                chost: "test".to_string(),
                 makeopts: "test".to_string(),
                 emerge_default_opts: "test".to_string(),
             },
@@ -885,13 +885,13 @@ stage3-riscv64-openrc-20231017T010001Z.tar.xz 123456788 SHA256 def456...
         let config = PlatformConfig {
             target: crossdev_config::TargetConfig {
                 arch: "riscv64".parse().unwrap(),
-                chost: "riscv64-unknown-linux-gnu".to_string(),
                 flavor: "rv64_lp64d-openrc".to_string(),
             },
             compilation: crossdev_config::CompilationConfig {
                 cflags: "test".to_string(),
                 gcc_version: "test".to_string(),
                 profile: "test".to_string(),
+                chost: "riscv64-unknown-linux-gnu".to_string(),
                 makeopts: "test".to_string(),
                 emerge_default_opts: "test".to_string(),
             },

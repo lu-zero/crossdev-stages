@@ -179,15 +179,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Create minimal configuration for stage3 fetching
             let config = PlatformConfig {
                 target: crossdev_config::TargetConfig {
-                    arch: arch.clone(),
-                    chost: format!("{}-unknown-linux-gnu", arch),
+                    arch: arch.parse().unwrap(),
                     flavor: flavor.clone(),
-                    keyword: arch.clone(),
                 },
                 compilation: crossdev_config::CompilationConfig {
                     cflags: "-O2 -pipe".to_string(),
                     gcc_version: "16.0.0".to_string(),
                     profile: "default/linux/amd64/17.1".to_string(),
+                    chost: format!("{}-unknown-linux-gnu", arch),
                     makeopts: "-j$(nproc) --load-average=$(nproc)".to_string(),
                     emerge_default_opts: "--jobs=$(nproc) --load-average=$(nproc) --quiet-build y"
                         .to_string(),
@@ -552,16 +551,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 };
 
                                 let target_config = &config.target;
-                                let crossdev_root = format!("/usr/{}", target_config.chost);
+                                let crossdev_root = format!("/usr/{}", config.compilation.chost);
 
                                 info!(
                                     "Setting up crossdev environment for {}",
-                                    target_config.chost
+                                    config.compilation.chost
                                 );
 
                                 // Use our structured crossdev environment setup
                                 let crossdev_env = CrossdevEnvironment::new(
-                                    &target_config.chost,
+                                    &config.compilation.chost,
                                     &crossdev_root,
                                     &config.compilation.profile,
                                 );
@@ -587,7 +586,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         "mkdir -p /etc/portage/package.{{accept_keywords,mask}} && \
                                          echo \"cross-{}/rust-std **\" > /etc/portage/package.accept_keywords/rust-std && \
                                          echo \"=cross-{}/gcc-15*\" > /etc/portage/package.mask/cross-{}-fixup",
-                                        target_config.chost, target_config.chost, target_config.chost
+                                        config.compilation.chost, config.compilation.chost, config.compilation.chost
                                     )],
                                     None
                                 ).await;
@@ -626,7 +625,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         "default",
                                         "crossdev",
                                         &[
-                                            target_config.chost.as_str(),
+                                            config.compilation.chost.as_str(),
                                             "--g",
                                             &config.compilation.gcc_version,
                                             "--ex-pkg",
@@ -648,7 +647,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 println!("✓ Cross-compilation environment prepared successfully");
                                 println!("  Target: {}", target);
-                                println!("  CHOST: {}", target_config.chost);
+                                println!("  CHOST: {}", config.compilation.chost);
                                 println!("  Profile: {}", config.compilation.profile);
                                 println!("  Status: Ready for cross-compilation");
                             } else {

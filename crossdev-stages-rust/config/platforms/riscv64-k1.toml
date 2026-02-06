@@ -1,12 +1,12 @@
 [target]
 arch = "riscv64"
-chost = "riscv64-unknown-linux-gnu"
 flavor = "rv64_lp64d-openrc"
 
 [compilation]
 cflags = "-O3 -march=rv64gcv_zvl256b -pipe"
 gcc_version = "16.0.0_p20251005"
 profile = "default/linux/riscv/23.0/rv64/lp64d"
+chost = "riscv64-unknown-linux-gnu"
 
 [repositories]
 opensbi_repo = "https://github.com/cyyself/opensbi"

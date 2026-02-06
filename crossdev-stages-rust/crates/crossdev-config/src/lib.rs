@@ -27,7 +27,6 @@ pub enum ConfigError {
 #[derive(Debug, Deserialize, Clone)]
 pub struct TargetConfig {
     pub arch: crossdev_utils::arch::Arch,
-    pub chost: String,
     pub flavor: String,
 }
 
@@ -37,6 +36,7 @@ pub struct CompilationConfig {
     pub cflags: String,
     pub gcc_version: String,
     pub profile: String,
+    pub chost: String,
     #[serde(default = "default_makeopts")]
     pub makeopts: String,
     #[serde(default = "default_emerge_opts")]
@@ -116,9 +116,9 @@ impl PlatformConfig {
     /// Validate configuration
     fn validate(&self) -> Result<(), ConfigError> {
         // Check required fields are not empty
-        if self.target.chost.is_empty() {
+        if self.compilation.chost.is_empty() {
             return Err(ConfigError::ValidationError(
-                "target.chost cannot be empty".to_string(),
+                "compilation.chost cannot be empty".to_string(),
             ));
         }
 
@@ -140,7 +140,7 @@ impl PlatformConfig {
 
     /// Get the cross-compile prefix (e.g., "riscv64-unknown-linux-gnu-")
     pub fn cross_compile_prefix(&self) -> String {
-        format!("{}-", self.target.chost)
+        format!("{}-", self.compilation.chost)
     }
 }
 
@@ -182,13 +182,13 @@ mod tests {
         let config_content = r#"
             [target]
             arch = "riscv64"
-            chost = "riscv64-unknown-linux-gnu"
             flavor = "rv64_lp64d-openrc"
             
             [compilation]
             cflags = "-O3 -march=rv64gcv_zvl256b -pipe"
             gcc_version = "16.0.0_p20251005"
             profile = "default/linux/riscv/23.0/rv64/lp64d"
+            chost = "riscv64-unknown-linux-gnu"
             makeopts = "-j$(nproc) --load-average=$(nproc)"
             emerge_default_opts = "--jobs=$(nproc) --load-average=$(nproc) --quiet-build y"
             
@@ -218,7 +218,7 @@ mod tests {
         let config = PlatformConfig::load_from_file(&config_path).unwrap();
 
         assert_eq!(config.target.arch.as_gentoo_keyword(), "riscv");
-        assert_eq!(config.target.chost, "riscv64-unknown-linux-gnu");
+        assert_eq!(config.compilation.chost, "riscv64-unknown-linux-gnu");
         assert_eq!(
             config.compilation.cflags,
             "-O3 -march=rv64gcv_zvl256b -pipe"
@@ -260,13 +260,13 @@ mod tests {
         let config = PlatformConfig {
             target: TargetConfig {
                 arch: "riscv64".parse().unwrap(),
-                chost: "riscv64-unknown-linux-gnu".to_string(),
                 flavor: "test".to_string(),
             },
             compilation: CompilationConfig {
                 cflags: "test".to_string(),
                 gcc_version: "test".to_string(),
                 profile: "test".to_string(),
+                chost: "riscv64-unknown-linux-gnu".to_string(),
                 makeopts: "test".to_string(),
                 emerge_default_opts: "test".to_string(),
             },
