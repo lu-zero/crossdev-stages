@@ -4,6 +4,7 @@
 
 use clap::builder::styling::{AnsiColor, Styles};
 use clap::{Parser, Subcommand};
+use crossdev_cache::{CacheConfig, CacheStrategy, CrossdevCache};
 use crossdev_sandbox::auto_detect_backend;
 use crossdev_stage3::Stage3Fetcher;
 use crossdev_utils::arch;
@@ -12,6 +13,36 @@ use jiff::Timestamp;
 use log::{info, warn, LevelFilter};
 use std::fs;
 use std::io::{self, Write};
+use std::sync::OnceLock;
+
+/// Global cache for the default cache directory path
+static DEFAULT_CACHE_DIR: OnceLock<String> = OnceLock::new();
+
+/// Get the default cache directory path using OnceLock for lazy initialization
+fn get_default_cache_dir() -> &'static str {
+    DEFAULT_CACHE_DIR.get_or_init(|| {
+        // Use the existing cache system with Local strategy (XDG-compliant)
+        let config = CacheConfig {
+            strategy: CacheStrategy::Local,
+            ..Default::default()
+        };
+
+        match CrossdevCache::new(config) {
+            Ok(cache) => cache
+                .cache_dir()
+                .join("stage3")
+                .to_string_lossy()
+                .into_owned(),
+            Err(e) => {
+                warn!(
+                    "Failed to initialize cache system: {}, falling back to /tmp",
+                    e
+                );
+                "/tmp/crossdev-stage3-cache".to_string()
+            }
+        }
+    })
+}
 
 mod crossdev;
 use crossdev::CrossdevEnvironment;
@@ -70,7 +101,7 @@ struct StageFetchArgs {
     mirror: String,
 
     /// Cache directory
-    #[arg(short = 'C', long, default_value = "/tmp/crossdev-stage3-cache")]
+    #[arg(short = 'C', long, default_value = get_default_cache_dir())]
     cache: String,
 
     /// Extract to directory
@@ -97,7 +128,7 @@ struct StageListArgs {
     detailed: bool,
 
     /// Cache directory
-    #[arg(short = 'C', long, default_value = "/tmp/crossdev-stage3-cache")]
+    #[arg(short = 'C', long, default_value = get_default_cache_dir())]
     cache: String,
 }
 
@@ -108,7 +139,7 @@ struct StageDeleteArgs {
     patterns: Vec<String>,
 
     /// Cache directory
-    #[arg(short = 'C', long, default_value = "/tmp/crossdev-stage3-cache")]
+    #[arg(short = 'C', long, default_value = get_default_cache_dir())]
     cache: String,
 
     /// Dry run - show what would be deleted without actually deleting
@@ -119,8 +150,6 @@ struct StageDeleteArgs {
     #[arg(short, long)]
     force: bool,
 }
-
-
 
 #[derive(Subcommand, Debug)]
 enum SandboxCommands {

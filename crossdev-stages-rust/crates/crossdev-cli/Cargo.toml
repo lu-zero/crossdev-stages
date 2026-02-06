@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
+crossdev-cache = { path = "../crossdev-cache" }
 crossdev-config = { path = "../crossdev-config" }
 crossdev-core = { path = "../crossdev-core" }
 crossdev-image = { path = "../crossdev-image" }
