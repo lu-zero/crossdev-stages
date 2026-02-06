@@ -3,7 +3,6 @@
 //! This is the entry point for the crossdev-stages Rust implementation.
 
 use clap::{Arg, Command};
-use crossdev_config::PlatformConfig;
 use crossdev_sandbox::auto_detect_backend;
 use crossdev_stage3::Stage3Fetcher;
 use crossdev_utils::arch;
@@ -176,45 +175,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             info!("Fetching stage3 for arch={}, flavor={}", arch, flavor);
 
-            // Create minimal configuration for stage3 fetching
-            let config = PlatformConfig {
-                target: crossdev_config::TargetConfig {
-                    arch: arch.parse().unwrap(),
-                    flavor: flavor.clone(),
-                },
-                compilation: crossdev_config::CompilationConfig {
-                    cflags: "-O2 -pipe".to_string(),
-                    gcc_version: "16.0.0".to_string(),
-                    profile: "default/linux/amd64/17.1".to_string(),
-                    chost: format!("{}-unknown-linux-gnu", arch),
-                    makeopts: "-j$(nproc) --load-average=$(nproc)".to_string(),
-                    emerge_default_opts: "--jobs=$(nproc) --load-average=$(nproc) --quiet-build y"
-                        .to_string(),
-                },
-                repositories: crossdev_config::RepositoryConfig {
-                    opensbi_repo: "https://github.com/riscv/opensbi".to_string(),
-                    opensbi_tag: "v1.3.1".to_string(),
-                    u_boot_repo: "https://github.com/u-boot/u-boot".to_string(),
-                    u_boot_tag: "v2023.10".to_string(),
-                    firmware_repo: "https://github.com/riscv/firmware".to_string(),
-                    firmware_tag: "v1.0".to_string(),
-                    kernel_repo: "https://github.com/torvalds/linux".to_string(),
-                    kernel_tag: "v6.5".to_string(),
-                    bootloader_tag: "v1.0".to_string(),
-                },
-                packages: crossdev_config::PackageConfig {
-                    stage1_file: "stage1-packages.txt".to_string(),
-                    additional_file: "additional-packages.txt".to_string(),
-                },
-                image: crossdev_config::ImageConfig {
-                    root_size: "5G".to_string(),
-                    boot_size: "500M".to_string(),
-                    genimage_config: "genimage.cfg".to_string(),
-                },
+            // Create target configuration for stage3 fetching
+            let target_config = crossdev_config::TargetConfig {
+                arch: arch.parse()?,
+                flavor: flavor.clone(),
             };
 
-            // Create stage3 fetcher
-            let fetcher = Stage3Fetcher::new(config, cache_dir, mirror);
+            // Create stage3 fetcher using simplified constructor
+            let fetcher = Stage3Fetcher::new_for_fetch(target_config, cache_dir, mirror);
 
             // Check if we should list flavors instead of fetching
             if sub_matches.get_flag("list") {

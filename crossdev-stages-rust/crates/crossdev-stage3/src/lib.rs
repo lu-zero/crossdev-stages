@@ -2,7 +2,7 @@
 //!
 //! This crate handles fetching, caching, and extracting Gentoo stage3 images.
 
-use crossdev_config::{ConfigError, PlatformConfig};
+use crossdev_config::{ConfigError, CompilationConfig, ImageConfig, PackageConfig, PlatformConfig, RepositoryConfig, TargetConfig};
 use log::info;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -64,6 +64,62 @@ impl Stage3Fetcher {
     ///
     /// A new Stage3Fetcher instance
     pub fn new(config: PlatformConfig, cache_dir: impl AsRef<Path>, mirror_url: &str) -> Self {
+        Self {
+            config,
+            cache_dir: cache_dir.as_ref().to_path_buf(),
+            mirror_url: mirror_url.to_string(),
+        }
+    }
+
+    /// Create a new Stage3Fetcher with only TargetConfig (simplified for fetch operations)
+    ///
+    /// This constructor is optimized for stage3 fetch operations that only need
+    /// target architecture and flavor information, without requiring full platform configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `target_config` - Target architecture configuration
+    /// * `cache_dir` - Directory to cache stage3 images
+    /// * `mirror_url` - Gentoo mirror URL
+    ///
+    /// # Returns
+    ///
+    /// A new Stage3Fetcher instance with minimal configuration
+    pub fn new_for_fetch(target_config: TargetConfig, cache_dir: impl AsRef<Path>, mirror_url: &str) -> Self {
+        // Create a minimal PlatformConfig with only the target information
+        // Other fields are set to default values since they're not used for fetching
+        let config = PlatformConfig {
+            target: target_config.clone(),
+            compilation: CompilationConfig {
+                cflags: "-O2 -pipe".to_string(),
+                gcc_version: "16.0.0".to_string(),
+                profile: "default/linux/amd64/17.1".to_string(),
+                chost: format!("{}-unknown-linux-gnu", target_config.arch),
+                makeopts: "-j$(nproc)".to_string(),
+                emerge_default_opts: "--jobs=$(nproc)".to_string(),
+            },
+            repositories: RepositoryConfig {
+                opensbi_repo: "https://github.com/riscv/opensbi".to_string(),
+                opensbi_tag: "v1.3.1".to_string(),
+                u_boot_repo: "https://github.com/u-boot/u-boot".to_string(),
+                u_boot_tag: "v2023.10".to_string(),
+                firmware_repo: "https://github.com/riscv/firmware".to_string(),
+                firmware_tag: "v1.0".to_string(),
+                kernel_repo: "https://github.com/torvalds/linux".to_string(),
+                kernel_tag: "v6.5".to_string(),
+                bootloader_tag: "v1.0".to_string(),
+            },
+            packages: PackageConfig {
+                stage1_file: "stage1-packages.txt".to_string(),
+                additional_file: "additional-packages.txt".to_string(),
+            },
+            image: ImageConfig {
+                root_size: "5G".to_string(),
+                boot_size: "500M".to_string(),
+                genimage_config: "genimage.cfg".to_string(),
+            },
+        };
+
         Self {
             config,
             cache_dir: cache_dir.as_ref().to_path_buf(),
@@ -153,7 +209,7 @@ impl Stage3Fetcher {
         let latest_url = format!(
             "{}/releases/{}/autobuilds/latest-stage3-{}.txt",
             self.mirror_url.trim_end_matches('/'),
-            self.config.target.arch,
+            self.config.target.arch.as_gentoo_keyword(),
             self.config.target.flavor
         );
 
@@ -194,7 +250,7 @@ impl Stage3Fetcher {
         let latest_url = format!(
             "{}/releases/{}/autobuilds/latest-stage3.txt",
             self.mirror_url.trim_end_matches('/'),
-            self.config.target.arch
+            self.config.target.arch.as_gentoo_keyword()
         );
 
         info!("Fetching all stage3 flavors from: {}", latest_url);
@@ -300,7 +356,7 @@ impl Stage3Fetcher {
                         url: format!(
                             "{}/releases/{}/autobuilds/{}",
                             self.mirror_url.trim_end_matches('/'),
-                            self.config.target.arch,
+                            self.config.target.arch.as_gentoo_keyword(),
                             full_path
                         ),
                         size,
@@ -398,7 +454,7 @@ impl Stage3Fetcher {
                         url: format!(
                             "{}/releases/{}/autobuilds/{}",
                             self.mirror_url.trim_end_matches('/'),
-                            self.config.target.arch,
+                            self.config.target.arch.as_gentoo_keyword(),
                             full_path
                         ),
                         size,
