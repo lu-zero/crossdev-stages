@@ -2,12 +2,16 @@
 //!
 //! This is the entry point for the crossdev-stages Rust implementation.
 
-use clap::builder::styling::{AnsiColor, Color, Style, Styles};
+use clap::builder::styling::{AnsiColor, Styles};
 use clap::{Parser, Subcommand};
 use crossdev_sandbox::auto_detect_backend;
 use crossdev_stage3::Stage3Fetcher;
 use crossdev_utils::arch;
+use glob::Pattern;
+use jiff::Timestamp;
 use log::{info, warn, LevelFilter};
+use std::fs;
+use std::io::{self, Write};
 
 mod crossdev;
 use crossdev::CrossdevEnvironment;
@@ -35,9 +39,87 @@ struct Cli {
 enum Commands {
     /// Fetch latest stage3 image or list available flavors
     Fetch(FetchArgs),
+    /// Manage stage3 images
+    #[command(subcommand)]
+    Stages(StageCommands),
     /// Manage sandbox/container operations
     #[command(subcommand)]
     Sandbox(SandboxCommands),
+}
+
+#[derive(Subcommand, Debug)]
+enum StageCommands {
+    /// Fetch stage3 images and save to cache
+    Fetch(StageFetchArgs),
+    /// List available stage3 images in cache
+    List(StageListArgs),
+    /// Delete stage3 images from cache
+    Delete(StageDeleteArgs),
+}
+
+#[derive(clap::Args, Debug)]
+struct StageFetchArgs {
+    /// Target architecture
+    #[arg(short, long, default_value = crossdev_utils::arch::get_default_arch_for_clap())]
+    arch: String,
+
+    /// Stage3 flavor (e.g., amd64-openrc)
+    #[arg(short, long)]
+    flavor: Option<String>,
+
+    /// Gentoo mirror URL
+    #[arg(short, long, default_value = "https://distfiles.gentoo.org")]
+    mirror: String,
+
+    /// Cache directory
+    #[arg(short = 'C', long, default_value = "/tmp/crossdev-stage3-cache")]
+    cache: String,
+
+    /// Extract to directory
+    #[arg(short, long)]
+    extract: Option<String>,
+
+    /// List available stage3 flavors instead of fetching
+    #[arg(short, long)]
+    list: bool,
+}
+
+#[derive(clap::Args, Debug)]
+struct StageListArgs {
+    /// Filter by architecture pattern (supports glob patterns)
+    #[arg(short, long)]
+    arch: Option<String>,
+
+    /// Filter by flavor pattern (supports glob patterns)
+    #[arg(short, long)]
+    flavor: Option<String>,
+
+    /// Show detailed information including timestamps
+    #[arg(short, long)]
+    detailed: bool,
+
+    /// Cache directory
+    #[arg(short = 'C', long, default_value = "/tmp/crossdev-stage3-cache")]
+    cache: String,
+}
+
+#[derive(clap::Args, Debug)]
+struct StageDeleteArgs {
+    /// Glob patterns to match stage3 files for deletion
+    #[arg(required = true, num_args = 1..)]
+    patterns: Vec<String>,
+
+    /// Cache directory
+    #[arg(short = 'C', long, default_value = "/tmp/crossdev-stage3-cache")]
+    cache: String,
+
+    /// Dry run - show what would be deleted without actually deleting
+    #[arg(short, long)]
+    dry_run: bool,
+
+    /// Force deletion without confirmation
+    #[arg(short, long)]
+    force: bool,
 }
 
 #[derive(clap::Args, Debug)]
@@ -141,6 +223,26 @@ struct SandboxDeleteArgs {
     force: bool,
 }
 
+/// Clean up a container by stopping it
+/// This is called when:
+/// - Interactive session completes normally
+/// - User presses Ctrl+C (SIGINT)
+/// - Any error occurs during interactive session
+async fn cleanup_container(name: &str) {
+    info!("Stopping container '{}' to free resources", name);
+    if let Ok(docker) = bollard::Docker::connect_with_local_defaults() {
+        match docker.stop_container(name, None).await {
+            Ok(_) => info!("✓ Container '{}' stopped successfully", name),
+            Err(e) => warn!("Warning: Failed to stop container '{}': {}", name, e),
+        }
+    } else {
+        warn!(
+            "Warning: Docker connection failed during cleanup for container '{}'",
+            name
+        );
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
@@ -224,6 +326,96 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     info!("Extracting to: {}", extract_dir);
                     fetcher.extract_stage3(&stage3, extract_dir)?;
                     info!("Extraction complete!");
+                }
+            }
+        }
+        Commands::Stages(stage_cmd) => {
+            match stage_cmd {
+                StageCommands::Fetch(args) => {
+                    // Handle stage fetch (similar to existing Fetch command but saving to cache)
+                    let arch = args.arch;
+                    let flavor = args.flavor;
+                    let mirror = args.mirror;
+                    let cache_dir = args.cache;
+                    let extract_dir = args.extract;
+
+                    // Determine flavor - use architecture-specific defaults
+                    let flavor = if let Some(f) = flavor {
+                        f
+                    } else {
+                        // Use the shared function from the utils crate
+                        arch::get_default_flavor(&arch)
+                    };
+
+                    info!("Fetching stage3 for arch={}, flavor={}", arch, flavor);
+
+                    // Create target configuration for stage3 fetching
+                    let target_config = crossdev_config::TargetConfig {
+                        arch: arch.parse()?,
+                        flavor: flavor.clone(),
+                    };
+
+                    // Create stage3 fetcher using simplified constructor
+                    let fetcher = Stage3Fetcher::new_for_fetch(target_config, &cache_dir, &mirror);
+
+                    // Check if we should list flavors instead of fetching
+                    if args.list {
+                        info!("Listing available stage3 flavors");
+                        let flavors = fetcher.list_available_flavors()?;
+
+                        println!("Available stage3 flavors for {}:", arch);
+                        println!("===============================");
+
+                        if flavors.is_empty() {
+                            println!("No stage3 flavors found for architecture: {}", arch);
+                            println!("This might mean the architecture is not supported or the mirror is unavailable.");
+                            println!("\nTry checking if the architecture exists at:");
+                            println!("  {}/releases/", mirror);
+                        } else {
+                            for (i, flavor) in flavors.iter().enumerate() {
+                                println!("{}. {}", i + 1, flavor);
+                            }
+                            println!("\nTotal: {} flavor(s) available", flavors.len());
+                            println!(
+                                "\nTo use a specific flavor, specify it with the --flavor option:"
+                            );
+                            println!(
+                                "  {} stages fetch --arch {} --flavor {}",
+                                std::env::args()
+                                    .next()
+                                    .unwrap_or_else(|| "crossdev-stages".to_string()),
+                                arch,
+                                flavors.first().unwrap_or(&"unknown".to_string())
+                            );
+                        }
+                    } else {
+                        // Fetch latest stage3
+                        info!("Fetching latest stage3 image...");
+                        let stage3 = fetcher.fetch_latest()?;
+
+                        info!("Latest stage3 image:");
+                        info!("  Name: {}", stage3.name);
+                        info!("  URL: {}", stage3.url);
+                        info!("  Size: {} bytes", stage3.size);
+                        info!("  Date: {}", stage3.date);
+                        info!("  Arch: {}", stage3.arch);
+                        info!("  Flavor: {}", stage3.flavor);
+
+                        // Extract if requested
+                        if let Some(extract_dir) = extract_dir {
+                            info!("Extracting to: {}", extract_dir);
+                            fetcher.extract_stage3(&stage3, extract_dir)?;
+                            info!("Extraction complete!");
+                        }
+                    }
+                }
+                StageCommands::List(args) => {
+                    // Handle stage list with glob pattern support
+                    handle_stage_list(args).await?;
+                }
+                StageCommands::Delete(args) => {
+                    // Handle stage delete with glob pattern support
+                    handle_stage_delete(args).await?;
                 }
             }
         }
@@ -816,25 +1008,218 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    Ok(())
-}
+    /// Handle stage list command with glob pattern support
+    async fn handle_stage_list(args: StageListArgs) -> Result<(), Box<dyn std::error::Error>> {
+        let cache_dir = args.cache;
+        let arch_pattern = args.arch;
+        let flavor_pattern = args.flavor;
+        let detailed = args.detailed;
 
-/// Clean up a container by stopping it
-/// This is called when:
-/// - Interactive session completes normally
-/// - User presses Ctrl+C (SIGINT)
-/// - Any error occurs during interactive session
-async fn cleanup_container(name: &str) {
-    info!("Stopping container '{}' to free resources", name);
-    if let Ok(docker) = bollard::Docker::connect_with_local_defaults() {
-        match docker.stop_container(name, None).await {
-            Ok(_) => info!("✓ Container '{}' stopped successfully", name),
-            Err(e) => warn!("Warning: Failed to stop container '{}': {}", name, e),
+        info!("Listing stage3 files in cache: {}", cache_dir);
+
+        // Create cache directory if it doesn't exist
+        fs::create_dir_all(&cache_dir)?;
+
+        // Read all files in cache directory
+        let mut entries = fs::read_dir(&cache_dir)?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_type().map(|ft| ft.is_file()).unwrap_or(false))
+            .collect::<Vec<_>>();
+
+        // Sort entries by name
+        entries.sort_by_key(|entry| entry.file_name());
+
+        if entries.is_empty() {
+            println!("No stage3 files found in cache: {}", cache_dir);
+            return Ok(());
         }
-    } else {
-        warn!(
-            "Warning: Docker connection failed during cleanup for container '{}'",
-            name
+
+        println!(
+            "Stage3 files in cache: {} ({} file(s))",
+            cache_dir,
+            entries.len()
         );
+        println!("==========================================");
+
+        let mut matched_count = 0;
+
+        for entry in entries {
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_string_lossy();
+
+            // Parse file name to extract arch and flavor
+            // Expected format: stage3-{arch}-{flavor}-{date}.tar.xz
+            let parts: Vec<&str> = file_name_str.split('-').collect();
+            let arch = parts.get(1).copied().unwrap_or("unknown");
+            let flavor = parts.get(2).copied().unwrap_or("unknown");
+
+            // Apply glob pattern filtering
+            let arch_match = arch_pattern
+                .as_ref()
+                .map(|pattern| {
+                    Pattern::new(pattern)
+                        .map(|p| p.matches(arch))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(true);
+
+            let flavor_match = flavor_pattern
+                .as_ref()
+                .map(|pattern| {
+                    Pattern::new(pattern)
+                        .map(|p| p.matches(flavor))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(true);
+
+            if arch_match && flavor_match {
+                matched_count += 1;
+
+                if detailed {
+                    // Get file metadata for detailed view
+                    let metadata = entry.metadata()?;
+                    let modified = metadata
+                        .modified()?
+                        .duration_since(std::time::UNIX_EPOCH)?
+                        .as_secs();
+                    let timestamp = Timestamp::from_second(modified as i64).unwrap().to_string();
+                    let size = metadata.len();
+
+                    println!("File: {}", file_name_str);
+                    println!("  Arch: {}", arch);
+                    println!("  Flavor: {}", flavor);
+                    println!("  Size: {} bytes", size);
+                    println!("  Modified: {}", timestamp);
+                    println!();
+                } else {
+                    println!("- {} (arch: {}, flavor: {})", file_name_str, arch, flavor);
+                }
+            }
+        }
+
+        if matched_count == 0 {
+            println!("No files matched the specified filters.");
+        } else {
+            println!("\nTotal: {} file(s) matched", matched_count);
+        }
+        Ok::<(), Box<dyn std::error::Error>>(())
     }
+
+    /// Handle stage delete command with glob pattern support
+    async fn handle_stage_delete(args: StageDeleteArgs) -> Result<(), Box<dyn std::error::Error>> {
+        let cache_dir = args.cache;
+        let patterns = args.patterns;
+        let dry_run = args.dry_run;
+        let force = args.force;
+
+        info!("Searching for files to delete in: {}", cache_dir);
+
+        // Create cache directory if it doesn't exist
+        fs::create_dir_all(&cache_dir)?;
+
+        // Find all files matching the patterns
+        let mut files_to_delete = Vec::new();
+
+        for pattern_str in &patterns {
+            let pattern = Pattern::new(pattern_str);
+
+            match pattern {
+                Ok(pattern) => {
+                    // Read all files in cache directory
+                    let entries = fs::read_dir(&cache_dir)?
+                        .filter_map(|entry| entry.ok())
+                        .filter(|entry| entry.file_type().map(|ft| ft.is_file()).unwrap_or(false));
+
+                    for entry in entries {
+                        let file_name = entry.file_name();
+                        let file_name_str = file_name.to_string_lossy();
+
+                        if pattern.matches(&file_name_str) {
+                            let file_path = format!("{}/{}", cache_dir, file_name_str);
+                            files_to_delete.push(file_path);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!("Invalid glob pattern '{}': {}", pattern_str, e);
+                }
+            }
+        }
+
+        // Remove duplicates
+        files_to_delete.sort();
+        files_to_delete.dedup();
+
+        if files_to_delete.is_empty() {
+            println!("No files matched the specified patterns.");
+            return Ok(());
+        }
+
+        println!(
+            "Found {} file(s) matching deletion patterns:",
+            files_to_delete.len()
+        );
+        for file in &files_to_delete {
+            println!("  - {}", file);
+        }
+
+        // Check if we should proceed
+        if dry_run {
+            println!("\nDry run: No files were actually deleted.");
+            return Ok(());
+        }
+
+        if !force && !confirm_deletion(&files_to_delete) {
+            println!("Deletion cancelled by user.");
+            return Ok(());
+        }
+
+        // Perform actual deletion
+        let mut deleted_count = 0;
+        let mut error_count = 0;
+
+        for file in &files_to_delete {
+            match fs::remove_file(file) {
+                Ok(_) => {
+                    println!("✓ Deleted: {}", file);
+                    deleted_count += 1;
+                }
+                Err(e) => {
+                    eprintln!("✗ Failed to delete {}: {}", file, e);
+                    error_count += 1;
+                }
+            }
+        }
+
+        println!("\nDeletion complete:");
+        println!("  Successfully deleted: {}", deleted_count);
+        println!("  Failed to delete: {}", error_count);
+
+        Ok(())
+    }
+
+    /// Confirm deletion with user interaction
+    fn confirm_deletion(files: &[String]) -> bool {
+        if files.is_empty() {
+            return false;
+        }
+
+        println!("\nThe following files will be deleted:");
+        for (i, file) in files.iter().enumerate() {
+            println!("  {}. {}", i + 1, file);
+        }
+
+        print!(
+            "\nAre you sure you want to delete these {} file(s)? [y/N]: ",
+            files.len()
+        );
+        io::stdout().flush().unwrap();
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+
+        input.trim().eq_ignore_ascii_case("y")
+    }
+
+    Ok(())
 }
