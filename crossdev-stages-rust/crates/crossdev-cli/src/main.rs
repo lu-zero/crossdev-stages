@@ -37,7 +37,7 @@ fn get_default_cache_dir() -> &'static str {
                     "Failed to initialize cache system: {}, falling back to /tmp",
                     e
                 );
-                "/tmp/crossdev-stage3-cache".to_string()
+                "/tmp/crossdev-stages-cache".to_string()
             }
         }
     })
