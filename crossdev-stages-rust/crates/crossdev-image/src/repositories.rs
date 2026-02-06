@@ -1,7 +1,7 @@
 //! Source repository management
 
 use log::info;
-use std::process::Command;
+
 use thiserror::Error;
 
 /// Repository management errors
@@ -17,14 +17,14 @@ pub enum RepositoryError {
 
 /// Repository manager
 pub struct RepositoryManager {
-    build_dir: String,
+    _build_dir: String,
 }
 
 impl RepositoryManager {
     /// Create a new RepositoryManager
     pub fn new(build_dir: &str) -> Self {
         Self {
-            build_dir: build_dir.to_string(),
+            _build_dir: build_dir.to_string(),
         }
     }
 

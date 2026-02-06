@@ -1,7 +1,7 @@
 //! Package management
 
 use log::info;
-use std::process::Command;
+
 use thiserror::Error;
 
 /// Package management errors

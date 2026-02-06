@@ -1,7 +1,7 @@
 //! ldconfig management
 
 use log::info;
-use std::process::Command;
+
 use thiserror::Error;
 
 /// ldconfig management errors
@@ -15,14 +15,14 @@ pub enum LdconfigError {
 
 /// ldconfig manager
 pub struct LdconfigManager {
-    stage_dir: String,
+    _stage_dir: String,
 }
 
 impl LdconfigManager {
     /// Create a new LdconfigManager
     pub fn new(stage_dir: &str) -> Self {
         Self {
-            stage_dir: stage_dir.to_string(),
+            _stage_dir: stage_dir.to_string(),
         }
     }
 

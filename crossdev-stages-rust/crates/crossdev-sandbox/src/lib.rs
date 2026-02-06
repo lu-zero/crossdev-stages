@@ -5,15 +5,11 @@
 
 use async_trait::async_trait;
 use bollard::Docker;
-use futures_util::stream::StreamExt;
-use log::{info, warn};
+use log::info;
 use std::path::Path;
-use std::thread;
-use std::time;
 use thiserror::Error;
 
-mod docker_wrapper;
-use docker_wrapper::DockerWrapper;
+
 
 /// Sandboxing errors
 #[derive(Error, Debug)]
@@ -124,18 +120,18 @@ impl SandboxBackend for BubblewrapBackend {
     async fn run_command(
         &self,
         _container_id: &str,
-        command: &str,
-        args: &[&str],
-        working_dir: Option<&Path>,
+        _command: &str,
+        _args: &[&str],
+        _working_dir: Option<&Path>,
     ) -> SandboxResult<String> {
         todo!("Implement bubblewrap command execution")
     }
 
     async fn exec_interactive(
         &self,
-        container_id: &str,
-        command: &[&str],
-        working_dir: Option<&Path>,
+        _container_id: &str,
+        _command: &[&str],
+        _working_dir: Option<&Path>,
     ) -> SandboxResult<()> {
         Err(SandboxError::BackendUnavailable(
             "Interactive exec not implemented for bubblewrap".to_string(),
@@ -275,7 +271,7 @@ impl SandboxBackend for DockerBackend {
 #[cfg(feature = "docker")]
 impl DockerBackend {
     /// Ensure container exists and is running using docker run
-    async fn ensure_container_ready(docker: &Docker, container_id: &str) -> SandboxResult<()> {
+    async fn ensure_container_ready(_docker: &Docker, container_id: &str) -> SandboxResult<()> {
         info!("Ensuring container '{}' is ready...", container_id);
 
         // First try to check if container exists using docker CLI (more reliable)

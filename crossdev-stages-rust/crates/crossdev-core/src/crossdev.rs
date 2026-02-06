@@ -1,7 +1,7 @@
 //! Crossdev environment management
 
 use log::info;
-use std::process::Command;
+
 use thiserror::Error;
 
 /// Crossdev management errors

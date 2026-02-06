@@ -72,7 +72,7 @@ impl Default for CacheConfig {
 /// Main cache manager
 #[derive(Debug)]
 pub struct CrossdevCache {
-    config: CacheConfig,
+    _config: CacheConfig,
     cache_dir: PathBuf,
     distfiles_dir: PathBuf,
     binpkgs_dir: PathBuf,
@@ -121,7 +121,7 @@ impl CrossdevCache {
         std::fs::create_dir_all(&binpkgs_dir)?;
 
         Ok(Self {
-            config,
+            _config: config,
             cache_dir,
             distfiles_dir,
             binpkgs_dir,

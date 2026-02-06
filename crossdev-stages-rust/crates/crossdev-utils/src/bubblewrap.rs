@@ -1,7 +1,7 @@
 //! Bubblewrap container execution
 
 use log::info;
-use std::process::Command;
+
 use thiserror::Error;
 
 /// Bubblewrap execution errors
@@ -17,14 +17,14 @@ pub enum BubblewrapError {
 
 /// Bubblewrap container runner
 pub struct BubblewrapRunner {
-    chroot_dir: String,
+    _chroot_dir: String,
 }
 
 impl BubblewrapRunner {
     /// Create a new BubblewrapRunner
     pub fn new(chroot_dir: &str) -> Self {
         Self {
-            chroot_dir: chroot_dir.to_string(),
+            _chroot_dir: chroot_dir.to_string(),
         }
     }
 

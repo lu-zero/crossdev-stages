@@ -1,7 +1,7 @@
 //! Image building
 
 use log::info;
-use std::process::Command;
+
 use thiserror::Error;
 
 /// Build errors
@@ -15,16 +15,16 @@ pub enum BuildError {
 
 /// Image builder
 pub struct ImageBuilder {
-    build_dir: String,
-    stage_dir: String,
+    _build_dir: String,
+    _stage_dir: String,
 }
 
 impl ImageBuilder {
     /// Create a new ImageBuilder
     pub fn new(build_dir: &str, stage_dir: &str) -> Self {
         Self {
-            build_dir: build_dir.to_string(),
-            stage_dir: stage_dir.to_string(),
+            _build_dir: build_dir.to_string(),
+            _stage_dir: stage_dir.to_string(),
         }
     }
 
