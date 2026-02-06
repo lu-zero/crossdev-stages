@@ -705,7 +705,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     }
                                 };
 
-                                let target_config = &config.target;
                                 let crossdev_root = format!("/usr/{}", config.compilation.chost);
 
                                 info!(
