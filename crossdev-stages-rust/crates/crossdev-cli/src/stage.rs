@@ -7,6 +7,7 @@ use crate::crossdev::{CrossdevEnvironment, CrossdevError};
 use crossdev_config::PlatformConfig;
 use crossdev_sandbox::{auto_detect_backend, SandboxError};
 use crossdev_stage3::{Stage3Fetcher, Stage3Info};
+use jiff::Timestamp;
 use log::info;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -360,16 +361,17 @@ impl StageManager {
         let fetcher = Stage3Fetcher::new_from_platform_config(self.config.clone(), &self.cache_dir, &self.mirror_url);
         fetcher.extract_stage3(stage3, &stage_dir)?;
 
-        // Create registry entry
-        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        // Create registry entry with Gentoo-style timestamp format (truncated at hour)
+        let now = Timestamp::now();
+        let timestamp_str = now.strftime("%Y%m%dT%H").to_string();
         let extracted_stage = ExtractedStage {
             name: stage_name.clone(),
             path: stage_dir.clone(),
             target_arch: stage3.arch.clone(),
             target_flavor: stage3.flavor.clone(),
             base_image: stage3.name.clone(),
-            created_at: now.clone(),
-            last_updated: now,
+            created_at: timestamp_str.clone(),
+            last_updated: timestamp_str,
             status: "ready".to_string(),
         };
 

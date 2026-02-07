@@ -8,7 +8,6 @@ use crossdev_sandbox::auto_detect_backend;
 use crossdev_stages::{CacheConfig, CacheStrategy, CrossdevCache, Stage3Fetcher};
 use crossdev_utils::arch;
 use glob::Pattern;
-use jiff::Timestamp;
 use log::{info, warn, LevelFilter};
 use std::fs;
 use std::io::{self, Write};
@@ -1078,18 +1077,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if detailed {
                     // Get file metadata for detailed view
                     let metadata = entry.metadata()?;
-                    let modified = metadata
-                        .modified()?
-                        .duration_since(std::time::UNIX_EPOCH)?
-                        .as_secs();
-                    let timestamp = Timestamp::from_second(modified as i64).unwrap().to_string();
                     let size = metadata.len();
 
                     println!("File: {}", file_name_str);
                     println!("  Arch: {}", arch);
                     println!("  Flavor: {}", flavor);
                     println!("  Size: {} bytes", size);
-                    println!("  Modified: {}", timestamp);
                     println!();
                 } else {
                     println!("- {} (arch: {}, flavor: {})", file_name_str, arch, flavor);
@@ -1198,103 +1191,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 
-    /// Handle stage load command
+    /// Handle stage load command using sandbox backend
     async fn handle_stage_load(args: StageLoadArgs) -> Result<(), Box<dyn std::error::Error>> {
         let sandbox_name = args.sandbox;
         let stage_name = args.stage;
         let cache_dir = args.cache;
-        let force = args.force;
+        let _force = args.force;
 
         info!(
             "Loading stage '{}' into sandbox '{}'",
             stage_name, sandbox_name
         );
 
-        // Find the stage file in cache
+        // Use sandbox backend instead of direct file operations
+        let backend = auto_detect_backend()?;
+
         let stage_path = format!("{}/{}", cache_dir, stage_name);
         if !std::path::Path::new(&stage_path).exists() {
             return Err(format!("Stage file '{}' not found in cache", stage_name).into());
         }
 
-        // Get sandbox directory
-        let sandbox_dir = format!("./sandboxes/{}", sandbox_name);
-        let stages_dir = format!("{}/stages/{}", sandbox_dir, stage_name);
+        backend
+            .load_stage3(&sandbox_name, std::path::Path::new(&stage_path))
+            .await?;
 
-        // Check if stage directory already exists
-        if std::path::Path::new(&stages_dir).exists() && !force {
-            return Err(format!(
-                "Stage '{}' already exists in sandbox '{}'. Use --force to overwrite.",
-                stage_name, sandbox_name
-            )
-            .into());
-        }
-
-        // Create stages directory
-        fs::create_dir_all(&stages_dir)?;
-
-        // Extract the stage3 archive
-        info!("Extracting stage3 archive to: {}", stages_dir);
-
-        // Use tar command to extract (cross-platform approach)
-        let status = std::process::Command::new("tar")
-            .args(["-xzf", &stage_path, "-C", &stages_dir])
-            .status()?;
-
-        if !status.success() {
-            return Err("Failed to extract stage3 archive".into());
-        }
-
-        info!(
-            "Stage '{}' successfully loaded into sandbox '{}'",
-            stage_name, sandbox_name
-        );
         println!("✓ Stage loaded: {} -> {}", stage_name, sandbox_name);
-
         Ok(())
     }
 
-    /// Handle stage save command
+    /// Handle stage save command using sandbox backend
     async fn handle_stage_save(args: StageSaveArgs) -> Result<(), Box<dyn std::error::Error>> {
         let sandbox_name = args.sandbox;
         let stage_name = args.name;
         let cache_dir = args.cache;
-        let force = args.force;
+        let _force = args.force;
 
         info!(
             "Saving sandbox '{}' as stage3 '{}'",
             sandbox_name, stage_name
         );
 
-        // Get sandbox directory
-        let sandbox_dir = format!("./sandboxes/{}", sandbox_name);
-        if !std::path::Path::new(&sandbox_dir).exists() {
-            return Err(format!("Sandbox '{}' not found", sandbox_name).into());
-        }
+        // Use sandbox backend instead of direct file operations
+        let backend = auto_detect_backend()?;
 
-        // Check if stage already exists
         let stage_path = format!("{}/{}", cache_dir, stage_name);
-        if std::path::Path::new(&stage_path).exists() && !force {
-            return Err(format!(
-                "Stage '{}' already exists. Use --force to overwrite.",
-                stage_name
-            )
-            .into());
-        }
 
         // Create cache directory if it doesn't exist
         fs::create_dir_all(&cache_dir)?;
 
-        // Create the stage3 archive
-        info!("Creating stage3 archive: {}", stage_path);
-
-        // Use tar command to create archive (cross-platform approach)
-        let status = std::process::Command::new("tar")
-            .args(["-czf", &stage_path, "-C", &sandbox_dir, "."])
-            .status()?;
-
-        if !status.success() {
-            return Err("Failed to create stage3 archive".into());
-        }
+        backend
+            .save_stage3(&sandbox_name, std::path::Path::new(&stage_path))
+            .await?;
 
         info!(
             "Sandbox '{}' successfully saved as stage '{}'",
@@ -1305,37 +1252,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 
-    /// Handle stage wipe command
+    /// Handle stage wipe command using sandbox backend
     async fn handle_stage_wipe(args: StageWipeArgs) -> Result<(), Box<dyn std::error::Error>> {
         let sandbox_name = args.sandbox;
-        let force = args.force;
+        let _force = args.force;
 
         info!("Wiping stage files from sandbox '{}'", sandbox_name);
 
-        // Get sandbox directory
-        let sandbox_dir = format!("./sandboxes/{}", sandbox_name);
-        let stages_dir = format!("{}/stages", sandbox_dir);
+        // Use sandbox backend instead of direct file operations
+        let backend = auto_detect_backend()?;
 
-        if !std::path::Path::new(&stages_dir).exists() {
-            return Err(format!("No stage files found in sandbox '{}'", sandbox_name).into());
-        }
-
-        // Check if we should proceed
-        if !force {
-            println!(
-                "This will delete all stage files from sandbox '{}':",
-                sandbox_name
-            );
-            println!("  {}", stages_dir);
-
-            if !confirm_deletion(&[stages_dir.clone()]) {
-                println!("Wipe cancelled by user.");
-                return Ok(());
-            }
-        }
-
-        // Remove the stages directory
-        fs::remove_dir_all(&stages_dir)?;
+        backend.wipe_stage3(&sandbox_name).await?;
 
         info!(
             "Stage files successfully wiped from sandbox '{}'",

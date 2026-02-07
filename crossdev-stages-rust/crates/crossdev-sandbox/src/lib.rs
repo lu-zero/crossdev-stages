@@ -5,11 +5,10 @@
 
 use async_trait::async_trait;
 use bollard::Docker;
+use jiff::Timestamp;
 use log::info;
 use std::path::Path;
 use thiserror::Error;
-
-
 
 /// Sandboxing errors
 #[derive(Error, Debug)]
@@ -25,6 +24,9 @@ pub enum SandboxError {
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
+
+    #[error("Stage3 operation failed: {0}")]
+    Stage3OperationFailed(String),
 }
 
 /// Sandboxing result type
@@ -62,6 +64,23 @@ pub trait SandboxBackend: Send + Sync {
 
     /// Get the backend name
     fn name(&self) -> &str;
+
+    /// Load a stage3 into the sandbox container
+    async fn load_stage3(
+        &self,
+        container_id: &str,
+        stage3_path: &std::path::Path,
+    ) -> SandboxResult<()>;
+
+    /// Save the current state of the sandbox container as a stage3 archive
+    async fn save_stage3(
+        &self,
+        container_id: &str,
+        target_path: &std::path::Path,
+    ) -> SandboxResult<()>;
+
+    /// Wipe the stage3 from the sandbox container
+    async fn wipe_stage3(&self, container_id: &str) -> SandboxResult<()>;
 }
 
 /// Bubblewrap sandbox backend
@@ -140,6 +159,35 @@ impl SandboxBackend for BubblewrapBackend {
 
     fn name(&self) -> &str {
         "bubblewrap"
+    }
+
+    /// Load a stage3 into the Bubblewrap sandbox
+    async fn load_stage3(
+        &self,
+        _container_id: &str,
+        _stage3_path: &std::path::Path,
+    ) -> SandboxResult<()> {
+        Err(SandboxError::BackendUnavailable(
+            "Stage3 operations not implemented for bubblewrap backend".to_string(),
+        ))
+    }
+
+    /// Save the current state of the Bubblewrap sandbox as a stage3 archive
+    async fn save_stage3(
+        &self,
+        _container_id: &str,
+        _target_path: &std::path::Path,
+    ) -> SandboxResult<()> {
+        Err(SandboxError::BackendUnavailable(
+            "Stage3 operations not implemented for bubblewrap backend".to_string(),
+        ))
+    }
+
+    /// Wipe the stage3 from the Bubblewrap sandbox
+    async fn wipe_stage3(&self, _container_id: &str) -> SandboxResult<()> {
+        Err(SandboxError::BackendUnavailable(
+            "Stage3 operations not implemented for bubblewrap backend".to_string(),
+        ))
     }
 }
 
@@ -265,6 +313,309 @@ impl SandboxBackend for DockerBackend {
 
     fn name(&self) -> &str {
         "docker"
+    }
+
+    /// Load a stage3 into the Docker container using docker cp and in-container extraction
+    async fn load_stage3(
+        &self,
+        container_id: &str,
+        stage3_path: &std::path::Path,
+    ) -> SandboxResult<()> {
+        info!(
+            "Loading stage3 into container '{}' from: {}",
+            container_id,
+            stage3_path.display()
+        );
+
+        // Ensure container is running using docker CLI
+        let status_output = std::process::Command::new("docker")
+            .args(["inspect", "--format", "{{.State.Running}}", container_id])
+            .output()
+            .map_err(|e| {
+                SandboxError::Stage3OperationFailed(format!(
+                    "Failed to check container status: {}",
+                    e
+                ))
+            })?;
+
+        if !status_output.status.success() {
+            let stderr = String::from_utf8_lossy(&status_output.stderr);
+            if !stderr.contains("No such container") {
+                return Err(SandboxError::Stage3OperationFailed(format!(
+                    "Failed to check container status: {}",
+                    stderr
+                )));
+            }
+
+            // Container doesn't exist, start it
+            let start_output = std::process::Command::new("docker")
+                .args(["start", container_id])
+                .output()
+                .map_err(|e| {
+                    SandboxError::Stage3OperationFailed(format!("Failed to start container: {}", e))
+                })?;
+
+            if !start_output.status.success() {
+                let stderr = String::from_utf8_lossy(&start_output.stderr);
+                return Err(SandboxError::Stage3OperationFailed(format!(
+                    "Failed to start container: {}",
+                    stderr
+                )));
+            }
+        }
+
+        // Copy the stage3 archive into the container
+        let output = std::process::Command::new("docker")
+            .args([
+                "cp",
+                stage3_path.to_str().unwrap(),
+                &format!("{}:/tmp/stage3.tar.xz", container_id),
+            ])
+            .output()
+            .map_err(|e| {
+                SandboxError::Stage3OperationFailed(format!(
+                    "Failed to copy stage3 to container: {}",
+                    e
+                ))
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(SandboxError::Stage3OperationFailed(format!(
+                "Failed to copy stage3 to container: {}",
+                stderr
+            )));
+        }
+
+        // Parse stage3 filename to extract arch and flavor for proper naming
+        let stage3_filename = stage3_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("unknown");
+
+        // Extract arch and flavor from filename (format: stage3-{arch}-{flavor}-{date}.tar.xz)
+        let parts: Vec<&str> = stage3_filename.split('-').collect();
+        let arch = parts.get(1).copied().unwrap_or("unknown");
+        let flavor = parts.get(2).copied().unwrap_or("unknown");
+        let tag = Timestamp::now().strftime("%Y%m%dT%H%M");
+
+        let stage_dir = format!("/stages/{}-{}-{}", arch, flavor, tag);
+
+        // Extract the stage3 archive inside the container with proper naming and .origin file
+        let extract_output = std::process::Command::new("docker")
+            .args(["exec", container_id, "sh", "-c",
+                &format!("mkdir -p {} && cd {} && tar -xJpf /tmp/stage3.tar.xz --exclude dev/* && echo '{}' > .origin", stage_dir, stage_dir, stage3_filename)])
+            .output()
+            .map_err(|e| SandboxError::Stage3OperationFailed(format!(
+                "Failed to extract stage3 in container: {}", e
+            )))?;
+
+        if !extract_output.status.success() {
+            let stderr = String::from_utf8_lossy(&extract_output.stderr);
+            return Err(SandboxError::Stage3OperationFailed(format!(
+                "Stage3 extraction in container failed: {}",
+                stderr
+            )))?;
+        }
+
+        // Clean up the temporary file
+        let _ = std::process::Command::new("docker")
+            .args(["exec", container_id, "rm", "/tmp/stage3.tar.xz"])
+            .output();
+
+        info!(
+            "Stage3 loaded successfully into container '{}'",
+            container_id
+        );
+        Ok(())
+    }
+
+    /// Save the current state of the Docker container as a stage3 archive using in-container operations
+    async fn save_stage3(
+        &self,
+        container_id: &str,
+        target_path: &std::path::Path,
+    ) -> SandboxResult<()> {
+        info!(
+            "Saving container '{}' state to: {}",
+            container_id,
+            target_path.display()
+        );
+
+        // Ensure parent directory exists
+        if let Some(parent) = target_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        // Ensure container is running using docker CLI
+        let status_output = std::process::Command::new("docker")
+            .args(["inspect", "--format", "{{.State.Running}}", container_id])
+            .output()
+            .map_err(|e| {
+                SandboxError::Stage3OperationFailed(format!(
+                    "Failed to check container status: {}",
+                    e
+                ))
+            })?;
+
+        if !status_output.status.success() {
+            let stderr = String::from_utf8_lossy(&status_output.stderr);
+            if !stderr.contains("No such container") {
+                return Err(SandboxError::Stage3OperationFailed(format!(
+                    "Failed to check container status: {}",
+                    stderr
+                )));
+            }
+
+            // Container doesn't exist, start it
+            let start_output = std::process::Command::new("docker")
+                .args(["start", container_id])
+                .output()
+                .map_err(|e| {
+                    SandboxError::Stage3OperationFailed(format!("Failed to start container: {}", e))
+                })?;
+
+            if !start_output.status.success() {
+                let stderr = String::from_utf8_lossy(&start_output.stderr);
+                return Err(SandboxError::Stage3OperationFailed(format!(
+                    "Failed to start container: {}",
+                    stderr
+                )));
+            }
+        }
+
+        // Create the archive inside the container
+        let create_output = std::process::Command::new("docker")
+            .args([
+                "exec",
+                container_id,
+                "sh",
+                "-c",
+                "cd /mnt/stages && tar -cJpf /tmp/stage3-save.tar.xz .",
+            ])
+            .output()
+            .map_err(|e| {
+                SandboxError::Stage3OperationFailed(format!(
+                    "Failed to create stage3 archive in container: {}",
+                    e
+                ))
+            })?;
+
+        if !create_output.status.success() {
+            let stderr = String::from_utf8_lossy(&create_output.stderr);
+            return Err(SandboxError::Stage3OperationFailed(format!(
+                "Stage3 archive creation in container failed: {}",
+                stderr
+            )));
+        }
+
+        // Copy the archive from the container to the host
+        let copy_output = std::process::Command::new("docker")
+            .args([
+                "cp",
+                &format!("{}:/tmp/stage3-save.tar.xz", container_id),
+                target_path.to_str().unwrap(),
+            ])
+            .output()
+            .map_err(|e| {
+                SandboxError::Stage3OperationFailed(format!(
+                    "Failed to copy stage3 archive from container: {}",
+                    e
+                ))
+            })?;
+
+        if !copy_output.status.success() {
+            let stderr = String::from_utf8_lossy(&copy_output.stderr);
+            return Err(SandboxError::Stage3OperationFailed(format!(
+                "Failed to copy stage3 archive from container: {}",
+                stderr
+            )));
+        }
+
+        // Clean up the temporary file in the container
+        let _ = std::process::Command::new("docker")
+            .args(["exec", container_id, "rm", "/tmp/stage3-save.tar.xz"])
+            .output();
+
+        info!(
+            "Container '{}' state saved successfully to: {}",
+            container_id,
+            target_path.display()
+        );
+        Ok(())
+    }
+
+    /// Wipe the stage3 from the Docker container using in-container operations
+    async fn wipe_stage3(&self, container_id: &str) -> SandboxResult<()> {
+        info!("Wiping stage3 from container '{}'", container_id);
+
+        // Ensure container is running using docker CLI
+        let status_output = std::process::Command::new("docker")
+            .args(["inspect", "--format", "{{.State.Running}}", container_id])
+            .output()
+            .map_err(|e| {
+                SandboxError::Stage3OperationFailed(format!(
+                    "Failed to check container status: {}",
+                    e
+                ))
+            })?;
+
+        if !status_output.status.success() {
+            let stderr = String::from_utf8_lossy(&status_output.stderr);
+            if !stderr.contains("No such container") {
+                return Err(SandboxError::Stage3OperationFailed(format!(
+                    "Failed to check container status: {}",
+                    stderr
+                )));
+            }
+
+            // Container doesn't exist, start it
+            let start_output = std::process::Command::new("docker")
+                .args(["start", container_id])
+                .output()
+                .map_err(|e| {
+                    SandboxError::Stage3OperationFailed(format!("Failed to start container: {}", e))
+                })?;
+
+            if !start_output.status.success() {
+                let stderr = String::from_utf8_lossy(&start_output.stderr);
+                return Err(SandboxError::Stage3OperationFailed(format!(
+                    "Failed to start container: {}",
+                    stderr
+                )));
+            }
+        }
+
+        // Wipe the stage3 directory inside the container
+        let wipe_output = std::process::Command::new("docker")
+            .args([
+                "exec",
+                container_id,
+                "sh",
+                "-c",
+                "rm -rf /mnt/stages/* && mkdir -p /mnt/stages",
+            ])
+            .output()
+            .map_err(|e| {
+                SandboxError::Stage3OperationFailed(format!(
+                    "Failed to wipe stage3 in container: {}",
+                    e
+                ))
+            })?;
+
+        if !wipe_output.status.success() {
+            let stderr = String::from_utf8_lossy(&wipe_output.stderr);
+            return Err(SandboxError::Stage3OperationFailed(format!(
+                "Stage3 wipe in container failed: {}",
+                stderr
+            )));
+        }
+
+        info!(
+            "Stage3 wiped successfully from container '{}'",
+            container_id
+        );
+        Ok(())
     }
 }
 
@@ -580,7 +931,7 @@ mod tests {
     fn test_bubblewrap_availability() {
         // Test that availability check works (may fail if bwrap not installed)
         let backend = BubblewrapBackend;
-        let available = backend.is_available();
+        let _available = backend.is_available();
         // Just check that the function doesn't panic
         assert!(true); // We can't assert availability since it depends on system
     }
@@ -590,7 +941,7 @@ mod tests {
     fn test_docker_availability() {
         // Test that availability check works (may fail if docker not installed)
         let backend = DockerBackend;
-        let available = backend.is_available();
+        let _available = backend.is_available();
         // Just check that the function doesn't panic
         assert!(true); // We can't assert availability since it depends on system
     }

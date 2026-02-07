@@ -25,7 +25,7 @@ tokio.workspace = true
 atty = "0.2"
 bollard = { version = "0.16", features = ["buildkit"] }
 glob = "0.3"
-jiff = "0.1"
+jiff = "0.2"
 
 [dev-dependencies]
 assert_cmd.workspace = true
