@@ -11,6 +11,7 @@ use glob::Pattern;
 use log::{info, warn, LevelFilter};
 use std::fs;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::sync::OnceLock;
 
 /// Global cache for the default cache directory path
@@ -43,7 +44,9 @@ fn get_default_cache_dir() -> &'static str {
 }
 
 mod crossdev;
+mod stage;
 use crossdev::CrossdevEnvironment;
+use stage::StageManager;
 
 /// Main CLI for crossdev-stages
 #[derive(Parser, Debug)]
@@ -88,6 +91,8 @@ enum StageCommands {
     Save(StageSaveArgs),
     /// Wipe stage files from sandbox
     Wipe(StageWipeArgs),
+    /// Update a stage3 with latest packages
+    Update(StageUpdateArgs),
 }
 
 #[derive(clap::Args, Debug)]
@@ -208,6 +213,25 @@ struct StageWipeArgs {
     sandbox: String,
 
     /// Force deletion without confirmation
+    #[arg(short, long)]
+    force: bool,
+}
+
+#[derive(clap::Args, Debug)]
+struct StageUpdateArgs {
+    /// Name of the sandbox containing the stage to update
+    #[arg(short = 'S', long, required = true)]
+    sandbox: String,
+
+    /// Stage directory path (defaults to sandbox working directory)
+    #[arg(short, long)]
+    stage_dir: Option<String>,
+
+    /// Update ldconfig cache after updating packages
+    #[arg(short, long)]
+    ldconfig: bool,
+
+    /// Force update even if stage appears corrupted
     #[arg(short, long)]
     force: bool,
 }
@@ -416,6 +440,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 StageCommands::Wipe(args) => {
                     // Handle stage wipe
                     handle_stage_wipe(args).await?;
+                }
+                StageCommands::Update(args) => {
+                    // Handle stage update
+                    handle_stage_update(args).await?;
                 }
             }
         }
@@ -1269,6 +1297,49 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             sandbox_name
         );
         println!("✓ Stage files wiped from: {}", sandbox_name);
+
+        Ok(())
+    }
+
+    async fn handle_stage_update(args: StageUpdateArgs) -> Result<(), Box<dyn std::error::Error>> {
+        let sandbox_name = args.sandbox;
+        let stage_dir = args.stage_dir;
+        let update_ldconfig = args.ldconfig;
+        let _force = args.force;
+
+        info!("Updating stage in sandbox '{}'", sandbox_name);
+
+        // Load platform configuration
+        let platform_config = stage::get_default_platform_config()?;
+
+        // Create stage manager
+        let cache_dir = get_default_cache_dir();
+        let mirror_url = "https://distfiles.gentoo.org";
+        let stage_manager = StageManager::new(platform_config, cache_dir, mirror_url);
+
+        // Stage directory is required for update operations
+        let stage_dir_path = if let Some(dir) = stage_dir {
+            PathBuf::from(dir)
+        } else {
+            return Err(
+                "Stage directory must be specified for update operations. Use --stage-dir option."
+                    .into(),
+            );
+        };
+
+        info!("Updating stage at: {}", stage_dir_path.display());
+
+        // Update the stage
+        stage_manager.update_stage3(&stage_dir_path).await?;
+
+        // Update ldconfig if requested
+        if update_ldconfig {
+            info!("Updating ldconfig cache...");
+            stage_manager.update_ldconfig(&stage_dir_path).await?;
+        }
+
+        info!("Stage update completed successfully");
+        println!("✓ Stage updated in sandbox: {}", sandbox_name);
 
         Ok(())
     }
