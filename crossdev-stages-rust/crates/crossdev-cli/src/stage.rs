@@ -52,33 +52,44 @@ impl StageManager {
         let backend = auto_detect_backend()?;
         let target_chost = self.config.compilation.chost.clone();
 
+        // Convert stage_dir to string for environment variable
+        let stage_dir_str = stage_dir.to_str().ok_or_else(|| {
+            StageError::ConfigError(format!(
+                "Invalid stage directory path: {}",
+                stage_dir.display()
+            ))
+        })?;
+
         // Step 1: Update gcc
         info!("Updating gcc...");
         backend
-            .run_command(
+            .run_command_with_env(
                 "default",
                 &format!("{}-emerge", target_chost),
                 &["-b", "-k", "gcc"],
+                &[("ROOT", stage_dir_str)],
             )
             .await?;
 
         // Step 2: Update binutils-libs
         info!("Updating binutils-libs...");
         backend
-            .run_command(
+            .run_command_with_env(
                 "default",
                 &format!("{}-emerge", target_chost),
                 &["-b", "-k", "sys-libs/binutils-libs"],
+                &[("ROOT", stage_dir_str)],
             )
             .await?;
 
         // Step 3: Update system packages
         info!("Updating system packages...");
         backend
-            .run_command(
+            .run_command_with_env(
                 "default",
                 &format!("{}-emerge", target_chost),
                 &["-b", "-k", "-u", "system"],
+                &[("ROOT", stage_dir_str)],
             )
             .await?;
 
@@ -86,10 +97,11 @@ impl StageManager {
         info!("Updating world packages in stage...");
 
         backend
-            .run_command(
+            .run_command_with_env(
                 "default",
                 &format!("{}-emerge", target_chost),
                 &["-k", "-e", "@world"],
+                &[("ROOT", stage_dir_str)],
             )
             .await?;
 
