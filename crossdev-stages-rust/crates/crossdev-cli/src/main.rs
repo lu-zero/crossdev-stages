@@ -1159,6 +1159,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("  Stage Flavor: {}", flavor);
                         }
                     }
+
+                    // Try to inspect container to find stage directories with .origin info
+                    if let Ok(backend) = auto_detect_backend() {
+                        if backend.name() == "docker" {
+                            match backend.inspect_stage_directories(&sandbox_name).await {
+                                Ok(stage_info) => {
+                                    if !stage_info.is_empty() {
+                                        println!("  Stage Directories:");
+                                        for (stage_dir, origin_content) in stage_info {
+                                            println!("    - /stages/{}", stage_dir);
+                                            if let Some(origin) = origin_content {
+                                                println!("      Origin: {}", origin);
+                                            } else {
+                                                println!("      Origin: (not found)");
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    println!("  Stage Inspection Error: {}", e);
+                                }
+                            }
+                        }
+                    }
                 } else {
                     println!("  Loaded Stage: None");
                 }
