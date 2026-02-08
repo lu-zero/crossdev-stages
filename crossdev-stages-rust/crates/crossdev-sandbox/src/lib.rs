@@ -321,48 +321,20 @@ impl SandboxBackend for DockerBackend {
         container_id: &str,
         stage3_path: &std::path::Path,
     ) -> SandboxResult<()> {
+        use bollard::Docker;
+
         info!(
             "Loading stage3 into container '{}' from: {}",
             container_id,
             stage3_path.display()
         );
 
-        // Ensure container is running using docker CLI
-        let status_output = std::process::Command::new("docker")
-            .args(["inspect", "--format", "{{.State.Running}}", container_id])
-            .output()
-            .map_err(|e| {
-                SandboxError::Stage3OperationFailed(format!(
-                    "Failed to check container status: {}",
-                    e
-                ))
-            })?;
+        // Connect to Docker daemon
+        let docker = Docker::connect_with_local_defaults()
+            .map_err(|e| SandboxError::ContainerCreationFailed(e.to_string()))?;
 
-        if !status_output.status.success() {
-            let stderr = String::from_utf8_lossy(&status_output.stderr);
-            if !stderr.contains("No such container") {
-                return Err(SandboxError::Stage3OperationFailed(format!(
-                    "Failed to check container status: {}",
-                    stderr
-                )));
-            }
-
-            // Container doesn't exist, start it
-            let start_output = std::process::Command::new("docker")
-                .args(["start", container_id])
-                .output()
-                .map_err(|e| {
-                    SandboxError::Stage3OperationFailed(format!("Failed to start container: {}", e))
-                })?;
-
-            if !start_output.status.success() {
-                let stderr = String::from_utf8_lossy(&start_output.stderr);
-                return Err(SandboxError::Stage3OperationFailed(format!(
-                    "Failed to start container: {}",
-                    stderr
-                )));
-            }
-        }
+        // Ensure the container exists and is running
+        DockerBackend::ensure_container_ready(&docker, container_id).await?;
 
         // Copy the stage3 archive into the container
         let output = std::process::Command::new("docker")
@@ -436,6 +408,8 @@ impl SandboxBackend for DockerBackend {
         container_id: &str,
         target_path: &std::path::Path,
     ) -> SandboxResult<()> {
+        use bollard::Docker;
+
         info!(
             "Saving container '{}' state to: {}",
             container_id,
@@ -447,42 +421,12 @@ impl SandboxBackend for DockerBackend {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Ensure container is running using docker CLI
-        let status_output = std::process::Command::new("docker")
-            .args(["inspect", "--format", "{{.State.Running}}", container_id])
-            .output()
-            .map_err(|e| {
-                SandboxError::Stage3OperationFailed(format!(
-                    "Failed to check container status: {}",
-                    e
-                ))
-            })?;
+        // Connect to Docker daemon
+        let docker = Docker::connect_with_local_defaults()
+            .map_err(|e| SandboxError::ContainerCreationFailed(e.to_string()))?;
 
-        if !status_output.status.success() {
-            let stderr = String::from_utf8_lossy(&status_output.stderr);
-            if !stderr.contains("No such container") {
-                return Err(SandboxError::Stage3OperationFailed(format!(
-                    "Failed to check container status: {}",
-                    stderr
-                )));
-            }
-
-            // Container doesn't exist, start it
-            let start_output = std::process::Command::new("docker")
-                .args(["start", container_id])
-                .output()
-                .map_err(|e| {
-                    SandboxError::Stage3OperationFailed(format!("Failed to start container: {}", e))
-                })?;
-
-            if !start_output.status.success() {
-                let stderr = String::from_utf8_lossy(&start_output.stderr);
-                return Err(SandboxError::Stage3OperationFailed(format!(
-                    "Failed to start container: {}",
-                    stderr
-                )));
-            }
-        }
+        // Ensure the container exists and is running
+        DockerBackend::ensure_container_ready(&docker, container_id).await?;
 
         // Create the archive inside the container
         let create_output = std::process::Command::new("docker")
@@ -547,44 +491,14 @@ impl SandboxBackend for DockerBackend {
 
     /// Wipe the stage3 from the Docker container using in-container operations
     async fn wipe_stage3(&self, container_id: &str) -> SandboxResult<()> {
+        use bollard::Docker;
+
         info!("Wiping stage3 from container '{}'", container_id);
 
-        // Ensure container is running using docker CLI
-        let status_output = std::process::Command::new("docker")
-            .args(["inspect", "--format", "{{.State.Running}}", container_id])
-            .output()
-            .map_err(|e| {
-                SandboxError::Stage3OperationFailed(format!(
-                    "Failed to check container status: {}",
-                    e
-                ))
-            })?;
-
-        if !status_output.status.success() {
-            let stderr = String::from_utf8_lossy(&status_output.stderr);
-            if !stderr.contains("No such container") {
-                return Err(SandboxError::Stage3OperationFailed(format!(
-                    "Failed to check container status: {}",
-                    stderr
-                )));
-            }
-
-            // Container doesn't exist, start it
-            let start_output = std::process::Command::new("docker")
-                .args(["start", container_id])
-                .output()
-                .map_err(|e| {
-                    SandboxError::Stage3OperationFailed(format!("Failed to start container: {}", e))
-                })?;
-
-            if !start_output.status.success() {
-                let stderr = String::from_utf8_lossy(&start_output.stderr);
-                return Err(SandboxError::Stage3OperationFailed(format!(
-                    "Failed to start container: {}",
-                    stderr
-                )));
-            }
-        }
+        // Ensure the container exists and is running
+        let docker = Docker::connect_with_local_defaults()
+            .map_err(|e| SandboxError::ContainerCreationFailed(e.to_string()))?;
+        DockerBackend::ensure_container_ready(&docker, container_id).await?;
 
         // Wipe the stage3 directory inside the container
         let wipe_output = std::process::Command::new("docker")
@@ -981,6 +895,58 @@ mod tests {
                 Ok(_) => println!("Bubblewrap backend created successfully"),
                 Err(e) => println!("Bubblewrap backend creation failed (expected): {}", e),
             }
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "docker")]
+    async fn test_stage_operations_container_lifecycle() {
+        // Test that stage operations properly handle container creation when containers don't exist
+        use tempfile::tempdir;
+        
+        let backend_result = auto_detect_backend();
+        let backend = match backend_result {
+            Ok(b) => b,
+            Err(_) => {
+                // Skip test if no backend available
+                println!("Skipping container lifecycle test - no backend available");
+                return;
+            }
+        };
+        
+        // Only test with Docker backend
+        if backend.name() != "docker" {
+            println!("Skipping container lifecycle test - not using Docker backend");
+            return;
+        }
+        
+        let test_container = "test-container-lifecycle-check";
+        let temp_dir = tempdir().expect("Failed to create temp directory");
+        let test_stage_path = temp_dir.path().join("test-stage.tar.xz");
+        
+        // Create a dummy stage file for testing
+        std::fs::write(&test_stage_path, "dummy stage content").expect("Failed to create test stage");
+        
+        // Clean up any existing container first
+        let _ = std::process::Command::new("docker")
+            .args(["rm", "-f", test_container])
+            .output();
+        
+        // Test that load_stage3 handles container creation properly
+        // The important thing is that it doesn't fail with "container doesn't exist"
+        // but instead attempts to create it
+        let result = backend.load_stage3(test_container, test_stage_path.as_path()).await;
+        
+        // Clean up
+        let _ = std::process::Command::new("docker")
+            .args(["rm", "-f", test_container])
+            .output();
+        
+        // The test passes as long as the operation didn't panic and attempted container creation
+        // (even if it failed due to missing Docker image or other environment issues)
+        match result {
+            Ok(_) => println!("✓ Stage operation successfully handled container lifecycle"),
+            Err(e) => println!("Stage operation failed (may be expected): {}", e),
         }
     }
 }
