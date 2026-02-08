@@ -126,6 +126,12 @@ impl CrossdevEnvironment {
 
         // Set CFLAGS and CXXFLAGS, then add LLVM_TARGETS to existing make.conf
         // Preserve crossdev-generated content and set CXXFLAGS to match CFLAGS
+        //
+        // CFLAGS Strategy:
+        // - Uses configurable CFLAGS from platform configuration
+        // - For RISC-V K1: "-O3 -march=rv64gc -pipe" (RV64GC base ISA)
+        // - This provides target-specific optimization while maintaining compatibility
+        // - plain.conf uses generic "-O3 -pipe" for packages needing safe flags
         let target_llvm_target = arch_to_llvm_target(&self.target);
 
         // Get host architecture and map to LLVM target
@@ -227,6 +233,12 @@ impl CrossdevEnvironment {
     ) -> Result<(), CrossdevError> {
         // Use safe, generic optimization flags for plain.conf
         // (avoid architecture-specific flags that could cause issues)
+        //
+        // CFLAGS Strategy:
+        // - main make.conf: Uses configurable, target-specific CFLAGS (e.g., -march=rv64gc)
+        // - plain.conf: Uses generic CFLAGS (-O3 -pipe) for compatibility
+        // - This allows packages that need safe flags to reference plain.conf
+        //   via /etc/portage/package.env entries
         let plain_cflags = "-O3 -pipe";
         let plain_conf_content = format!("CFLAGS=\"{}\"\nCXXFLAGS=\"{}\"", plain_cflags, plain_cflags);
         let path = format!("{}/etc/portage/env/plain.conf", self.root);

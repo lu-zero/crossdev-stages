@@ -3,6 +3,12 @@ arch = "riscv64"
 flavor = "rv64_lp64d-openrc"
 
 [compilation]
+# CFLAGS for cross-compilation to RISC-V K1 target
+# Uses rv64gc (RV64I+M+A+F+D+C) for broad compatibility
+# - rv64gc = RV64GC base ISA (no vector extensions)
+# - O3 = Aggressive optimization
+# - pipe = Use pipes instead of temporary files
+# Note: plain.conf uses generic -O3 -pipe to avoid architecture-specific issues
 cflags = "-O3 -march=rv64gc -pipe"
 gcc_version = "16.0.0_p20251005"
 profile = "default/linux/riscv/23.0/rv64/lp64d"
