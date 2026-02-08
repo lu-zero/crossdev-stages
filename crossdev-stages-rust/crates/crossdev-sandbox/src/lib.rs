@@ -65,6 +65,13 @@ pub trait SandboxBackend: Send + Sync {
     /// Get the backend name
     fn name(&self) -> &str;
 
+    /// Inspect container filesystem to find stage locations
+    async fn inspect_container_filesystem(
+        &self,
+        container_id: &str,
+        path: &str,
+    ) -> SandboxResult<Vec<String>>;
+
     /// Load a stage3 into the sandbox container
     async fn load_stage3(
         &self,
@@ -187,6 +194,17 @@ impl SandboxBackend for BubblewrapBackend {
     async fn wipe_stage3(&self, _container_id: &str) -> SandboxResult<()> {
         Err(SandboxError::BackendUnavailable(
             "Stage3 operations not implemented for bubblewrap backend".to_string(),
+        ))
+    }
+
+    /// Inspect container filesystem to find stage locations
+    async fn inspect_container_filesystem(
+        &self,
+        _container_id: &str,
+        _path: &str,
+    ) -> SandboxResult<Vec<String>> {
+        Err(SandboxError::BackendUnavailable(
+            "Filesystem inspection not implemented for bubblewrap backend".to_string(),
         ))
     }
 }
@@ -530,6 +548,63 @@ impl SandboxBackend for DockerBackend {
             container_id
         );
         Ok(())
+    }
+
+    /// Inspect container filesystem to find stage locations
+    async fn inspect_container_filesystem(
+        &self,
+        container_id: &str,
+        path: &str,
+    ) -> SandboxResult<Vec<String>> {
+        info!(
+            "Inspecting container '{}' filesystem at: {}",
+            container_id, path
+        );
+
+        // Ensure the container exists and is running
+        let docker = Docker::connect_with_local_defaults()
+            .map_err(|e| SandboxError::ContainerCreationFailed(e.to_string()))?;
+        DockerBackend::ensure_container_ready(&docker, container_id).await?;
+
+        // Use docker exec to list contents of the specified path
+        let output = std::process::Command::new("docker")
+            .args([
+                "exec",
+                container_id,
+                "sh",
+                "-c",
+                &format!("if [ -d {} ]; then ls -1 {} 2>/dev/null; else echo 'Path not found'; fi", path, path),
+            ])
+            .output()
+            .map_err(|e| {
+                SandboxError::Stage3OperationFailed(format!(
+                    "Failed to inspect container filesystem: {}",
+                    e
+                ))
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(SandboxError::Stage3OperationFailed(format!(
+                "Container filesystem inspection failed: {}",
+                stderr
+            )));
+        }
+
+        let result = String::from_utf8_lossy(&output.stdout).into_owned();
+        let items: Vec<String> = result
+            .lines()
+            .filter(|line| !line.is_empty() && line != &"Path not found")
+            .map(|s| s.to_string())
+            .collect();
+
+        info!(
+            "Found {} items in container '{}' at: {}",
+            items.len(),
+            container_id,
+            path
+        );
+        Ok(items)
     }
 }
 

@@ -1560,10 +1560,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Sandbox States:");
         println!("===============");
 
+        // Try to get a sandbox backend for container inspection
+        let backend_result = auto_detect_backend();
+        
         for sandbox in sandboxes {
             println!("Name: {}", sandbox.name);
             println!("  Status: {:?}", sandbox.state);
-            println!("  Stage: {:?}", sandbox.loaded_stage);
+            
+            // Show loaded stage information
+            if let Some(loaded_stage) = &sandbox.loaded_stage {
+                println!("  Stage: {}", loaded_stage);
+                
+                // Try to inspect container to find stage location
+                if let Ok(backend) = &backend_result {
+                    if backend.name() == "docker" {
+                        if let Ok(stage_locations) = backend.inspect_container_filesystem(&sandbox.name, "/stages").await {
+                            if !stage_locations.is_empty() {
+                                println!("  Stage Locations:");
+                                for location in stage_locations {
+                                    println!("    - /stages/{}", location);
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                println!("  Stage: None");
+            }
+            
             println!("  Created: {}", sandbox.created_at);
             println!("  Updated: {}", sandbox.last_updated);
             println!();
