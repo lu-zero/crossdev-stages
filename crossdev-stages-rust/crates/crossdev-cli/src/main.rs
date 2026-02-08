@@ -706,8 +706,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // Track sandbox state
                                 use stage::SandboxRegistry;
                                 let registry_path = SandboxRegistry::get_default_registry_path();
-                                let mut registry = SandboxRegistry::load_from_file(&registry_path).unwrap_or_default();
-                                let sandbox_state = SandboxRegistry::create_sandbox_state(&name, stage::SandboxStatus::New);
+                                let mut registry = SandboxRegistry::load_from_file(&registry_path)
+                                    .unwrap_or_default();
+                                let sandbox_state = SandboxRegistry::create_sandbox_state(
+                                    &name,
+                                    stage::SandboxStatus::New,
+                                );
                                 registry.upsert_sandbox(sandbox_state)?;
                                 registry.save_to_file(&registry_path)?;
                             } else {
@@ -759,7 +763,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 // Compute LLVM targets for both host and target
                                 let host_llvm_target = arch_to_llvm_target(std::env::consts::ARCH);
-                                let target_llvm_target = arch_to_llvm_target(&config.compilation.chost);
+                                let target_llvm_target =
+                                    arch_to_llvm_target(&config.compilation.chost);
 
                                 // Use our structured crossdev environment setup
                                 let crossdev_env = CrossdevEnvironment::new(
@@ -851,26 +856,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
 
                                 // Set LLVM_TARGETS in host make.conf for native compilation
-                                // Include host architecture, target architecture, and common targets for development
-                                
-                                // Common LLVM targets for development systems
-                                let common_targets = vec![
-                                    host_llvm_target.as_str(),    // Host architecture
-                                    target_llvm_target.as_str(),  // Target architecture (for cross-compilation support)
-                                    "AArch64",      // ARM 64-bit
-                                    "X86",          // x86 32-bit
-                                    "X86_64",       // x86 64-bit
-                                    "RISCV",        // RISC-V
-                                    "WebAssembly",  // WebAssembly
+                                // Only include host and target architectures as directed
+
+                                // Only use host and target LLVM targets
+                                let mut unique_targets: Vec<&str> = vec![
+                                    host_llvm_target.as_str(),   // Host architecture
+                                    target_llvm_target.as_str(), // Target architecture
                                 ];
-                                
-                                // Deduplicate and join targets
-                                let mut unique_targets: Vec<&str> = common_targets
-                                    .into_iter()
-                                    .collect();
+
+                                // Deduplicate in case host and target are the same
                                 unique_targets.sort();
                                 unique_targets.dedup();
-                                
+
                                 let host_llvm_targets = format!("\"{}\"", unique_targets.join(" "));
 
                                 let host_llvm_result = backend
@@ -896,7 +893,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 match host_llvm_result {
                                     Ok(_) => info!("✓ Host LLVM_TARGETS configured"),
                                     Err(e) => {
-                                        eprintln!("Warning: Failed to set host LLVM_TARGETS: {}", e);
+                                        eprintln!(
+                                            "Warning: Failed to set host LLVM_TARGETS: {}",
+                                            e
+                                        );
                                         eprintln!("  Host LLVM compilation may be limited");
                                     }
                                 }
@@ -1080,8 +1080,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                         // Remove from sandbox registry
                                         use stage::SandboxRegistry;
-                                        let registry_path = SandboxRegistry::get_default_registry_path();
-                                        let mut registry = SandboxRegistry::load_from_file(&registry_path).unwrap_or_default();
+                                        let registry_path =
+                                            SandboxRegistry::get_default_registry_path();
+                                        let mut registry =
+                                            SandboxRegistry::load_from_file(&registry_path)
+                                                .unwrap_or_default();
                                         let _ = registry.remove_sandbox(&name);
                                         let _ = registry.save_to_file(&registry_path);
 
@@ -1128,23 +1131,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // If sandbox filter is specified, show loaded stages for that sandbox
         if let Some(sandbox_name) = sandbox_filter {
             use stage::SandboxRegistry;
-            
+
             info!("Listing stages loaded in sandbox: {}", sandbox_name);
-            
+
             // Load sandbox registry
             let registry_path = SandboxRegistry::get_default_registry_path();
             let registry = SandboxRegistry::load_from_file(&registry_path).unwrap_or_default();
-            
+
             // Find the sandbox
             if let Some(sandbox) = registry.get_sandbox(&sandbox_name) {
                 println!("Sandbox: {}", sandbox_name);
                 println!("  Status: {:?}", sandbox.state);
                 println!("  Created: {}", sandbox.created_at);
                 println!("  Updated: {}", sandbox.last_updated);
-                
+
                 if let Some(loaded_stage) = &sandbox.loaded_stage {
                     println!("  Loaded Stage: {}", loaded_stage);
-                    
+
                     // Try to show more info about the loaded stage
                     if detailed {
                         // Parse stage name to extract info
@@ -1159,11 +1162,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else {
                     println!("  Loaded Stage: None");
                 }
-                
+
                 return Ok(());
             } else {
                 println!("Sandbox '{}' not found in registry.", sandbox_name);
-                println!("Note: Sandbox state tracking is automatic. If you just created this sandbox,");
+                println!(
+                    "Note: Sandbox state tracking is automatic. If you just created this sandbox,"
+                );
                 println!("it will be tracked after the first update operation.");
                 return Ok(());
             }
@@ -1430,7 +1435,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     async fn handle_stage_update(args: StageUpdateArgs) -> Result<(), Box<dyn std::error::Error>> {
         use jiff::Timestamp;
-        
+
         let sandbox_name = args.sandbox;
         let stage_dir = args.stage_dir;
         let update_ldconfig = args.ldconfig;
@@ -1470,16 +1475,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Track sandbox state - set to Updating
         let registry_path = stage::SandboxRegistry::get_default_registry_path();
         let mut registry = stage::SandboxRegistry::load_from_file(&registry_path)?;
-        
-        let mut sandbox_state = if let Some(existing) = registry.get_sandbox(&sandbox_name).cloned() {
+
+        let mut sandbox_state = if let Some(existing) = registry.get_sandbox(&sandbox_name).cloned()
+        {
             let mut state = existing;
             state.state = stage::SandboxStatus::Updating;
             state.last_updated = Timestamp::now().strftime("%Y%m%dT%H").to_string();
             state
         } else {
-            stage::SandboxRegistry::create_sandbox_state(&sandbox_name, stage::SandboxStatus::Updating)
+            stage::SandboxRegistry::create_sandbox_state(
+                &sandbox_name,
+                stage::SandboxStatus::Updating,
+            )
         };
-        
+
         // Save the updating state
         registry.upsert_sandbox(sandbox_state.clone())?;
         registry.save_to_file(&registry_path)?;
@@ -1497,7 +1506,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sandbox_state.state = stage::SandboxStatus::StageLoaded;
         sandbox_state.loaded_stage = Some(stage_dir_path.to_string_lossy().into_owned());
         sandbox_state.last_updated = Timestamp::now().strftime("%Y%m%dT%H").to_string();
-        
+
         registry.upsert_sandbox(sandbox_state)?;
         registry.save_to_file(&registry_path)?;
 
@@ -1525,7 +1534,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         println!("Sandbox States:");
         println!("===============");
-        
+
         for sandbox in sandboxes {
             println!("Name: {}", sandbox.name);
             println!("  Status: {:?}", sandbox.state);
@@ -1536,7 +1545,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         println!("Total: {} sandbox(es)", sandboxes.len());
-        
+
         Ok(())
     }
 
