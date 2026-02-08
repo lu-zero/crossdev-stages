@@ -1353,6 +1353,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     /// Handle stage load command using sandbox backend
     async fn handle_stage_load(args: StageLoadArgs) -> Result<(), Box<dyn std::error::Error>> {
+        use jiff::Timestamp;
+
         let sandbox_name = args.sandbox;
         let stage_name = args.stage;
         let cache_dir = args.cache;
@@ -1374,6 +1376,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         backend
             .load_stage3(&sandbox_name, std::path::Path::new(&stage_path))
             .await?;
+
+        // Track sandbox state - update to StageLoaded
+        let registry_path = stage::SandboxRegistry::get_default_registry_path();
+        let mut registry = stage::SandboxRegistry::load_from_file(&registry_path)?;
+
+        let sandbox_state = if let Some(existing) = registry.get_sandbox(&sandbox_name).cloned()
+        {
+            let mut state = existing;
+            state.state = stage::SandboxStatus::StageLoaded;
+            state.loaded_stage = Some(stage_name.clone());
+            state.last_updated = Timestamp::now().strftime("%Y%m%dT%H").to_string();
+            state
+        } else {
+            let mut state = stage::SandboxRegistry::create_sandbox_state(
+                &sandbox_name,
+                stage::SandboxStatus::StageLoaded,
+            );
+            state.loaded_stage = Some(stage_name.clone());
+            state
+        };
+
+        registry.upsert_sandbox(sandbox_state)?;
+        registry.save_to_file(&registry_path)?;
 
         println!("✓ Stage loaded: {} -> {}", stage_name, sandbox_name);
         Ok(())
