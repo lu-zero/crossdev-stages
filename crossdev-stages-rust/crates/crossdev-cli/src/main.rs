@@ -6,7 +6,7 @@ use clap::builder::styling::{AnsiColor, Styles};
 use clap::{Parser, Subcommand};
 use crossdev_sandbox::auto_detect_backend;
 use crossdev_stages::{CacheConfig, CacheStrategy, CrossdevCache, Stage3Fetcher};
-use crossdev_utils::arch;
+use crossdev_utils::{arch, arch_to_llvm_target};
 use glob::Pattern;
 use log::{info, warn, LevelFilter};
 use std::fs;
@@ -842,6 +842,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     Err(e) => {
                                         eprintln!("Failed to install crossdev packages: {}", e);
                                         std::process::exit(1);
+                                    }
+                                }
+
+                                // Set LLVM_TARGETS in host make.conf for native compilation
+                                let host_llvm_target = arch_to_llvm_target(std::env::consts::ARCH);
+                                let host_llvm_targets = format!("\"{}\"", host_llvm_target);
+
+                                let host_llvm_result = backend
+                                    .run_command(
+                                        "default",
+                                        "sh",
+                                        &[
+                                            "-c",
+                                            &format!(
+                                                "if [ -f /etc/portage/make.conf ]; then \
+                                                   sed -i '/^LLVM_TARGETS=/d' /etc/portage/make.conf && \
+                                                   echo 'LLVM_TARGETS={}' >> /etc/portage/make.conf; \
+                                                 else \
+                                                   echo 'LLVM_TARGETS={}' > /etc/portage/make.conf; \
+                                                 fi",
+                                                host_llvm_targets, host_llvm_targets
+                                            ),
+                                        ],
+                                        None,
+                                    )
+                                    .await;
+
+                                match host_llvm_result {
+                                    Ok(_) => info!("✓ Host LLVM_TARGETS configured"),
+                                    Err(e) => {
+                                        eprintln!("Warning: Failed to set host LLVM_TARGETS: {}", e);
+                                        eprintln!("  Host LLVM compilation may be limited");
                                     }
                                 }
 
