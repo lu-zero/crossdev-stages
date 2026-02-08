@@ -86,7 +86,6 @@ impl CrossdevEnvironment {
                     &self.target,
                     "--init-target",
                 ],
-                None,
             )
             .await;
 
@@ -117,7 +116,6 @@ impl CrossdevEnvironment {
                         self.root, self.profile
                     ),
                 ],
-                None,
             )
             .await;
 
@@ -174,7 +172,6 @@ impl CrossdevEnvironment {
                         self.root, self.cflags, self.root, self.root, self.root, self.target_llvm_target, host_llvm_target, self.root
                     ),
                 ],
-                None,
             )
             .await;
 
@@ -226,7 +223,7 @@ impl CrossdevEnvironment {
         let path = format!("{}/etc/portage/{}", self.root, subdir);
 
         let result = backend
-            .run_command("default", "mkdir", &["-p", &path], None)
+            .run_command("default", "mkdir", &["-p", &path])
             .await;
 
         match result {
@@ -261,7 +258,6 @@ impl CrossdevEnvironment {
                 "default",
                 "sh",
                 &["-c", &format!("echo '{}' > {}", plain_conf_content, path)],
-                None,
             )
             .await;
 
@@ -291,7 +287,6 @@ impl CrossdevEnvironment {
                 "default",
                 "sh",
                 &["-c", &format!("echo '{}' > {}", rust_env_content, path)],
-                None,
             )
             .await;
 
@@ -315,7 +310,7 @@ impl CrossdevEnvironment {
         let path = format!("{}/bin", self.root);
 
         let result = backend
-            .run_command("default", "mkdir", &["-p", &path], None)
+            .run_command("default", "mkdir", &["-p", &path])
             .await;
 
         match result {
@@ -347,7 +342,6 @@ impl CrossdevEnvironment {
                     "-c",
                     &format!("echo -e '{}' > {}", busybox_content, busybox_path),
                 ],
-                None,
             )
             .await;
 
@@ -366,7 +360,6 @@ impl CrossdevEnvironment {
                 "default",
                 "sh",
                 &["-c", &format!("echo '{}' > {}", clang_content, clang_path)],
-                None,
             )
             .await;
 
@@ -385,7 +378,6 @@ impl CrossdevEnvironment {
                 "default",
                 "sh",
                 &["-c", &format!("echo '{}' > {}", git_content, git_path)],
-                None,
             )
             .await;
 
@@ -404,7 +396,6 @@ impl CrossdevEnvironment {
                 "default",
                 "sh",
                 &["-c", &format!("echo '{}' > {}", rust_content, rust_path)],
-                None,
             )
             .await;
 

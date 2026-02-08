@@ -501,7 +501,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 // Ensure container is ready by running a simple command
                                 let _ = backend
-                                    .run_command(&name, "echo", &["Container ready"], None)
+                                    .run_command(&name, "echo", &["Container ready"])
                                     .await;
 
                                 // Set ACCEPT_KEYWORDS based on host architecture (setup is always for the host)
@@ -519,8 +519,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let accept_keywords_result = backend.run_command(
                                     &name,
                                     "sh",
-                                    &["-c", &format!("if [ -f /etc/portage/make.conf ]; then sed -i '/^ACCEPT_KEYWORDS=/d' /etc/portage/make.conf; fi && echo 'ACCEPT_KEYWORDS={}' >> /etc/portage/make.conf", accept_keyword)],
-                                    None
+                                    &["-c", &format!("if [ -f /etc/portage/make.conf ]; then sed -i '/^ACCEPT_KEYWORDS=/d' /etc/portage/make.conf; fi && echo 'ACCEPT_KEYWORDS={}' >> /etc/portage/make.conf", accept_keyword)]
                                 ).await;
 
                                 match accept_keywords_result {
@@ -553,8 +552,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let makeopts_result = backend.run_command(
                                     &name,
                                     "sh",
-                                    &["-c", &format!("echo 'MAKEOPTS=\"{}\"' >> /etc/portage/make.conf && echo 'EMERGE_DEFAULT_OPTS=\"{}\"' >> /etc/portage/make.conf", makeopts, emerge_opts)],
-                                    None
+                                    &["-c", &format!("echo 'MAKEOPTS=\"{}\"' >> /etc/portage/make.conf && echo 'EMERGE_DEFAULT_OPTS=\"{}\"' >> /etc/portage/make.conf", makeopts, emerge_opts)]
                                 ).await;
 
                                 match makeopts_result {
@@ -575,8 +573,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let uboot_use_result = backend.run_command(
                                     "default",
                                     "sh",
-                                    &["-c", "mkdir -p /etc/portage/package.use && echo 'sys-apps/dtc python' > /etc/portage/package.use/u-boot-tools"],
-                                    None
+                                    &["-c", "mkdir -p /etc/portage/package.use && echo 'sys-apps/dtc python' > /etc/portage/package.use/u-boot-tools"]
                                 ).await;
 
                                 match uboot_use_result {
@@ -589,9 +586,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 // Run emerge --sync to update package database
                                 info!("Running emerge --sync to update package database...");
-                                let sync_result = backend
-                                    .run_command("default", "emerge", &["--sync"], None)
-                                    .await;
+                                let sync_result =
+                                    backend.run_command("default", "emerge", &["--sync"]).await;
 
                                 match sync_result {
                                     Ok(_) => info!("✓ Package database synchronized"),
@@ -637,9 +633,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
 
                                 info!("Installing all cross-compilation prerequisites...");
-                                let result = backend
-                                    .run_command("default", "emerge", &emerge_args, None)
-                                    .await;
+                                let result =
+                                    backend.run_command("default", "emerge", &emerge_args).await;
 
                                 match result {
                                     Ok(_) => info!("✓ All packages installed"),
@@ -663,7 +658,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         "default",
                                         "eselect",
                                         &["repository", "create", "crossdev"],
-                                        None,
                                     )
                                     .await;
 
@@ -679,9 +673,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 // Run emerge --sync to update package database
                                 info!("Running emerge --sync to update package database...");
-                                let sync_result = backend
-                                    .run_command("default", "emerge", &["--sync"], None)
-                                    .await;
+                                let sync_result =
+                                    backend.run_command("default", "emerge", &["--sync"]).await;
 
                                 match sync_result {
                                     Ok(_) => info!("✓ Package database synchronized"),
@@ -798,8 +791,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         "mkdir -p /etc/portage/package.{{accept_keywords,mask}} && \
                                          echo \"cross-{}/rust-std **\" > /etc/portage/package.accept_keywords/rust-std",
                                         config.compilation.chost
-                                    )],
-                                    None
+                                    )]
                                 ).await;
 
                                 match unmask_result {
@@ -818,7 +810,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         "default",
                                         "merge-usr",
                                         &["--root", &crossdev_root],
-                                        None,
                                     )
                                     .await;
 
@@ -846,7 +837,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 ]);
 
                                 let install_result = backend
-                                    .run_command("default", "crossdev", &crossdev_args, None)
+                                    .run_command("default", "crossdev", &crossdev_args)
                                     .await;
 
                                 match install_result {
@@ -888,7 +879,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                                 host_llvm_targets, host_llvm_targets
                                             ),
                                         ],
-                                        None,
                                     )
                                     .await;
 
@@ -922,7 +912,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 SandboxCommands::Enter(args) => {
                     let name = args.name;
-                    let working_dir = args.working_dir;
+                    // working_dir is no longer supported by the sandbox backend
+                    let _working_dir = args.working_dir;
 
                     info!("Entering sandbox '{}'", name);
 
@@ -934,12 +925,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // Use bash -li for proper login interactive shell
                                 let command = ["bash", "-li"];
 
-                                let working_dir_path =
-                                    working_dir.as_deref().map(std::path::Path::new);
-                                match backend
-                                    .exec_interactive(&name, &command, working_dir_path)
-                                    .await
-                                {
+                                // working_dir is no longer supported
+                                match backend.exec_interactive(&name, &command).await {
                                     Ok(_) => {
                                         println!("Interactive session completed");
 
@@ -960,7 +947,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
                                 println!(
                                     "  Working directory: {}",
-                                    working_dir.as_deref().unwrap_or("default")
+                                    _working_dir.as_deref().unwrap_or("default")
                                 );
                                 println!("  Status: Active");
 
@@ -1001,7 +988,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let name = args.name;
                     let command = args.command;
                     let args_refs: Vec<&str> = args.args.iter().map(|s| s.as_str()).collect();
-                    let working_dir = args.working_dir;
+                    // working_dir is no longer supported by the sandbox backend
+                    let _working_dir = args.working_dir;
 
                     info!(
                         "Running command in sandbox '{}': {} {}",
@@ -1012,11 +1000,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     match auto_detect_backend() {
                         Ok(backend) => {
-                            let working_dir_path = working_dir.as_deref().map(std::path::Path::new);
-                            match backend
-                                .run_command(&name, &command, &args_refs, working_dir_path)
-                                .await
-                            {
+                            match backend.run_command(&name, &command, &args_refs).await {
                                 Ok(output) => {
                                     println!(
                                         "✓ Command executed successfully in sandbox '{}':",
@@ -1500,17 +1484,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let stage_manager = StageManager::new(platform_config, cache_dir, mirror_url);
 
         // Stage directory is required for update operations
-        // If it's a relative path, it's relative to the sandbox working directory
-        // If it's an absolute path, use it as-is
         let stage_dir_path = if let Some(dir) = stage_dir {
-            let path = PathBuf::from(dir);
-            if path.is_absolute() {
-                path
-            } else {
-                // For relative paths, we'll use them directly in the container
-                // The backend will handle the container path resolution
-                path
-            }
+            PathBuf::from(dir)
         } else {
             return Err(
                 "Stage directory must be specified for update operations. Use --stage-dir option."

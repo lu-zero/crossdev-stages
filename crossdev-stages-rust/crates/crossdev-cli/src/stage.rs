@@ -59,7 +59,6 @@ impl StageManager {
                 "default",
                 &format!("{}-emerge", target_chost),
                 &["-b", "-k", "gcc"],
-                None, // Run in host context
             )
             .await?;
 
@@ -70,7 +69,6 @@ impl StageManager {
                 "default",
                 &format!("{}-emerge", target_chost),
                 &["-b", "-k", "sys-libs/binutils-libs"],
-                None, // Run in host context
             )
             .await?;
 
@@ -81,18 +79,17 @@ impl StageManager {
                 "default",
                 &format!("{}-emerge", target_chost),
                 &["-b", "-k", "-u", "system"],
-                None, // Run in host context
             )
             .await?;
 
         // Step 4: Update world packages in the stage directory
         info!("Updating world packages in stage...");
+
         backend
             .run_command(
                 "default",
                 &format!("{}-emerge", target_chost),
                 &["-k", "-e", "@world"],
-                Some(stage_dir), // Run in stage context
             )
             .await?;
 
@@ -116,7 +113,6 @@ impl StageManager {
                 "default",
                 "ldconfig",
                 &["-v", "-r", stage_dir.to_str().unwrap()],
-                None,
             )
             .await?;
 

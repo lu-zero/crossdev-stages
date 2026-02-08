@@ -7,7 +7,6 @@ use async_trait::async_trait;
 use bollard::Docker;
 use jiff::Timestamp;
 use log::info;
-use std::path::Path;
 use thiserror::Error;
 
 /// Sandboxing errors
@@ -51,16 +50,10 @@ pub trait SandboxBackend: Send + Sync {
         container_id: &str,
         command: &str,
         args: &[&str],
-        working_dir: Option<&Path>,
     ) -> SandboxResult<String>;
 
     /// Create an interactive exec session in a container
-    async fn exec_interactive(
-        &self,
-        container_id: &str,
-        command: &[&str],
-        working_dir: Option<&Path>,
-    ) -> SandboxResult<()>;
+    async fn exec_interactive(&self, container_id: &str, command: &[&str]) -> SandboxResult<()>;
 
     /// Get the backend name
     fn name(&self) -> &str;
@@ -154,17 +147,11 @@ impl SandboxBackend for BubblewrapBackend {
         _container_id: &str,
         _command: &str,
         _args: &[&str],
-        _working_dir: Option<&Path>,
     ) -> SandboxResult<String> {
         todo!("Implement bubblewrap command execution")
     }
 
-    async fn exec_interactive(
-        &self,
-        _container_id: &str,
-        _command: &[&str],
-        _working_dir: Option<&Path>,
-    ) -> SandboxResult<()> {
+    async fn exec_interactive(&self, _container_id: &str, _command: &[&str]) -> SandboxResult<()> {
         Err(SandboxError::BackendUnavailable(
             "Interactive exec not implemented for bubblewrap".to_string(),
         ))
@@ -252,7 +239,6 @@ impl SandboxBackend for DockerBackend {
         container_id: &str,
         command: &str,
         args: &[&str],
-        working_dir: Option<&Path>,
     ) -> SandboxResult<String> {
         use bollard::Docker;
 
@@ -267,16 +253,16 @@ impl SandboxBackend for DockerBackend {
         let mut full_command = vec![command.to_string()];
         full_command.extend(args.iter().map(|s| s.to_string()));
 
+        // Create a copy for error reporting
+        let full_command_copy = full_command.clone();
+
         // Use docker CLI to execute the command
-        let mut args: Vec<String> = vec!["exec".to_string()];
-        if let Some(wd) = working_dir {
-            args.extend(["-w".to_string(), wd.to_string_lossy().into_owned()]);
-        }
-        args.push(container_id.to_string());
-        args.extend(full_command);
+        let mut docker_args: Vec<String> = vec!["exec".to_string()];
+        docker_args.push(container_id.to_string());
+        docker_args.extend(full_command);
 
         let output = std::process::Command::new("docker")
-            .args(args)
+            .args(docker_args)
             .output()
             .map_err(|e| {
                 SandboxError::CommandExecutionFailed(format!(
@@ -292,6 +278,16 @@ impl SandboxBackend for DockerBackend {
 
             let mut full_error =
                 format!("Command failed with exit code {}: {}", exit_code, command);
+
+            // Include the full command with arguments for better debugging
+            let full_command_str = if full_command_copy.is_empty() {
+                command.to_string()
+            } else {
+                format!("{} {}", command, full_command_copy.join(" "))
+            };
+
+            full_error.push_str(&format!("\nFull command: {}", full_command_str));
+
             if !error_msg.is_empty() {
                 full_error.push_str("\nstderr: ");
                 full_error.push_str(&error_msg);
@@ -309,12 +305,7 @@ impl SandboxBackend for DockerBackend {
     }
 
     /// Create an interactive exec session in a container
-    async fn exec_interactive(
-        &self,
-        container_id: &str,
-        command: &[&str],
-        working_dir: Option<&Path>,
-    ) -> SandboxResult<()> {
+    async fn exec_interactive(&self, container_id: &str, command: &[&str]) -> SandboxResult<()> {
         use bollard::Docker;
 
         // Connect to Docker daemon
@@ -326,9 +317,6 @@ impl SandboxBackend for DockerBackend {
 
         // Use docker CLI directly for interactive sessions as it handles TTY properly
         let mut args: Vec<String> = vec!["exec".to_string(), "-it".to_string()];
-        if let Some(wd) = working_dir {
-            args.extend(["-w".to_string(), wd.to_string_lossy().into_owned()]);
-        }
         args.push(container_id.to_string());
 
         // For interactive shell, use bash -li
