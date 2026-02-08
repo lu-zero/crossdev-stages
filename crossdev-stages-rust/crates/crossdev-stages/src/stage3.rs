@@ -75,7 +75,7 @@ impl Stage3Fetcher {
             target: target_config.clone(),
             compilation: CompilationConfig {
                 cflags: "-O2 -pipe".to_string(),
-                gcc_version: "16.0.0".to_string(),
+                gcc_version: Some("16.0.0".to_string()),
                 profile: "default/linux/amd64/17.1".to_string(),
                 chost: format!("{}-unknown-linux-gnu", target_config.arch),
                 makeopts: format!("-j{}", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)),

@@ -34,7 +34,7 @@ pub struct TargetConfig {
 #[derive(Debug, Deserialize, Clone)]
 pub struct CompilationConfig {
     pub cflags: String,
-    pub gcc_version: String,
+    pub gcc_version: Option<String>,
     pub profile: String,
     pub chost: String,
     #[serde(default = "default_makeopts")]

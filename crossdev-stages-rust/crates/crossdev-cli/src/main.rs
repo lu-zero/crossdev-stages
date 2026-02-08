@@ -833,19 +833,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
 
                                 // Install crossdev packages
+                                let mut crossdev_args = vec![config.compilation.chost.as_str()];
+                                
+                                // Only add --g flag if gcc_version is specified
+                                if let Some(gcc_version) = &config.compilation.gcc_version {
+                                    crossdev_args.extend(["--g", gcc_version.as_str()]);
+                                }
+                                
+                                crossdev_args.extend([
+                                    "--ex-pkg",
+                                    "sys-devel/clang-crossdev-wrappers",
+                                    "--ex-pkg",
+                                    "sys-devel/rust-std",
+                                ]);
+                                
                                 let install_result = backend
                                     .run_command(
                                         "default",
                                         "crossdev",
-                                        &[
-                                            config.compilation.chost.as_str(),
-                                            "--g",
-                                            &config.compilation.gcc_version,
-                                            "--ex-pkg",
-                                            "sys-devel/clang-crossdev-wrappers",
-                                            "--ex-pkg",
-                                            "sys-devel/rust-std",
-                                        ],
+                                        &crossdev_args,
                                         None,
                                     )
                                     .await;
