@@ -1571,14 +1571,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(loaded_stage) = &sandbox.loaded_stage {
                 println!("  Stage: {}", loaded_stage);
                 
-                // Try to inspect container to find stage location
+                // Try to inspect container to find stage directories with .origin info
                 if let Ok(backend) = &backend_result {
                     if backend.name() == "docker" {
-                        if let Ok(stage_locations) = backend.inspect_container_filesystem(&sandbox.name, "/stages").await {
-                            if !stage_locations.is_empty() {
-                                println!("  Stage Locations:");
-                                for location in stage_locations {
-                                    println!("    - /stages/{}", location);
+                        if let Ok(stage_info) = backend.inspect_stage_directories(&sandbox.name).await {
+                            if !stage_info.is_empty() {
+                                println!("  Stage Directories:");
+                                for (stage_dir, origin_content) in stage_info {
+                                    println!("    - /stages/{}", stage_dir);
+                                    if let Some(origin) = origin_content {
+                                        println!("      Origin: {}", origin);
+                                    } else {
+                                        println!("      Origin: (not found)");
+                                    }
                                 }
                             }
                         }

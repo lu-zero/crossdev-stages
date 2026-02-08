@@ -72,6 +72,12 @@ pub trait SandboxBackend: Send + Sync {
         path: &str,
     ) -> SandboxResult<Vec<String>>;
 
+    /// Inspect stage directories and read their .origin files
+    async fn inspect_stage_directories(
+        &self,
+        container_id: &str,
+    ) -> SandboxResult<Vec<(String, Option<String>)>>;
+
     /// Load a stage3 into the sandbox container
     async fn load_stage3(
         &self,
@@ -205,6 +211,16 @@ impl SandboxBackend for BubblewrapBackend {
     ) -> SandboxResult<Vec<String>> {
         Err(SandboxError::BackendUnavailable(
             "Filesystem inspection not implemented for bubblewrap backend".to_string(),
+        ))
+    }
+
+    /// Inspect stage directories and read their .origin files
+    async fn inspect_stage_directories(
+        &self,
+        _container_id: &str,
+    ) -> SandboxResult<Vec<(String, Option<String>)>> {
+        Err(SandboxError::BackendUnavailable(
+            "Stage directory inspection not implemented for bubblewrap backend".to_string(),
         ))
     }
 }
@@ -605,6 +621,72 @@ impl SandboxBackend for DockerBackend {
             path
         );
         Ok(items)
+    }
+
+    /// Inspect stage directories and read their .origin files
+    async fn inspect_stage_directories(
+        &self,
+        container_id: &str,
+    ) -> SandboxResult<Vec<(String, Option<String>)>> {
+        info!(
+            "Inspecting stage directories in container '{}'",
+            container_id
+        );
+
+        // Ensure the container exists and is running
+        let docker = Docker::connect_with_local_defaults()
+            .map_err(|e| SandboxError::ContainerCreationFailed(e.to_string()))?;
+        DockerBackend::ensure_container_ready(&docker, container_id).await?;
+
+        // First, list all directories in /stages
+        let stage_dirs = self.inspect_container_filesystem(container_id, "/stages").await?;
+        
+        if stage_dirs.is_empty() {
+            info!("No stage directories found in container '{}'", container_id);
+            return Ok(Vec::new());
+        }
+
+        // For each stage directory, try to read the .origin file
+        let mut stage_info = Vec::new();
+        
+        for stage_dir in stage_dirs {
+            // Read the .origin file content
+            let origin_content = std::process::Command::new("docker")
+                .args([
+                    "exec",
+                    container_id,
+                    "sh",
+                    "-c",
+                    &format!("if [ -f /stages/{}/.origin ]; then cat /stages/{}/.origin; else echo 'NO_ORIGIN'; fi", stage_dir, stage_dir),
+                ])
+                .output()
+                .map_err(|e| {
+                    SandboxError::Stage3OperationFailed(format!(
+                        "Failed to read .origin file for stage {}: {}",
+                        stage_dir, e
+                    ))
+                })?;
+
+            let origin_content = if origin_content.status.success() {
+                let content = String::from_utf8_lossy(&origin_content.stdout).into_owned();
+                if content.trim() == "NO_ORIGIN" {
+                    None
+                } else {
+                    Some(content.trim().to_string())
+                }
+            } else {
+                None
+            };
+
+            stage_info.push((stage_dir, origin_content));
+        }
+
+        info!(
+            "Found {} stage directories in container '{}'",
+            stage_info.len(),
+            container_id
+        );
+        Ok(stage_info)
     }
 }
 
