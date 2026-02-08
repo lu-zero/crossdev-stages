@@ -93,6 +93,8 @@ enum StageCommands {
     Wipe(StageWipeArgs),
     /// Update a stage3 with latest packages
     Update(StageUpdateArgs),
+    /// List sandbox states and their status
+    ListSandboxes,
 }
 
 #[derive(clap::Args, Debug)]
@@ -135,6 +137,10 @@ struct StageListArgs {
     /// Show detailed information including timestamps
     #[arg(short, long)]
     detailed: bool,
+
+    /// Filter by sandbox name to show loaded stages
+    #[arg(short = 'S', long)]
+    sandbox: Option<String>,
 
     /// Cache directory
     #[arg(short = 'C', long, default_value = get_default_cache_dir())]
@@ -223,7 +229,7 @@ struct StageUpdateArgs {
     #[arg(short = 'S', long, required = true)]
     sandbox: String,
 
-    /// Stage directory path (defaults to sandbox working directory)
+    /// Stage directory path (relative to sandbox or absolute path)
     #[arg(short, long)]
     stage_dir: Option<String>,
 
@@ -444,6 +450,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 StageCommands::Update(args) => {
                     // Handle stage update
                     handle_stage_update(args).await?;
+                }
+                StageCommands::ListSandboxes => {
+                    // Handle sandbox listing
+                    handle_list_sandboxes().await?;
                 }
             }
         }
@@ -691,7 +701,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 println!(
                                     "  1. Run 'sandbox prepare' to set up crossdev environment"
                                 );
-                                println!("  2. Or enter the sandbox with 'sandbox enter'");
+                                println!("   2. Or enter the sandbox with 'sandbox enter'");
+
+                                // Track sandbox state
+                                use stage::SandboxRegistry;
+                                let registry_path = SandboxRegistry::get_default_registry_path();
+                                let mut registry = SandboxRegistry::load_from_file(&registry_path).unwrap_or_default();
+                                let sandbox_state = SandboxRegistry::create_sandbox_state(&name, stage::SandboxStatus::New);
+                                registry.upsert_sandbox(sandbox_state)?;
+                                registry.save_to_file(&registry_path)?;
                             } else {
                                 println!(
                                     "✓ Sandbox '{}' prepared with backend: {}",
@@ -744,6 +762,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     &config.compilation.chost,
                                     &crossdev_root,
                                     &config.compilation.profile,
+                                    &config.compilation.cflags,
                                 );
 
                                 match crossdev_env.initialize(&*backend).await {
@@ -1003,6 +1022,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         println!("✓ Sandbox '{}' deleted successfully", name);
                                         println!("  - Container instance removed");
 
+                                        // Remove from sandbox registry
+                                        use stage::SandboxRegistry;
+                                        let registry_path = SandboxRegistry::get_default_registry_path();
+                                        let mut registry = SandboxRegistry::load_from_file(&registry_path).unwrap_or_default();
+                                        let _ = registry.remove_sandbox(&name);
+                                        let _ = registry.save_to_file(&registry_path);
+
                                         // Optionally clean up cache (docker system prune)
                                         if force {
                                             println!("  - Cleaning up Docker cache...");
@@ -1041,6 +1067,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let arch_pattern = args.arch;
         let flavor_pattern = args.flavor;
         let detailed = args.detailed;
+        let sandbox_filter = args.sandbox;
+
+        // If sandbox filter is specified, show loaded stages for that sandbox
+        if let Some(sandbox_name) = sandbox_filter {
+            use stage::SandboxRegistry;
+            
+            info!("Listing stages loaded in sandbox: {}", sandbox_name);
+            
+            // Load sandbox registry
+            let registry_path = SandboxRegistry::get_default_registry_path();
+            let registry = SandboxRegistry::load_from_file(&registry_path).unwrap_or_default();
+            
+            // Find the sandbox
+            if let Some(sandbox) = registry.get_sandbox(&sandbox_name) {
+                println!("Sandbox: {}", sandbox_name);
+                println!("  Status: {:?}", sandbox.state);
+                println!("  Created: {}", sandbox.created_at);
+                println!("  Updated: {}", sandbox.last_updated);
+                
+                if let Some(loaded_stage) = &sandbox.loaded_stage {
+                    println!("  Loaded Stage: {}", loaded_stage);
+                    
+                    // Try to show more info about the loaded stage
+                    if detailed {
+                        // Parse stage name to extract info
+                        let parts: Vec<&str> = loaded_stage.split('-').collect();
+                        if parts.len() >= 3 {
+                            let arch = parts[1];
+                            let flavor = parts[2];
+                            println!("  Stage Architecture: {}", arch);
+                            println!("  Stage Flavor: {}", flavor);
+                        }
+                    }
+                } else {
+                    println!("  Loaded Stage: None");
+                }
+                
+                return Ok(());
+            } else {
+                println!("Sandbox '{}' not found in registry.", sandbox_name);
+                println!("Note: Sandbox state tracking is automatic. If you just created this sandbox,");
+                println!("it will be tracked after the first update operation.");
+                return Ok(());
+            }
+        }
 
         info!("Listing stage3 files in cache: {}", cache_dir);
 
@@ -1302,6 +1373,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     async fn handle_stage_update(args: StageUpdateArgs) -> Result<(), Box<dyn std::error::Error>> {
+        use jiff::Timestamp;
+        
         let sandbox_name = args.sandbox;
         let stage_dir = args.stage_dir;
         let update_ldconfig = args.ldconfig;
@@ -1318,8 +1391,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let stage_manager = StageManager::new(platform_config, cache_dir, mirror_url);
 
         // Stage directory is required for update operations
+        // If it's a relative path, it's relative to the sandbox working directory
+        // If it's an absolute path, use it as-is
         let stage_dir_path = if let Some(dir) = stage_dir {
-            PathBuf::from(dir)
+            let path = PathBuf::from(dir);
+            if path.is_absolute() {
+                path
+            } else {
+                // For relative paths, we'll use them directly in the container
+                // The backend will handle the container path resolution
+                path
+            }
         } else {
             return Err(
                 "Stage directory must be specified for update operations. Use --stage-dir option."
@@ -1328,6 +1410,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
 
         info!("Updating stage at: {}", stage_dir_path.display());
+
+        // Track sandbox state - set to Updating
+        let registry_path = stage::SandboxRegistry::get_default_registry_path();
+        let mut registry = stage::SandboxRegistry::load_from_file(&registry_path)?;
+        
+        let mut sandbox_state = if let Some(existing) = registry.get_sandbox(&sandbox_name).cloned() {
+            let mut state = existing;
+            state.state = stage::SandboxStatus::Updating;
+            state.last_updated = Timestamp::now().strftime("%Y%m%dT%H").to_string();
+            state
+        } else {
+            stage::SandboxRegistry::create_sandbox_state(&sandbox_name, stage::SandboxStatus::Updating)
+        };
+        
+        // Save the updating state
+        registry.upsert_sandbox(sandbox_state.clone())?;
+        registry.save_to_file(&registry_path)?;
 
         // Update the stage
         stage_manager.update_stage3(&stage_dir_path).await?;
@@ -1338,9 +1437,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             stage_manager.update_ldconfig(&stage_dir_path).await?;
         }
 
+        // Update sandbox state - set to StageLoaded
+        sandbox_state.state = stage::SandboxStatus::StageLoaded;
+        sandbox_state.loaded_stage = Some(stage_dir_path.to_string_lossy().into_owned());
+        sandbox_state.last_updated = Timestamp::now().strftime("%Y%m%dT%H").to_string();
+        
+        registry.upsert_sandbox(sandbox_state)?;
+        registry.save_to_file(&registry_path)?;
+
         info!("Stage update completed successfully");
         println!("✓ Stage updated in sandbox: {}", sandbox_name);
 
+        Ok(())
+    }
+
+    async fn handle_list_sandboxes() -> Result<(), Box<dyn std::error::Error>> {
+        use stage::SandboxRegistry;
+
+        info!("Listing sandbox states...");
+
+        // Load the sandbox registry
+        let registry_path = SandboxRegistry::get_default_registry_path();
+        let registry = SandboxRegistry::load_from_file(&registry_path)?;
+
+        let sandboxes = registry.list_sandboxes();
+
+        if sandboxes.is_empty() {
+            println!("No sandboxes found.");
+            return Ok(());
+        }
+
+        println!("Sandbox States:");
+        println!("===============");
+        
+        for sandbox in sandboxes {
+            println!("Name: {}", sandbox.name);
+            println!("  Status: {:?}", sandbox.state);
+            println!("  Stage: {:?}", sandbox.loaded_stage);
+            println!("  Created: {}", sandbox.created_at);
+            println!("  Updated: {}", sandbox.last_updated);
+            println!();
+        }
+
+        println!("Total: {} sandbox(es)", sandboxes.len());
+        
         Ok(())
     }
 

@@ -24,15 +24,17 @@ pub struct CrossdevEnvironment {
     target: String,
     root: String,
     profile: String,
+    cflags: String,
 }
 
 impl CrossdevEnvironment {
     /// Create a new CrossdevEnvironment instance
-    pub fn new(target: &str, root: &str, profile: &str) -> Self {
+    pub fn new(target: &str, root: &str, profile: &str, cflags: &str) -> Self {
         Self {
             target: target.to_string(),
             root: root.to_string(),
             profile: profile.to_string(),
+            cflags: cflags.to_string(),
         }
     }
 
@@ -138,6 +140,7 @@ impl CrossdevEnvironment {
         }
 
         info!("Setting CFLAGS, CXXFLAGS and LLVM_TARGETS");
+        info!("  CFLAGS: {}", self.cflags);
         info!("  LLVM_TARGETS: {}", llvm_targets);
         info!("  Host LLVM target: {}", host_llvm_target);
         info!("  Target LLVM target: {}", target_llvm_target);
@@ -149,8 +152,8 @@ impl CrossdevEnvironment {
                 &[
                     "-c",
                     &format!(
-                        "sed -i '/^CFLAGS=/d' {}/etc/portage/make.conf && echo 'CFLAGS=\"-O3 -pipe\"' >> {}/etc/portage/make.conf && sed -i '/^CXXFLAGS=/d' {}/etc/portage/make.conf && echo 'CXXFLAGS=\"${{CFLAGS}}\"' >> {}/etc/portage/make.conf && echo 'LLVM_TARGETS=\"{}\"' >> {}/etc/portage/make.conf",
-                        self.root, self.root, self.root, self.root, self.root, llvm_targets
+                        "sed -i '/^CFLAGS=/d' {}/etc/portage/make.conf && echo 'CFLAGS=\"{}\"' >> {}/etc/portage/make.conf && sed -i '/^CXXFLAGS=/d' {}/etc/portage/make.conf && echo 'CXXFLAGS=\"${{CFLAGS}}\"' >> {}/etc/portage/make.conf && echo 'LLVM_TARGETS=\"{}\"' >> {}/etc/portage/make.conf",
+                        self.root, self.cflags, self.root, self.root, self.root, self.root, llvm_targets
                     ),
                 ],
                 None,
@@ -222,7 +225,10 @@ impl CrossdevEnvironment {
         &self,
         backend: &dyn crossdev_sandbox::SandboxBackend,
     ) -> Result<(), CrossdevError> {
-        let plain_conf_content = "CFLAGS=\"-O3 -pipe\"\nCXXFLAGS=\"-O3 -pipe\"";
+        // Use safe, generic optimization flags for plain.conf
+        // (avoid architecture-specific flags that could cause issues)
+        let plain_cflags = "-O3 -pipe";
+        let plain_conf_content = format!("CFLAGS=\"{}\"\nCXXFLAGS=\"{}\"", plain_cflags, plain_cflags);
         let path = format!("{}/etc/portage/env/plain.conf", self.root);
 
         let result = backend
