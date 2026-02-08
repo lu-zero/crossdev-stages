@@ -273,7 +273,7 @@ mod tests {
             },
             compilation: CompilationConfig {
                 cflags: "test".to_string(),
-                gcc_version: "test".to_string(),
+                gcc_version: Some("test".to_string()),
                 profile: "test".to_string(),
                 chost: "riscv64-unknown-linux-gnu".to_string(),
                 makeopts: "test".to_string(),
