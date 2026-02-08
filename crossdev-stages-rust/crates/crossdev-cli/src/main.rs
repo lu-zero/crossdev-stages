@@ -1146,8 +1146,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("  Updated: {}", sandbox.last_updated);
 
                 if let Some(loaded_stage) = &sandbox.loaded_stage {
-                    println!("  Loaded Stage: {}", loaded_stage);
-
                     // Try to show more info about the loaded stage
                     if detailed {
                         // Parse stage name to extract info
@@ -1160,7 +1158,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
 
-                    // Try to inspect container to find stage directories with .origin info
+                    // Show stage directories with .origin info (more detailed than just the stage name)
                     if let Ok(backend) = auto_detect_backend() {
                         if backend.name() == "docker" {
                             match backend.inspect_stage_directories(&sandbox_name).await {
@@ -1592,10 +1590,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("  Status: {:?}", sandbox.state);
             
             // Show loaded stage information
-            if let Some(loaded_stage) = &sandbox.loaded_stage {
-                println!("  Stage: {}", loaded_stage);
-                
-                // Try to inspect container to find stage directories with .origin info
+            if sandbox.loaded_stage.is_some() {
+                // Show stage directories with .origin info (more detailed than just the stage name)
                 if let Ok(backend) = backend_result.as_ref() {
                     if backend.name() == "docker" {
                         match backend.inspect_stage_directories(&sandbox.name).await {
