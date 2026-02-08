@@ -846,8 +846,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
 
                                 // Set LLVM_TARGETS in host make.conf for native compilation
+                                // Include host architecture plus common targets for development
                                 let host_llvm_target = arch_to_llvm_target(std::env::consts::ARCH);
-                                let host_llvm_targets = format!("\"{}\"", host_llvm_target);
+                                
+                                // Common LLVM targets for development systems
+                                let common_targets = vec![
+                                    host_llvm_target.as_str(),
+                                    "AArch64",      // ARM 64-bit
+                                    "X86",          // x86 32-bit
+                                    "X86_64",       // x86 64-bit
+                                    "RISCV",        // RISC-V
+                                    "WebAssembly",  // WebAssembly
+                                ];
+                                
+                                // Deduplicate and join targets
+                                let mut unique_targets: Vec<&str> = common_targets
+                                    .into_iter()
+                                    .collect();
+                                unique_targets.sort();
+                                unique_targets.dedup();
+                                
+                                let host_llvm_targets = format!("\"{}\"", unique_targets.join(" "));
 
                                 let host_llvm_result = backend
                                     .run_command(
