@@ -757,12 +757,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     config.compilation.chost
                                 );
 
+                                // Compute LLVM targets for both host and target
+                                let host_llvm_target = arch_to_llvm_target(std::env::consts::ARCH);
+                                let target_llvm_target = arch_to_llvm_target(&config.compilation.chost);
+
                                 // Use our structured crossdev environment setup
                                 let crossdev_env = CrossdevEnvironment::new(
                                     &config.compilation.chost,
                                     &crossdev_root,
                                     &config.compilation.profile,
                                     &config.compilation.cflags,
+                                    &target_llvm_target,
                                 );
 
                                 match crossdev_env.initialize(&*backend).await {
@@ -846,12 +851,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
 
                                 // Set LLVM_TARGETS in host make.conf for native compilation
-                                // Include host architecture plus common targets for development
-                                let host_llvm_target = arch_to_llvm_target(std::env::consts::ARCH);
+                                // Include host architecture, target architecture, and common targets for development
                                 
                                 // Common LLVM targets for development systems
                                 let common_targets = vec![
-                                    host_llvm_target.as_str(),
+                                    host_llvm_target.as_str(),    // Host architecture
+                                    target_llvm_target.as_str(),  // Target architecture (for cross-compilation support)
                                     "AArch64",      // ARM 64-bit
                                     "X86",          // x86 32-bit
                                     "X86_64",       // x86 64-bit

@@ -25,16 +25,18 @@ pub struct CrossdevEnvironment {
     root: String,
     profile: String,
     cflags: String,
+    target_llvm_target: String,
 }
 
 impl CrossdevEnvironment {
     /// Create a new CrossdevEnvironment instance
-    pub fn new(target: &str, root: &str, profile: &str, cflags: &str) -> Self {
+    pub fn new(target: &str, root: &str, profile: &str, cflags: &str, target_llvm_target: &str) -> Self {
         Self {
             target: target.to_string(),
             root: root.to_string(),
             profile: profile.to_string(),
             cflags: cflags.to_string(),
+            target_llvm_target: target_llvm_target.to_string(),
         }
     }
 
@@ -132,14 +134,13 @@ impl CrossdevEnvironment {
         // - For RISC-V K1: "-O3 -march=rv64gc -pipe" (RV64GC base ISA)
         // - This provides target-specific optimization while maintaining compatibility
         // - plain.conf uses generic "-O3 -pipe" for packages needing safe flags
-        let target_llvm_target = arch_to_llvm_target(&self.target);
-
+        
         // Get host architecture and map to LLVM target
         let host_arch = std::env::consts::ARCH;
         let host_llvm_target = arch_to_llvm_target(host_arch);
 
         // Combine host and target LLVM targets, avoiding duplicates
-        let mut llvm_targets = target_llvm_target.clone();
+        let mut llvm_targets = self.target_llvm_target.clone();
         if !llvm_targets.contains(&host_llvm_target) {
             llvm_targets.push(' ');
             llvm_targets.push_str(&host_llvm_target);
@@ -149,7 +150,7 @@ impl CrossdevEnvironment {
         info!("  CFLAGS: {}", self.cflags);
         info!("  LLVM_TARGETS: {}", llvm_targets);
         info!("  Host LLVM target: {}", host_llvm_target);
-        info!("  Target LLVM target: {}", target_llvm_target);
+        info!("  Target LLVM target: {}", self.target_llvm_target);
 
         let result = backend
             .run_command(
@@ -158,8 +159,8 @@ impl CrossdevEnvironment {
                 &[
                     "-c",
                     &format!(
-                        "sed -i '/^CFLAGS=/d' {}/etc/portage/make.conf && echo 'CFLAGS=\"{}\"' >> {}/etc/portage/make.conf && sed -i '/^CXXFLAGS=/d' {}/etc/portage/make.conf && echo 'CXXFLAGS=\"${{CFLAGS}}\"' >> {}/etc/portage/make.conf && echo 'LLVM_TARGETS=\"{}\"' >> {}/etc/portage/make.conf",
-                        self.root, self.cflags, self.root, self.root, self.root, self.root, llvm_targets
+                        "sed -i '/^CFLAGS=/d' {}/etc/portage/make.conf && echo 'CFLAGS=\"{}\"' >> {}/etc/portage/make.conf && sed -i '/^CXXFLAGS=/d' {}/etc/portage/make.conf && echo 'CXXFLAGS=\"${{CFLAGS}}\"' >> {}/etc/portage/make.conf && echo 'LLVM_TARGETS=\"{} {}\"' >> {}/etc/portage/make.conf",
+                        self.root, self.cflags, self.root, self.root, self.root, self.target_llvm_target, host_llvm_target, self.root
                     ),
                 ],
                 None,
