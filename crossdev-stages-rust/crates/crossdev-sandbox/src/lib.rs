@@ -279,15 +279,25 @@ impl SandboxBackend for DockerBackend {
             .args(args)
             .output()
             .map_err(|e| {
-                SandboxError::CommandExecutionFailed(format!("Failed to execute command: {}", e))
+                SandboxError::CommandExecutionFailed(format!("Failed to execute docker command '{}': {}", command, e))
             })?;
 
         if !output.status.success() {
             let error_msg = String::from_utf8_lossy(&output.stderr);
-            return Err(SandboxError::CommandExecutionFailed(format!(
-                "Command failed: {}",
-                error_msg
-            )));
+            let stdout_msg = String::from_utf8_lossy(&output.stdout);
+            let exit_code = output.status.code().unwrap_or(-1);
+            
+            let mut full_error = format!("Command failed with exit code {}: {}", exit_code, command);
+            if !error_msg.is_empty() {
+                full_error.push_str("\nstderr: ");
+                full_error.push_str(&error_msg);
+            }
+            if !stdout_msg.is_empty() {
+                full_error.push_str("\nstdout: ");
+                full_error.push_str(&stdout_msg);
+            }
+            
+            return Err(SandboxError::CommandExecutionFailed(full_error));
         }
 
         let result = String::from_utf8_lossy(&output.stdout).into_owned();
