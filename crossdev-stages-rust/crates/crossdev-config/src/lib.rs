@@ -44,11 +44,17 @@ pub struct CompilationConfig {
 }
 
 fn default_makeopts() -> String {
-    "-j4 --load-average 4".to_string()
+    let cpu_count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    format!("-j{} --load-average {}", cpu_count, cpu_count)
 }
 
 fn default_emerge_opts() -> String {
-    "--jobs 4 --load-average 4 --quiet-build y".to_string()
+    let cpu_count = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(1);
+    format!("--jobs {} --load-average {} --quiet-build y", cpu_count, cpu_count)
 }
 
 /// Repository configuration
@@ -189,8 +195,8 @@ mod tests {
             gcc_version = "16.0.0_p20251005"
             profile = "default/linux/riscv/23.0/rv64/lp64d"
             chost = "riscv64-unknown-linux-gnu"
-            makeopts = "-j$(nproc) --load-average=$(nproc)"
-            emerge_default_opts = "--jobs=$(nproc) --load-average=$(nproc) --quiet-build y"
+            makeopts = "-j4 --load-average 4"
+            emerge_default_opts = "--jobs 4 --load-average 4 --quiet-build y"
             
             [repositories]
             opensbi_repo = "https://github.com/cyyself/opensbi"

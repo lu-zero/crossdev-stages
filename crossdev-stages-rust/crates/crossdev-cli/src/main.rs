@@ -541,9 +541,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 info!("  EMERGE_DEFAULT_OPTS will enable parallel package installation");
 
                                 // Use default values for basic setup (auto-detect CPU cores)
-                                let makeopts = "-j$(nproc) --load-average=$(nproc)";
+                                let cpu_count = std::thread::available_parallelism()
+                                    .map(|n| n.get())
+                                    .unwrap_or(1);
+                                let makeopts = format!("-j{}", cpu_count);
                                 let emerge_opts =
-                                    "--jobs=$(nproc) --load-average=$(nproc) --quiet-build y";
+                                    format!("--jobs={} --quiet-build y", cpu_count);
 
                                 info!("  Using MAKEOPTS: {}", makeopts);
                                 info!("  Using EMERGE_DEFAULT_OPTS: {}", emerge_opts);
