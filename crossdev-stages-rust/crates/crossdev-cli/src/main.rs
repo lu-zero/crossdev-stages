@@ -1572,19 +1572,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("  Stage: {}", loaded_stage);
                 
                 // Try to inspect container to find stage directories with .origin info
-                if let Ok(backend) = &backend_result {
+                if let Ok(backend) = backend_result.as_ref() {
                     if backend.name() == "docker" {
-                        if let Ok(stage_info) = backend.inspect_stage_directories(&sandbox.name).await {
-                            if !stage_info.is_empty() {
-                                println!("  Stage Directories:");
-                                for (stage_dir, origin_content) in stage_info {
-                                    println!("    - /stages/{}", stage_dir);
-                                    if let Some(origin) = origin_content {
-                                        println!("      Origin: {}", origin);
-                                    } else {
-                                        println!("      Origin: (not found)");
+                        match backend.inspect_stage_directories(&sandbox.name).await {
+                            Ok(stage_info) => {
+                                if !stage_info.is_empty() {
+                                    println!("  Stage Directories:");
+                                    for (stage_dir, origin_content) in stage_info {
+                                        println!("    - /stages/{}", stage_dir);
+                                        if let Some(origin) = origin_content {
+                                            println!("      Origin: {}", origin);
+                                        } else {
+                                            println!("      Origin: (not found)");
+                                        }
                                     }
+                                } else {
+                                    println!("  Stage Directories: (none found)");
                                 }
+                            }
+                            Err(e) => {
+                                println!("  Stage Inspection Error: {}", e);
                             }
                         }
                     }
