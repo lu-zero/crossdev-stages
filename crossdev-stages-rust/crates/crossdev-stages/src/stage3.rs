@@ -78,8 +78,18 @@ impl Stage3Fetcher {
                 gcc_version: Some("16.0.0".to_string()),
                 profile: "default/linux/amd64/17.1".to_string(),
                 chost: format!("{}-unknown-linux-gnu", target_config.arch),
-                makeopts: format!("-j{}", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)),
-                emerge_default_opts: format!("--jobs={}", std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1)),
+                makeopts: format!(
+                    "-j{}",
+                    std::thread::available_parallelism()
+                        .map(|n| n.get())
+                        .unwrap_or(1)
+                ),
+                emerge_default_opts: format!(
+                    "--jobs={}",
+                    std::thread::available_parallelism()
+                        .map(|n| n.get())
+                        .unwrap_or(1)
+                ),
             },
             repositories: RepositoryConfig {
                 opensbi_repo: "https://github.com/riscv/opensbi".to_string(),

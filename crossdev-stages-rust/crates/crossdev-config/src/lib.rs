@@ -54,7 +54,10 @@ fn default_emerge_opts() -> String {
     let cpu_count = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(1);
-    format!("--jobs {} --load-average {} --quiet-build y", cpu_count, cpu_count)
+    format!(
+        "--jobs {} --load-average {} --quiet-build y",
+        cpu_count, cpu_count
+    )
 }
 
 /// Repository configuration

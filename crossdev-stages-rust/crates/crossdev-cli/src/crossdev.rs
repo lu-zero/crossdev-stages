@@ -30,7 +30,13 @@ pub struct CrossdevEnvironment {
 
 impl CrossdevEnvironment {
     /// Create a new CrossdevEnvironment instance
-    pub fn new(target: &str, root: &str, profile: &str, cflags: &str, target_llvm_target: &str) -> Self {
+    pub fn new(
+        target: &str,
+        root: &str,
+        profile: &str,
+        cflags: &str,
+        target_llvm_target: &str,
+    ) -> Self {
         Self {
             target: target.to_string(),
             root: root.to_string(),
@@ -74,7 +80,12 @@ impl CrossdevEnvironment {
             .run_command(
                 "default",
                 "crossdev",
-                &["--ov-output", "/var/db/repos/crossdev", &self.target, "--init-target"],
+                &[
+                    "--ov-output",
+                    "/var/db/repos/crossdev",
+                    &self.target,
+                    "--init-target",
+                ],
                 None,
             )
             .await;
@@ -134,7 +145,7 @@ impl CrossdevEnvironment {
         // - For RISC-V K1: "-O3 -march=rv64gc -pipe" (RV64GC base ISA)
         // - This provides target-specific optimization while maintaining compatibility
         // - plain.conf uses generic "-O3 -pipe" for packages needing safe flags
-        
+
         // Get host architecture and map to LLVM target
         let host_arch = std::env::consts::ARCH;
         let host_llvm_target = arch_to_llvm_target(host_arch);
@@ -241,7 +252,8 @@ impl CrossdevEnvironment {
         // - This allows packages that need safe flags to reference plain.conf
         //   via /etc/portage/package.env entries
         let plain_cflags = "-O3 -pipe";
-        let plain_conf_content = format!("CFLAGS=\"{}\"\nCXXFLAGS=\"{}\"", plain_cflags, plain_cflags);
+        let plain_conf_content =
+            format!("CFLAGS=\"{}\"\nCXXFLAGS=\"{}\"", plain_cflags, plain_cflags);
         let path = format!("{}/etc/portage/env/plain.conf", self.root);
 
         let result = backend

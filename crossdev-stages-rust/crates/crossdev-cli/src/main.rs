@@ -545,8 +545,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     .map(|n| n.get())
                                     .unwrap_or(1);
                                 let makeopts = format!("-j{}", cpu_count);
-                                let emerge_opts =
-                                    format!("--jobs={} --quiet-build y", cpu_count);
+                                let emerge_opts = format!("--jobs={} --quiet-build y", cpu_count);
 
                                 info!("  Using MAKEOPTS: {}", makeopts);
                                 info!("  Using EMERGE_DEFAULT_OPTS: {}", emerge_opts);
@@ -797,9 +796,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     "sh",
                                     &["-c", &format!(
                                         "mkdir -p /etc/portage/package.{{accept_keywords,mask}} && \
-                                         echo \"cross-{}/rust-std **\" > /etc/portage/package.accept_keywords/rust-std && \
-                                         echo \"=cross-{}/gcc-15*\" > /etc/portage/package.mask/cross-{}-fixup",
-                                        config.compilation.chost, config.compilation.chost, config.compilation.chost
+                                         echo \"cross-{}/rust-std **\" > /etc/portage/package.accept_keywords/rust-std",
+                                        config.compilation.chost
                                     )],
                                     None
                                 ).await;
@@ -834,26 +832,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                 // Install crossdev packages
                                 let mut crossdev_args = vec![config.compilation.chost.as_str()];
-                                
+
                                 // Only add --g flag if gcc_version is specified
                                 if let Some(gcc_version) = &config.compilation.gcc_version {
                                     crossdev_args.extend(["--g", gcc_version.as_str()]);
                                 }
-                                
+
                                 crossdev_args.extend([
                                     "--ex-pkg",
                                     "sys-devel/clang-crossdev-wrappers",
                                     "--ex-pkg",
                                     "sys-devel/rust-std",
                                 ]);
-                                
+
                                 let install_result = backend
-                                    .run_command(
-                                        "default",
-                                        "crossdev",
-                                        &crossdev_args,
-                                        None,
-                                    )
+                                    .run_command("default", "crossdev", &crossdev_args, None)
                                     .await;
 
                                 match install_result {
@@ -1412,8 +1405,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let registry_path = stage::SandboxRegistry::get_default_registry_path();
         let mut registry = stage::SandboxRegistry::load_from_file(&registry_path)?;
 
-        let sandbox_state = if let Some(existing) = registry.get_sandbox(&sandbox_name).cloned()
-        {
+        let sandbox_state = if let Some(existing) = registry.get_sandbox(&sandbox_name).cloned() {
             let mut state = existing;
             state.state = stage::SandboxStatus::StageLoaded;
             state.loaded_stage = Some(stage_name.clone());
@@ -1593,11 +1585,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         // Try to get a sandbox backend for container inspection
         let backend_result = auto_detect_backend();
-        
+
         for sandbox in sandboxes {
             println!("Name: {}", sandbox.name);
             println!("  Status: {:?}", sandbox.state);
-            
+
             // Show loaded stage information
             if sandbox.loaded_stage.is_some() {
                 // Show stage directories with .origin info (more detailed than just the stage name)
@@ -1628,7 +1620,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 println!("  Stage: None");
             }
-            
+
             println!("  Created: {}", sandbox.created_at);
             println!("  Updated: {}", sandbox.last_updated);
             println!();

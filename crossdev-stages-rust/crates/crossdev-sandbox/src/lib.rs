@@ -279,15 +279,19 @@ impl SandboxBackend for DockerBackend {
             .args(args)
             .output()
             .map_err(|e| {
-                SandboxError::CommandExecutionFailed(format!("Failed to execute docker command '{}': {}", command, e))
+                SandboxError::CommandExecutionFailed(format!(
+                    "Failed to execute docker command '{}': {}",
+                    command, e
+                ))
             })?;
 
         if !output.status.success() {
             let error_msg = String::from_utf8_lossy(&output.stderr);
             let stdout_msg = String::from_utf8_lossy(&output.stdout);
             let exit_code = output.status.code().unwrap_or(-1);
-            
-            let mut full_error = format!("Command failed with exit code {}: {}", exit_code, command);
+
+            let mut full_error =
+                format!("Command failed with exit code {}: {}", exit_code, command);
             if !error_msg.is_empty() {
                 full_error.push_str("\nstderr: ");
                 full_error.push_str(&error_msg);
@@ -296,7 +300,7 @@ impl SandboxBackend for DockerBackend {
                 full_error.push_str("\nstdout: ");
                 full_error.push_str(&stdout_msg);
             }
-            
+
             return Err(SandboxError::CommandExecutionFailed(full_error));
         }
 
@@ -599,7 +603,10 @@ impl SandboxBackend for DockerBackend {
                 container_id,
                 "sh",
                 "-c",
-                &format!("if [ -d {} ]; then ls -1 {} 2>/dev/null; else echo 'Path not found'; fi", path, path),
+                &format!(
+                    "if [ -d {} ]; then ls -1 {} 2>/dev/null; else echo 'Path not found'; fi",
+                    path, path
+                ),
             ])
             .output()
             .map_err(|e| {
@@ -649,8 +656,10 @@ impl SandboxBackend for DockerBackend {
         DockerBackend::ensure_container_ready(&docker, container_id).await?;
 
         // First, list all directories in /stages
-        let stage_dirs = self.inspect_container_filesystem(container_id, "/stages").await?;
-        
+        let stage_dirs = self
+            .inspect_container_filesystem(container_id, "/stages")
+            .await?;
+
         if stage_dirs.is_empty() {
             info!("No stage directories found in container '{}'", container_id);
             return Ok(Vec::new());
@@ -658,7 +667,7 @@ impl SandboxBackend for DockerBackend {
 
         // For each stage directory, try to read the .origin file
         let mut stage_info = Vec::new();
-        
+
         for stage_dir in stage_dirs {
             // Read the .origin file content
             let origin_content = std::process::Command::new("docker")
@@ -1070,7 +1079,7 @@ mod tests {
     async fn test_stage_operations_container_lifecycle() {
         // Test that stage operations properly handle container creation when containers don't exist
         use tempfile::tempdir;
-        
+
         let backend_result = auto_detect_backend();
         let backend = match backend_result {
             Ok(b) => b,
@@ -1080,35 +1089,38 @@ mod tests {
                 return;
             }
         };
-        
+
         // Only test with Docker backend
         if backend.name() != "docker" {
             println!("Skipping container lifecycle test - not using Docker backend");
             return;
         }
-        
+
         let test_container = "test-container-lifecycle-check";
         let temp_dir = tempdir().expect("Failed to create temp directory");
         let test_stage_path = temp_dir.path().join("test-stage.tar.xz");
-        
+
         // Create a dummy stage file for testing
-        std::fs::write(&test_stage_path, "dummy stage content").expect("Failed to create test stage");
-        
+        std::fs::write(&test_stage_path, "dummy stage content")
+            .expect("Failed to create test stage");
+
         // Clean up any existing container first
         let _ = std::process::Command::new("docker")
             .args(["rm", "-f", test_container])
             .output();
-        
+
         // Test that load_stage3 handles container creation properly
         // The important thing is that it doesn't fail with "container doesn't exist"
         // but instead attempts to create it
-        let result = backend.load_stage3(test_container, test_stage_path.as_path()).await;
-        
+        let result = backend
+            .load_stage3(test_container, test_stage_path.as_path())
+            .await;
+
         // Clean up
         let _ = std::process::Command::new("docker")
             .args(["rm", "-f", test_container])
             .output();
-        
+
         // The test passes as long as the operation didn't panic and attempted container creation
         // (even if it failed due to missing Docker image or other environment issues)
         match result {
