@@ -8,6 +8,7 @@ use crossdev_sandbox::auto_detect_backend;
 use crossdev_stages::{CacheConfig, CacheStrategy, CrossdevCache, Stage3Fetcher};
 use crossdev_utils::{arch, arch_to_llvm_target};
 use glob::Pattern;
+use jiff::Timestamp;
 use log::{info, warn, LevelFilter};
 use std::fs;
 use std::io::{self, Write};
@@ -93,6 +94,8 @@ enum StageCommands {
     Wipe(StageWipeArgs),
     /// Update a stage3 with latest packages
     Update(StageUpdateArgs),
+    /// Install packages to a stage
+    Install(StageInstallArgs),
     /// List sandbox states and their status
     ListSandboxes,
 }
@@ -238,6 +241,25 @@ struct StageUpdateArgs {
     ldconfig: bool,
 
     /// Force update even if stage appears corrupted
+    #[arg(short, long)]
+    force: bool,
+}
+
+#[derive(clap::Args, Debug)]
+struct StageInstallArgs {
+    /// Name of the sandbox containing the stage
+    #[arg(short = 'S', long, required = true)]
+    sandbox: String,
+
+    /// Stage directory path (relative to sandbox or absolute path)
+    #[arg(short, long, required = true)]
+    stage_dir: String,
+
+    /// Packages to install (space-separated list)
+    #[arg(required = true)]
+    packages: Vec<String>,
+
+    /// Force installation even if stage appears corrupted
     #[arg(short, long)]
     force: bool,
 }
@@ -450,6 +472,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 StageCommands::Update(args) => {
                     // Handle stage update
                     handle_stage_update(args).await?;
+                }
+                StageCommands::Install(args) => {
+                    // Handle stage install
+                    handle_stage_install(args).await?;
                 }
                 StageCommands::ListSandboxes => {
                     // Handle sandbox listing
@@ -1535,6 +1561,65 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         info!("Stage update completed successfully");
         println!("✓ Stage updated in sandbox: {}", sandbox_name);
+
+        Ok(())
+    }
+
+    async fn handle_stage_install(
+        args: StageInstallArgs,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let sandbox_name = args.sandbox;
+        let stage_dir_path = PathBuf::from(args.stage_dir);
+        let packages: Vec<&str> = args.packages.iter().map(|s| s.as_str()).collect();
+
+        info!("Installing packages to stage in sandbox: {}", sandbox_name);
+        info!("Stage directory: {}", stage_dir_path.display());
+        info!("Packages: {}", packages.join(", "));
+
+        // Load platform configuration
+        let platform_config = stage::get_default_platform_config()?;
+        let cache_dir = get_default_cache_dir();
+        let mirror_url = "https://distfiles.gentoo.org";
+
+        // Create stage manager
+        let stage_manager = stage::StageManager::new(platform_config, cache_dir, mirror_url);
+
+        // Load sandbox registry
+        let registry_path = stage::SandboxRegistry::get_default_registry_path();
+        let mut registry = stage::SandboxRegistry::load_from_file(&registry_path)?;
+
+        // Get or create sandbox state
+        let sandbox_state = if let Some(existing) = registry.get_sandbox(&sandbox_name).cloned() {
+            existing
+        } else {
+            // Create new sandbox state if it doesn't exist
+            stage::SandboxRegistry::create_sandbox_state(&sandbox_name, stage::SandboxStatus::New)
+        };
+
+        // Update sandbox state - set to Updating
+        let mut sandbox_state = sandbox_state;
+        sandbox_state.state = stage::SandboxStatus::Updating;
+        sandbox_state.last_updated = Timestamp::now().strftime("%Y%m%dT%H").to_string();
+
+        // Save the updating state
+        registry.upsert_sandbox(sandbox_state.clone())?;
+        registry.save_to_file(&registry_path)?;
+
+        // Install packages to the stage
+        stage_manager
+            .install_packages_to_stage(&stage_dir_path, &packages)
+            .await?;
+
+        // Update sandbox state - set to StageLoaded
+        sandbox_state.state = stage::SandboxStatus::StageLoaded;
+        sandbox_state.loaded_stage = Some(stage_dir_path.to_string_lossy().into_owned());
+        sandbox_state.last_updated = Timestamp::now().strftime("%Y%m%dT%H").to_string();
+
+        registry.upsert_sandbox(sandbox_state)?;
+        registry.save_to_file(&registry_path)?;
+
+        info!("Package installation completed successfully");
+        println!("✓ Packages installed to stage in sandbox: {}", sandbox_name);
 
         Ok(())
     }

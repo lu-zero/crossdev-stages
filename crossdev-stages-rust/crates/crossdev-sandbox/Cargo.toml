@@ -18,6 +18,9 @@ log = "0.4"
 # Date/time handling
 jiff = "0.2"
 
+# Shell escaping
+shell-escape = "0.1"
+
 
 
 

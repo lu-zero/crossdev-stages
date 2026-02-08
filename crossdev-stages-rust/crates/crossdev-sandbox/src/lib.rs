@@ -52,6 +52,40 @@ pub trait SandboxBackend: Send + Sync {
         args: &[&str],
     ) -> SandboxResult<String>;
 
+    /// Run a command in the sandbox with environment variables
+    async fn run_command_with_env(
+        &self,
+        container_id: &str,
+        command: &str,
+        args: &[&str],
+        env_vars: &[(&str, &str)],
+    ) -> SandboxResult<String> {
+        // Default implementation: construct shell command with env vars
+        let env_prefix = env_vars
+            .iter()
+            .map(|(key, val)| format!("{}={}", key, val))
+            .collect::<Vec<String>>()
+            .join(" ");
+
+        let full_command = if env_prefix.is_empty() {
+            format!("{}", command)
+        } else {
+            format!("{} {}", env_prefix, command)
+        };
+
+        // Convert args to strings and join with proper escaping
+        let args_str = args
+            .iter()
+            .map(|s| shell_escape::escape(std::borrow::Cow::from(*s)))
+            .collect::<Vec<std::borrow::Cow<str>>>()
+            .join(" ");
+        let full_command = format!("{} {}", full_command, args_str);
+
+        // Use run_command with shell
+        self.run_command(container_id, "sh", &["-c", &full_command])
+            .await
+    }
+
     /// Create an interactive exec session in a container
     async fn exec_interactive(&self, container_id: &str, command: &[&str]) -> SandboxResult<()>;
 
@@ -287,6 +321,82 @@ impl SandboxBackend for DockerBackend {
             };
 
             full_error.push_str(&format!("\nFull command: {}", full_command_str));
+
+            if !error_msg.is_empty() {
+                full_error.push_str("\nstderr: ");
+                full_error.push_str(&error_msg);
+            }
+            if !stdout_msg.is_empty() {
+                full_error.push_str("\nstdout: ");
+                full_error.push_str(&stdout_msg);
+            }
+
+            return Err(SandboxError::CommandExecutionFailed(full_error));
+        }
+
+        let result = String::from_utf8_lossy(&output.stdout).into_owned();
+        Ok(result)
+    }
+
+    /// Run a command in the sandbox with environment variables (Docker-specific implementation)
+    async fn run_command_with_env(
+        &self,
+        container_id: &str,
+        command: &str,
+        args: &[&str],
+        env_vars: &[(&str, &str)],
+    ) -> SandboxResult<String> {
+        use bollard::Docker;
+
+        // Connect to Docker daemon
+        let docker = Docker::connect_with_local_defaults()
+            .map_err(|e| SandboxError::ContainerCreationFailed(e.to_string()))?;
+
+        // Ensure the container exists and is running
+        DockerBackend::ensure_container_ready(&docker, container_id).await?;
+
+        // Construct environment variables as prefix for shell command
+        let env_prefix = env_vars
+            .iter()
+            .map(|(key, val)| format!("{}={}", key, val))
+            .collect::<Vec<String>>()
+            .join(" ");
+
+        // Build the full shell command
+        let mut full_command = String::new();
+        if !env_prefix.is_empty() {
+            full_command.push_str(&env_prefix);
+            full_command.push_str(" ");
+        }
+        full_command.push_str(command);
+
+        // Add arguments
+        for arg in args {
+            full_command.push_str(" ");
+            full_command.push_str(arg);
+        }
+
+        // Use docker exec with shell
+        let output = std::process::Command::new("docker")
+            .args(["exec", container_id, "sh", "-c", &full_command])
+            .output()
+            .map_err(|e| {
+                SandboxError::CommandExecutionFailed(format!(
+                    "Failed to execute docker command with env '{}': {}",
+                    command, e
+                ))
+            })?;
+
+        if !output.status.success() {
+            let error_msg = String::from_utf8_lossy(&output.stderr);
+            let stdout_msg = String::from_utf8_lossy(&output.stdout);
+            let exit_code = output.status.code().unwrap_or(-1);
+
+            let mut full_error =
+                format!("Command failed with exit code {}: {}", exit_code, command);
+
+            // Include the full command for better debugging
+            full_error.push_str(&format!("\nFull command: {}", full_command));
 
             if !error_msg.is_empty() {
                 full_error.push_str("\nstderr: ");

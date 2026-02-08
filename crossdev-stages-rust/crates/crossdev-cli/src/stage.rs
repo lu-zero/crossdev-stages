@@ -98,6 +98,59 @@ impl StageManager {
         Ok(())
     }
 
+    /// Install packages to a stage directory
+    pub async fn install_packages_to_stage(
+        &self,
+        stage_dir: impl AsRef<Path>,
+        packages: &[&str],
+    ) -> Result<(), StageError> {
+        let stage_dir = stage_dir.as_ref();
+        info!("Installing packages to stage at: {}", stage_dir.display());
+
+        // Validate that stage directory exists
+        if !stage_dir.exists() {
+            return Err(StageError::ConfigError(format!(
+                "Stage directory does not exist: {}",
+                stage_dir.display()
+            )));
+        }
+
+        // Validate that we have packages to install
+        if packages.is_empty() {
+            return Err(StageError::ConfigError(
+                "No packages specified for installation".to_string(),
+            ));
+        }
+
+        let backend = auto_detect_backend()?;
+        let target_chost = self.config.compilation.chost.clone();
+
+        // Convert stage_dir to string for environment variable
+        let stage_dir_str = stage_dir.to_str().ok_or_else(|| {
+            StageError::ConfigError(format!(
+                "Invalid stage directory path: {}",
+                stage_dir.display()
+            ))
+        })?;
+
+        // Build emerge command arguments
+        let mut emerge_args = vec!["-b", "-k"];
+        emerge_args.extend_from_slice(packages);
+
+        // Run emerge command with ROOT environment variable set to stage directory
+        backend
+            .run_command_with_env(
+                "default",
+                &format!("{}-emerge", target_chost),
+                &emerge_args,
+                &[("ROOT", stage_dir_str)],
+            )
+            .await?;
+
+        info!("Package installation completed successfully");
+        Ok(())
+    }
+
     /// Update ldconfig cache for a stage
     pub async fn update_ldconfig(&self, stage_dir: impl AsRef<Path>) -> Result<(), StageError> {
         let stage_dir = stage_dir.as_ref();
