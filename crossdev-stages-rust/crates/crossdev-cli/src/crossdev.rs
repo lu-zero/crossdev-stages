@@ -70,7 +70,7 @@ impl CrossdevEnvironment {
             .run_command(
                 "default",
                 "crossdev",
-                &[&self.target, "--init-target"],
+                &["--ov-output", "/var/db/repos/crossdev", &self.target, "--init-target"],
                 None,
             )
             .await;
@@ -122,31 +122,8 @@ impl CrossdevEnvironment {
     ) -> Result<(), CrossdevError> {
         info!("Configuring make.conf");
 
-        // Set CFLAGS (using default optimization for now)
-        let cflags = "-O3 -pipe";
-
-        let result = backend
-            .run_command(
-                "default",
-                "sh",
-                &[
-                    "-c",
-                    &format!(
-                        "echo 'CFLAGS=\"{}\"' > {}/etc/portage/make.conf",
-                        cflags, self.root
-                    ),
-                ],
-                None,
-            )
-            .await;
-
-        if result.is_err() {
-            return Err(CrossdevError::ConfigFileError(
-                "Failed to set CFLAGS".to_string(),
-            ));
-        }
-
-        // Add LLVM_TARGETS including both host and target architectures
+        // Set CFLAGS and CXXFLAGS, then add LLVM_TARGETS to existing make.conf
+        // Preserve crossdev-generated content and set CXXFLAGS to match CFLAGS
         let target_llvm_target = arch_to_llvm_target(&self.target);
 
         // Get host architecture and map to LLVM target
@@ -160,7 +137,8 @@ impl CrossdevEnvironment {
             llvm_targets.push_str(&host_llvm_target);
         }
 
-        info!("Setting LLVM_TARGETS to: {}", llvm_targets);
+        info!("Setting CFLAGS, CXXFLAGS and LLVM_TARGETS");
+        info!("  LLVM_TARGETS: {}", llvm_targets);
         info!("  Host LLVM target: {}", host_llvm_target);
         info!("  Target LLVM target: {}", target_llvm_target);
 
@@ -171,8 +149,8 @@ impl CrossdevEnvironment {
                 &[
                     "-c",
                     &format!(
-                        "echo 'LLVM_TARGETS=\"{}\"' >> {}/etc/portage/make.conf",
-                        llvm_targets, self.root
+                        "sed -i '/^CFLAGS=/d' {}/etc/portage/make.conf && echo 'CFLAGS=\"-O3 -pipe\"' >> {}/etc/portage/make.conf && sed -i '/^CXXFLAGS=/d' {}/etc/portage/make.conf && echo 'CXXFLAGS=\"${{CFLAGS}}\"' >> {}/etc/portage/make.conf && echo 'LLVM_TARGETS=\"{}\"' >> {}/etc/portage/make.conf",
+                        self.root, self.root, self.root, self.root, self.root, llvm_targets
                     ),
                 ],
                 None,
@@ -181,7 +159,7 @@ impl CrossdevEnvironment {
 
         match result {
             Ok(_) => {
-                info!("✓ make.conf configured");
+                info!("✓ make.conf configured (preserved existing crossdev content, set CXXFLAGS=${{CFLAGS}})");
                 Ok(())
             }
             Err(e) => Err(CrossdevError::ConfigFileError(e.to_string())),
@@ -210,6 +188,9 @@ impl CrossdevEnvironment {
 
         // Create package.use configurations
         self.create_package_use(backend).await?;
+
+        // Create bin directory
+        self.create_bin_directory(backend).await?;
 
         info!("✓ Configuration files created");
         Ok(())
@@ -295,6 +276,29 @@ impl CrossdevEnvironment {
         }
     }
 
+    /// Create bin directory
+    async fn create_bin_directory(
+        &self,
+        backend: &dyn crossdev_sandbox::SandboxBackend,
+    ) -> Result<(), CrossdevError> {
+        let path = format!("{}/bin", self.root);
+
+        let result = backend
+            .run_command("default", "mkdir", &["-p", &path], None)
+            .await;
+
+        match result {
+            Ok(_) => {
+                info!("✓ bin directory created");
+                Ok(())
+            }
+            Err(e) => Err(CrossdevError::DirectoryCreationFailed(format!(
+                "Failed to create bin directory: {}",
+                e
+            ))),
+        }
+    }
+
     /// Create package.use configurations
     async fn create_package_use(
         &self,
@@ -338,6 +342,25 @@ impl CrossdevEnvironment {
         if result.is_err() {
             return Err(CrossdevError::ConfigFileError(
                 "Failed to create clang package.use".to_string(),
+            ));
+        }
+
+        // Git configuration
+        let git_content = "dev-vcs/git -iconv";
+        let git_path = format!("{}/etc/portage/package.use/git", self.root);
+
+        let result = backend
+            .run_command(
+                "default",
+                "sh",
+                &["-c", &format!("echo '{}' > {}", git_content, git_path)],
+                None,
+            )
+            .await;
+
+        if result.is_err() {
+            return Err(CrossdevError::ConfigFileError(
+                "Failed to create git package.use".to_string(),
             ));
         }
 
