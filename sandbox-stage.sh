@@ -27,6 +27,100 @@ get_latest_sandbox() {
     return 1
 }
 
+configure_portage() {
+    local sandbox_dir="$1"
+    local arch="$2"
+
+    # Detect CPU count
+    local cpu_count=$(nproc 2>/dev/null || echo 4)
+    local p="$cpu_count"
+    local q=$((cpu_count * 2))
+
+    # Create portage directories
+    mkdir -p "$sandbox_dir/etc/portage"
+    mkdir -p "$sandbox_dir/etc/portage/package.accept_keywords"
+
+    # Configure make.conf - append to existing or create new
+    local make_conf="$sandbox_dir/etc/portage/make.conf"
+
+    # Add or update Portage settings
+    if [[ ! -f "$make_conf" ]]; then
+        cat > "$make_conf" << EOF
+MAKEOPTS="-j${p} --load-average ${q}"
+EMERGE_DEFAULT_OPTS="--jobs=${p} --load-average ${q}"
+FEATURES="parallel-install -merge-wait"
+ACCEPT_KEYWORDS="~${arch}"
+EOF
+    else
+        # Append settings if not already present
+        grep -q "^MAKEOPTS=" "$make_conf" || echo "MAKEOPTS=\"-j${p} --load-average ${q}\"" >> "$make_conf"
+        grep -q "^EMERGE_DEFAULT_OPTS=" "$make_conf" || echo "EMERGE_DEFAULT_OPTS=\"--jobs=${p} --load-average ${q}\"" >> "$make_conf"
+        grep -q "^FEATURES=" "$make_conf" || echo "FEATURES=\"parallel-install -merge-wait\"" >> "$make_conf"
+        grep -q "^ACCEPT_KEYWORDS=" "$make_conf" || echo "ACCEPT_KEYWORDS=\"~${arch}\"" >> "$make_conf"
+    fi
+
+    # Add rust-std workaround
+    echo "cross-${arch}-unknown-linux-gnu/rust-std **" > "$sandbox_dir/etc/portage/package.accept_keywords/rust-std"
+
+    echo "Portage configured for ${arch} in $sandbox_dir"
+}
+
+install_dependencies() {
+    local sandbox_dir="$1"
+
+    echo "Installing host system dependencies in sandbox..."
+
+    # Host system dependencies from README.md (with categories)
+    local packages=(
+        "sys-devel/crossdev"          # Gentoo Cross-toolchain generator
+        "sys-apps/merge-usr"          # Script to migrate from split-usr to merged-usr
+        "dev-vcs/git"                # Distributed version control system
+        "sys-boot/u-boot-tools"      # Utilities for working with Das U-Boot
+        "sys-apps/dtc"               # Device Tree Compiler
+        "sys-kernel/dracut"          # Generic initramfs generation tool
+        "sys-apps/busybox"           # Utilities for rescue and embedded systems
+        "sys-boot/genimage"          # Tool to generate multiple filesystem and flash images
+        "app-arch/xz-utils"          # Utils for managing LZMA compressed files
+        "app-eselect/eselect-repository" # Eselect module for Gentoo repositories
+    )
+
+    # Use hakoniwa to emerge packages in the sandbox
+    for pkg in "${packages[@]}"; do
+        echo "Emerging $pkg..."
+        hakoniwa run \
+          --rootdir "$sandbox_dir":rw \
+          --devfs /dev \
+          -b /etc/resolv.conf \
+          --unshare-all \
+          --allow-new-privs \
+          --userns=auto \
+          --network=host \
+          --tmpfs /tmp \
+          -e TERM="$TERM" \
+          -e COLORTERM="$COLORTERM" \
+          -e NO_COLOR="$NO_COLOR" \
+          -e HOME=/root \
+          -- emerge -b -k "$pkg" || echo "Failed to emerge $pkg"
+    done
+
+    echo "Host dependencies installation complete"
+}
+
+prepare_sandbox() {
+    local sandbox_dir="$1"
+    local arch="$2"
+
+    echo "Preparing sandbox $sandbox_dir for architecture $arch..."
+
+    # Configure Portage settings
+    configure_portage "$sandbox_dir" "$arch"
+
+    # Install host dependencies
+    install_dependencies "$sandbox_dir"
+
+    echo "Sandbox preparation complete for $arch"
+}
+
 gentoo_arch() {
     local os_arch=$1
     case $os_arch in
@@ -125,8 +219,9 @@ run() {
 }
 
 usage() {
-    echo "$0 <setup|enter|run> [options]"
+    echo "$0 <setup|prepare|enter|run> [options]"
     echo "$0 setup [arch] [name]   - Setup sandbox for arch (default: host arch, name: arch)"
+    echo "$0 prepare [sandbox]     - Prepare sandbox with Portage config and host dependencies"
     echo "$0 enter [sandbox]      - Enter interactive shell in sandbox (default: latest)"
     echo "$0 run <sandbox> <cmd>  - Run command in specified sandbox"
     echo ""
@@ -158,6 +253,31 @@ main() {
             local stage_file=$(fetch_stage "$arch") || exit 1
             local sandbox_dir=$(unpack_stage "$stage_file" "$sandbox_name") || exit 1
             echo "Sandbox ready: $sandbox_dir"
+            ;;
+        prepare)
+            shift
+            local sandbox_dir=""
+            if [[ -n "$1" ]]; then
+                sandbox_dir="$SANDBOXES_DIR/$1"
+                shift
+            else
+                sandbox_dir=$(get_latest_sandbox)
+            fi
+
+            if [[ ! -d "$sandbox_dir" ]]; then
+                echo "Error: No sandbox found. Please run setup first." >&2
+                exit 1
+            fi
+
+            # Detect architecture from sandbox name or use default
+            local arch=""
+            if [[ "$sandbox_dir" == *"$SANDBOXES_DIR/"* ]]; then
+                arch=$(basename "$sandbox_dir")
+            else
+                arch=$(uname -m)
+            fi
+
+            prepare_sandbox "$sandbox_dir" "$arch"
             ;;
         enter)
             local sandbox_dir=""
