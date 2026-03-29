@@ -9,6 +9,7 @@ CACHE_DIR="${HOME}/.cache/crossdev-stages"
 STAGES_DIR="${CACHE_DIR}/stages"
 SANDBOXES_DIR="${CACHE_DIR}/sandboxes"
 TARGETS_DIR="${CACHE_DIR}/targets"
+LDCONFIG="/usr/local/bin/ldconfig"
 
 ensure_cache_dirs() {
     mkdir -p "$STAGES_DIR"
@@ -221,6 +222,7 @@ install_dependencies() {
 
     echo "Installing Rust ldconfig..."
     run "$sandbox_dir" cargo install --root /usr/local ldconfig
+    # Installed to $LDCONFIG inside the sandbox
 
     echo "Host dependencies installation complete"
 }
@@ -443,7 +445,7 @@ update_ldconfig_sandbox() {
     local stage_dir="$2"
 
     echo "Updating ld.so.cache in target..."
-    run_with_stage "$sandbox_dir" "$stage_dir" "ldconfig -v -r /target"
+    run_with_stage "$sandbox_dir" "$stage_dir" "$LDCONFIG -v -r /target"
 }
 
 update_stage3() {
