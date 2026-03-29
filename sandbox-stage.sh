@@ -73,9 +73,6 @@ EOF
         set_make_conf_var "$make_conf" "ACCEPT_KEYWORDS" "~${ARCH}"
     fi
 
-    # Add rust-std workaround
-    echo "cross-${ARCH}-unknown-linux-gnu/rust-std **" > "$sandbox_dir/etc/portage/package.accept_keywords/rust-std"
-
     # Set LLVM_TARGETS for cross-compilation
 #    local llvm_target=$(llvm_arch "$arch")
 #    if [[ -n "$llvm_target" ]]; then
@@ -92,7 +89,7 @@ setup_crossdev_sandbox() {
 
     # Map target architecture to Gentoo variables
     gentoo_arch "$target_arch"
-    local chost="${ARCH}-unknown-linux-gnu"
+    local chost="${target_arch}-unknown-linux-gnu"
 
     # Fix profile path - need to handle riscv specially
     local profile=""
@@ -112,11 +109,17 @@ setup_crossdev_sandbox() {
 
     echo "Setting up crossdev environment for ${chost} in sandbox..."
 
+    # Create the crossdev overlay
+    run "$sandbox_dir" eselect repository create crossdev
+
     # Initialize crossdev for target architecture
     run "$sandbox_dir" crossdev "${chost}" --init-target
 
+    # Add rust-std workaround
+    run "$sandbox_dir" "echo \"cross-${target_arch}-unknown-linux-gnu/rust-std **\" > /etc/portage/package.accept_keywords/rust-std"
+
     # Set up portage profile
-    run "$sandbox_dir" sh -c "PORTAGE_CONFIGROOT=${crossdev_root} eselect profile set ${profile}"
+    run "$sandbox_dir" "export PORTAGE_CONFIGROOT=${crossdev_root}; eselect profile set ${profile}"
 
     # Configure CFLAGS in make.conf
     run "$sandbox_dir" sed -i -e "s:CFLAGS=.*:CFLAGS=\"${cflags}\":" "${crossdev_make_conf}"
@@ -151,8 +154,6 @@ EOF"
 
     # Apply workarounds
     run "$sandbox_dir" mkdir -p "/etc/portage/package.{accept_keywords,mask}"
-    run "$sandbox_dir" sh -c "echo \"${chost}/rust-std **\" > /etc/portage/package.accept_keywords/rust-std"
-    run "$sandbox_dir" sh -c "echo \"=${chost}/gcc-15*\" > /etc/portage/package.mask/${chost}-fixup"
 
     # Git iconv workaround
     run "$sandbox_dir" sh -c "echo \"dev-vcs/git -iconv\" > ${crossdev_root}/etc/portage/package.use/git"
@@ -375,7 +376,6 @@ main() {
             echo "Sandbox ready: $sandbox_dir"
             ;;
         prepare)
-            shift
             local sandbox_dir=""
             if [[ -n "$1" && "$1" != "latest" ]]; then
                 sandbox_dir="$SANDBOXES_DIR/$1"
@@ -404,11 +404,9 @@ main() {
             prepare_sandbox "$sandbox_dir" "$arch"
             ;;
         setup-crossdev)
-            shift
             local sandbox_dir=""
             local target_arch=""
-
-            if [[ -n "$1" ]]; then
+            if [[ -n "$1" && "$1" != "latest" ]]; then
                 sandbox_dir="$SANDBOXES_DIR/$1"
                 shift
             else
