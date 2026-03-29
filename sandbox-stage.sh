@@ -85,6 +85,79 @@ EOF
     echo "Portage configured for ${ARCH} in $sandbox_dir"
 }
 
+# Setup cross-compilation environment within sandbox
+setup_crossdev_sandbox() {
+    local sandbox_dir="$1"
+    local target_arch="$2"
+
+    # Map target architecture to Gentoo variables
+    gentoo_arch "$target_arch"
+    local chost="${ARCH}-unknown-linux-gnu"
+    local profile="default/linux/${ARCH}/23.0/${FLAVOR}"
+    local crossdev_root="/usr/${chost}"
+    local crossdev_make_conf="${crossdev_root}/etc/portage/make.conf"
+    local gcc_ver="16.0.1_p20260315"
+    local cflags="-O3 -march=rv64gc -pipe"
+
+    echo "Setting up crossdev environment for ${chost} in sandbox..."
+
+    # Initialize crossdev for target architecture
+    run "$sandbox_dir" crossdev "${chost}" --init-target
+
+    # Set up portage profile
+    run "$sandbox_dir" sh -c "PORTAGE_CONFIGROOT=${crossdev_root} eselect profile set ${profile}"
+
+    # Configure CFLAGS in make.conf
+    run "$sandbox_dir" sed -i -e "s:CFLAGS=.*:CFLAGS=\"${cflags}\":" "${crossdev_make_conf}"
+
+    # Set LLVM_TARGETS using our llvm_arch function
+    local llvm_target=$(llvm_arch "$target_arch")
+    if [[ -n "$llvm_target" ]]; then
+        run "$sandbox_dir" sh -c "echo \"LLVM_TARGETS=\\\"${llvm_target}\\\"\" >> ${crossdev_make_conf}"
+    fi
+
+    # Create portage environment directories
+    run "$sandbox_dir" mkdir -p "${crossdev_root}/etc/portage/env"
+    run "$sandbox_dir" sh -c "echo 'CFLAGS=\"-O3 -pipe\"' >> ${crossdev_root}/etc/portage/env/plain.conf"
+    run "$sandbox_dir" sh -c "echo 'CXXFLAGS=\"-O3 -pipe\"' >> ${crossdev_root}/etc/portage/env/plain.conf"
+
+    # Create package.env directory
+    run "$sandbox_dir" mkdir -p "${crossdev_root}/etc/portage/package.env"
+    run "$sandbox_dir" sh -c "echo \"dev-lang/rust plain.conf\" > ${crossdev_root}/etc/portage/package.env/rust"
+
+    # Create package.use and package.accept_keywords directories
+    run "$sandbox_dir" mkdir -p "${crossdev_root}/etc/portage/package.{use,accept_keywords}"
+
+    # Configure busybox, clang, and rust package settings
+    run "$sandbox_dir" sh -c "cat > ${crossdev_root}/etc/portage/package.use/busybox << 'EOF'
+>=virtual/libcrypt-2-r1 static-libs
+>=sys-libs/libxcrypt-4.4.36-r3 static-libs
+>=sys-apps/busybox-1.36.1-r3 -pam static
+EOF"
+
+    run "$sandbox_dir" sh -c "echo \"llvm-core/clang -extra\" > ${crossdev_root}/etc/portage/package.use/clang"
+    run "$sandbox_dir" sh -c "echo \"dev-lang/rust rustfmt -system-llvm\" > ${crossdev_root}/etc/portage/package.use/rust"
+
+    # Apply workarounds
+    run "$sandbox_dir" mkdir -p "/etc/portage/package.{accept_keywords,mask}"
+    run "$sandbox_dir" sh -c "echo \"${chost}/rust-std **\" > /etc/portage/package.accept_keywords/rust-std"
+    run "$sandbox_dir" sh -c "echo \"=${chost}/gcc-15*\" > /etc/portage/package.mask/${chost}-fixup"
+
+    # Git iconv workaround
+    run "$sandbox_dir" sh -c "echo \"dev-vcs/git -iconv\" > ${crossdev_root}/etc/portage/package.use/git"
+
+    # Run merge-usr
+    run "$sandbox_dir" merge-usr --root "${crossdev_root}"
+
+    # Install crossdev with specific GCC version
+    run "$sandbox_dir" crossdev "${chost}" --g "${gcc_ver}" --ex-pkg sys-devel/clang-crossdev-wrappers --ex-pkg sys-devel/rust-std
+
+    # Add gcc-16 prereleases
+    run "$sandbox_dir" sh -c "echo \"<sys-devel/gcc-16.0.9999:16 **\" > ${crossdev_root}/etc/portage/package.accept_keywords/gcc"
+
+    echo "Crossdev environment setup complete for ${chost}"
+}
+
 install_dependencies() {
     local sandbox_dir="$1"
 
@@ -254,9 +327,10 @@ run() {
 }
 
 usage() {
-    echo "$0 <setup|prepare|enter|run> [options]"
+    echo "$0 <setup|prepare|setup-crossdev|enter|run> [options]"
     echo "$0 setup [arch] [name]   - Setup sandbox for arch (default: host arch, name: arch)"
     echo "$0 prepare [sandbox]     - Prepare sandbox with Portage config and host dependencies"
+    echo "$0 setup-crossdev [sandbox] [target-arch] - Setup cross-compilation environment in sandbox"
     echo "$0 enter [sandbox]      - Enter interactive shell in sandbox (default: latest)"
     echo "$0 run <sandbox> <cmd>  - Run command in specified sandbox"
     echo ""
@@ -313,6 +387,37 @@ main() {
             fi
 
             prepare_sandbox "$sandbox_dir" "$arch"
+            ;;
+        setup-crossdev)
+            shift
+            local sandbox_dir=""
+            local target_arch=""
+
+            if [[ -n "$1" ]]; then
+                sandbox_dir="$SANDBOXES_DIR/$1"
+                shift
+            else
+                sandbox_dir=$(get_latest_sandbox)
+            fi
+
+            if [[ ! -d "$sandbox_dir" ]]; then
+                echo "Error: No sandbox found. Please run setup first." >&2
+                exit 1
+            fi
+
+            if [[ -n "$1" ]]; then
+                target_arch="$1"
+                shift
+            else
+                # Default to sandbox architecture
+                if [[ "$sandbox_dir" == *"$SANDBOXES_DIR/"* ]]; then
+                    target_arch=$(basename "$sandbox_dir")
+                else
+                    target_arch=$(uname -m)
+                fi
+            fi
+
+            setup_crossdev_sandbox "$sandbox_dir" "$target_arch"
             ;;
         enter)
             local sandbox_dir=""
