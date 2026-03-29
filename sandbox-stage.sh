@@ -27,14 +27,28 @@ get_latest_sandbox() {
     return 1
 }
 
+# Helper function to set or replace a variable in make.conf
+set_make_conf_var() {
+    local file="$1"
+    local var_name="$2"
+    local var_value="$3"
+
+    if grep -q "^${var_name}=" "$file"; then
+        sed -i "s|^${var_name}=.*|${var_name}=\"${var_value}\"|" "$file"
+    else
+        echo "${var_name}=\"${var_value}\"" >> "$file"
+    fi
+}
+
 configure_portage() {
     local sandbox_dir="$1"
     local arch="$2"
+    gentoo_arch $arch
 
     # Detect CPU count
     local cpu_count=$(nproc 2>/dev/null || echo 4)
-    local p="$cpu_count"
-    local q=$((cpu_count * 2))
+    local p=$((cpu_count / 2 + 1))
+    local q="$cpu_count"
 
     # Create portage directories
     mkdir -p "$sandbox_dir/etc/portage"
@@ -43,26 +57,26 @@ configure_portage() {
     # Configure make.conf - append to existing or create new
     local make_conf="$sandbox_dir/etc/portage/make.conf"
 
-    # Add or update Portage settings
+    # Add or update Portage settings (replace existing values)
     if [[ ! -f "$make_conf" ]]; then
         cat > "$make_conf" << EOF
 MAKEOPTS="-j${p} --load-average ${q}"
 EMERGE_DEFAULT_OPTS="--jobs=${p} --load-average ${q}"
 FEATURES="parallel-install -merge-wait"
-ACCEPT_KEYWORDS="~${arch}"
+ACCEPT_KEYWORDS="~${ARCH}"
 EOF
     else
-        # Append settings if not already present
-        grep -q "^MAKEOPTS=" "$make_conf" || echo "MAKEOPTS=\"-j${p} --load-average ${q}\"" >> "$make_conf"
-        grep -q "^EMERGE_DEFAULT_OPTS=" "$make_conf" || echo "EMERGE_DEFAULT_OPTS=\"--jobs=${p} --load-average ${q}\"" >> "$make_conf"
-        grep -q "^FEATURES=" "$make_conf" || echo "FEATURES=\"parallel-install -merge-wait\"" >> "$make_conf"
-        grep -q "^ACCEPT_KEYWORDS=" "$make_conf" || echo "ACCEPT_KEYWORDS=\"~${arch}\"" >> "$make_conf"
+        # Use helper function to set/replace variables
+        set_make_conf_var "$make_conf" "MAKEOPTS" "-j${p} --load-average ${q}"
+        set_make_conf_var "$make_conf" "EMERGE_DEFAULT_OPTS" "--jobs=${p} --load-average ${q}"
+        set_make_conf_var "$make_conf" "FEATURES" "parallel-install -merge-wait"
+        set_make_conf_var "$make_conf" "ACCEPT_KEYWORDS" "~${ARCH}"
     fi
 
     # Add rust-std workaround
-    echo "cross-${arch}-unknown-linux-gnu/rust-std **" > "$sandbox_dir/etc/portage/package.accept_keywords/rust-std"
+    echo "cross-${ARCH}-unknown-linux-gnu/rust-std **" > "$sandbox_dir/etc/portage/package.accept_keywords/rust-std"
 
-    echo "Portage configured for ${arch} in $sandbox_dir"
+    echo "Portage configured for ${ARCH} in $sandbox_dir"
 }
 
 install_dependencies() {
@@ -72,16 +86,17 @@ install_dependencies() {
 
     # Host system dependencies from README.md (with categories)
     local packages=(
-        "sys-devel/crossdev"          # Gentoo Cross-toolchain generator
-        "sys-apps/merge-usr"          # Script to migrate from split-usr to merged-usr
-        "dev-vcs/git"                # Distributed version control system
-        "sys-boot/u-boot-tools"      # Utilities for working with Das U-Boot
-        "sys-apps/dtc"               # Device Tree Compiler
-        "sys-kernel/dracut"          # Generic initramfs generation tool
-        "sys-apps/busybox"           # Utilities for rescue and embedded systems
-        "sys-boot/genimage"          # Tool to generate multiple filesystem and flash images
-        "app-arch/xz-utils"          # Utils for managing LZMA compressed files
-        "app-eselect/eselect-repository" # Eselect module for Gentoo repositories
+        "app-arch/zstd"
+        "sys-devel/crossdev"
+        "sys-apps/merge-usr"
+        "dev-vcs/git"
+        "sys-boot/u-boot-tools"
+        "sys-apps/dtc"
+        "sys-kernel/dracut"
+        "sys-apps/busybox"
+        "sys-boot/genimage"
+        "app-arch/xz-utils"
+        "app-eselect/eselect-repository"
     )
 
     # Use hakoniwa to emerge packages in the sandbox
