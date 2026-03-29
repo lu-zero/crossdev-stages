@@ -256,14 +256,14 @@ llvm_arch() {
     local llvm_target=""
 
     case $os_arch in
-        x86*) llvm_arch="X86" ;;
-        arm*) llvm_arch="ARM" ;;
-        aarch64*) llvm_arch="AArch64" ;;
-        riscv*) llvm_arch="RISCV" ;;
-        mips*) llvm_arch="Mips" ;;
-        loongarch*) llvm_arch="LoongArch" ;;
-        powerpc*) llvm_arch="PowerPC" ;;
-        sparc*) llvm_arch="Sparc" ;;
+        x86*) llvm_target="X86" ;;
+        arm*) llvm_target="ARM" ;;
+        aarch64*) llvm_target="AArch64" ;;
+        riscv*) llvm_target="RISCV" ;;
+        mips*) llvm_target="Mips" ;;
+        loongarch*) llvm_target="LoongArch" ;;
+        powerpc*) llvm_target="PowerPC" ;;
+        sparc*) llvm_target="Sparc" ;;
     esac
 
     echo "$llvm_target"
