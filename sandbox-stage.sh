@@ -99,23 +99,14 @@ install_dependencies() {
         "app-eselect/eselect-repository"
     )
 
-    # Use hakoniwa to emerge packages in the sandbox
+    # Update package database first
+    echo "Running getuto..."
+    run "$sandbox_dir" getuto || echo "getuto failed, continuing anyway..."
+
+    # Use the run command to emerge packages with -G flag
     for pkg in "${packages[@]}"; do
         echo "Emerging $pkg..."
-        hakoniwa run \
-          --rootdir "$sandbox_dir":rw \
-          --devfs /dev \
-          -b /etc/resolv.conf \
-          --unshare-all \
-          --allow-new-privs \
-          --userns=auto \
-          --network=host \
-          --tmpfs /tmp \
-          -e TERM="$TERM" \
-          -e COLORTERM="$COLORTERM" \
-          -e NO_COLOR="$NO_COLOR" \
-          -e HOME=/root \
-          -- emerge -b -k "$pkg" || echo "Failed to emerge $pkg"
+        run "$sandbox_dir" emerge -G "$pkg" || echo "Failed to emerge $pkg"
     done
 
     echo "Host dependencies installation complete"
