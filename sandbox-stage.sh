@@ -482,6 +482,8 @@ usage() {
     echo ""
     echo "Sandbox commands:"
     echo "  $0 setup [arch] [name]          - Setup sandbox for arch (default: host arch, name: arch)"
+    echo "  $0 list                         - List sandboxes"
+    echo "  $0 destroy <name>              - Remove a sandbox"
     echo "  $0 prepare [sandbox]            - Prepare sandbox with Portage config and host dependencies"
     echo "  $0 setup-crossdev [sandbox] [target-arch] - Setup cross-compilation environment in sandbox"
     echo "  $0 enter [sandbox]             - Enter interactive shell in sandbox (default: latest)"
@@ -490,6 +492,7 @@ usage() {
     echo "Target commands:"
     echo "  $0 target list                 - List unpacked targets"
     echo "  $0 target setup [arch] [name]  - Setup target sysroot for arch"
+    echo "  $0 target destroy <name>       - Remove a target"
     echo "  $0 target update [sandbox] [target] [arch] - Update target via cross-emerge"
     echo "  $0 target pack [target] [arch] - Pack target as stage3 tarball in stages cache"
     echo ""
@@ -527,6 +530,32 @@ main() {
             local sandbox_dir=$(unpack_stage "$stage_file" "$sandbox_name") || exit 1
             echo "$arch" > "$SANDBOXES_DIR/$sandbox_name/.arch"
             echo "Sandbox ready: $sandbox_dir"
+            ;;
+        list)
+            if [[ -d "$SANDBOXES_DIR" ]]; then
+                for d in "$SANDBOXES_DIR"/*/; do
+                    [[ -d "$d" ]] || continue
+                    local name=$(basename "$d")
+                    local arch=$(get_arch "$d")
+                    printf "%-20s %s\n" "$name" "${arch:-(unknown arch)}"
+                done
+            else
+                echo "No sandboxes found."
+            fi
+            ;;
+        destroy)
+            if [[ -z "$1" ]]; then
+                echo "Usage: $0 destroy <sandbox-name>" >&2
+                exit 1
+            fi
+            local target="$SANDBOXES_DIR/$1"
+            if [[ ! -d "$target" ]]; then
+                echo "Error: Sandbox not found: $1" >&2
+                exit 1
+            fi
+            echo "Removing sandbox: $1"
+            rm -rf "$target"
+            echo "Sandbox $1 removed."
             ;;
         prepare)
             local sandbox_dir=""
@@ -631,10 +660,29 @@ main() {
             case $subcmd in
                 list)
                     if [[ -d "$TARGETS_DIR" ]]; then
-                        ls -lt "$TARGETS_DIR" | tail -n +2
+                        for d in "$TARGETS_DIR"/*/; do
+                            [[ -d "$d" ]] || continue
+                            local name=$(basename "$d")
+                            local arch=$(get_arch "$d")
+                            printf "%-20s %s\n" "$name" "${arch:-(unknown arch)}"
+                        done
                     else
-                        echo "No targets directory found."
+                        echo "No targets found."
                     fi
+                    ;;
+                destroy)
+                    if [[ -z "$1" ]]; then
+                        echo "Usage: $0 target destroy <target-name>" >&2
+                        exit 1
+                    fi
+                    local target="$TARGETS_DIR/$1"
+                    if [[ ! -d "$target" ]]; then
+                        echo "Error: Target not found: $1" >&2
+                        exit 1
+                    fi
+                    echo "Removing target: $1"
+                    rm -rf "$target"
+                    echo "Target $1 removed."
                     ;;
                 setup)
                     local arch=""
