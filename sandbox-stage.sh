@@ -103,11 +103,9 @@ install_dependencies() {
     echo "Running getuto..."
     run "$sandbox_dir" getuto || echo "getuto failed, continuing anyway..."
 
-    # Use the run command to emerge packages with -G flag
-    for pkg in "${packages[@]}"; do
-        echo "Emerging $pkg..."
-        run "$sandbox_dir" emerge -G "$pkg" || echo "Failed to emerge $pkg"
-    done
+    # Use the run command to emerge all packages at once with -G flag
+    echo "Emerging all host dependencies..."
+    run "$sandbox_dir" emerge -G "${packages[@]}" || echo "Some packages failed to emerge"
 
     echo "Host dependencies installation complete"
 }
