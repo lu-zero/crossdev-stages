@@ -106,21 +106,13 @@ setup_crossdev_sandbox() {
     gentoo_arch "$target_arch"
     local chost="${target_arch}-unknown-linux-gnu"
 
-    # Fix profile path - need to handle riscv specially
-    local profile=""
-    case "$ARCH-$FLAVOR" in
-        riscv-rv64_lp64d-openrc)
-            profile="default/linux/riscv/23.0/rv64/lp64d"
-            ;;
-        *)
-            profile="default/linux/${ARCH}/23.0/${FLAVOR}"
-            ;;
-    esac
+    local profile
+    profile=$(gentoo_profile "$target_arch")
 
     local crossdev_root="/usr/${chost}"
     local crossdev_make_conf="${crossdev_root}/etc/portage/make.conf"
-    local gcc_ver="16.0.1_p20260315"
-    local cflags="-O3 -march=rv64gc -pipe"
+    local cflags
+    cflags=$(target_cflags "$target_arch")
 
     echo "Setting up crossdev environment for ${chost} in sandbox..."
 
@@ -176,8 +168,8 @@ EOF"
     # Run merge-usr
     run "$sandbox_dir" merge-usr --root "${crossdev_root}"
 
-    # Install crossdev with specific GCC version
-    run "$sandbox_dir" crossdev "${chost}" --g "${gcc_ver}" --ex-pkg sys-devel/clang-crossdev-wrappers --ex-pkg sys-devel/rust-std
+    # Install crossdev toolchain
+    run "$sandbox_dir" crossdev "${chost}" --ex-pkg sys-devel/clang-crossdev-wrappers --ex-pkg sys-devel/rust-std
 
     # Add gcc-16 prereleases
     run "$sandbox_dir" sh -c "echo \"<sys-devel/gcc-16.0.9999:16 **\" > ${crossdev_root}/etc/portage/package.accept_keywords/gcc"
@@ -248,6 +240,27 @@ gentoo_arch() {
         *) ARCH=$os_arch FLAVOR=$ARCH-openrc;;
     esac
 # echo "$os_arch => $ARCH"
+}
+
+# Map OS architecture to default CFLAGS for cross-compilation
+target_cflags() {
+    local arch=$1
+    case $arch in
+        x86_64)  echo "-O3 -march=x86-64 -pipe" ;;
+        aarch64) echo "-O3 -pipe" ;;
+        riscv64) echo "-O3 -march=rv64gc -pipe" ;;
+        *)       echo "-O3 -pipe" ;;
+    esac
+}
+
+# Map OS architecture to Gentoo profile path
+gentoo_profile() {
+    local arch=$1
+    gentoo_arch "$arch"
+    case "$ARCH" in
+        riscv) echo "default/linux/riscv/23.0/rv64/lp64d" ;;
+        *)     echo "default/linux/${ARCH}/23.0" ;;
+    esac
 }
 
 # Map OS architecture to LLVM target for LLVM_TARGETS variable
