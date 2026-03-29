@@ -718,11 +718,12 @@ main() {
                         target_dir="$TARGETS_DIR/$1"; shift
                     fi
 
-                    local target_arch="${1:-riscv64}"
+                    local target_arch="${1:-$(get_arch "$target_dir")}"
                     [[ -n "$1" ]] && shift
 
                     [[ ! -d "$sandbox_dir" ]] && { echo "Error: Sandbox not found: $sandbox_dir" >&2; exit 1; }
                     [[ ! -d "$target_dir" ]] && { echo "Error: Target not found: $target_dir" >&2; exit 1; }
+                    [[ -z "$target_arch" ]] && { echo "Error: Cannot determine target arch. Specify explicitly." >&2; exit 1; }
 
                     update_stage3 "$sandbox_dir" "$target_dir" "$target_arch"
                     ;;
@@ -736,8 +737,9 @@ main() {
                         target_dir="$TARGETS_DIR/$1"; shift
                     fi
 
-                    local target_arch="${1:-riscv64}"
+                    local target_arch="${1:-$(get_arch "$target_dir")}"
                     [[ -n "$1" ]] && shift
+                    [[ -z "$target_arch" ]] && { echo "Error: Cannot determine target arch. Specify explicitly." >&2; exit 1; }
                     gentoo_arch "$target_arch"
 
                     local timestamp
@@ -787,7 +789,8 @@ main() {
                 target_dir="$TARGETS_DIR/$1"; shift
             fi
 
-            local target_arch="${1:-riscv64}"; shift
+            local target_arch="${1:-$(get_arch "$target_dir")}"; shift
+            [[ -z "$target_arch" ]] && { echo "Error: Cannot determine target arch. Specify explicitly." >&2; exit 1; }
 
             [[ ! -d "$sandbox_dir" ]] && { echo "Error: Sandbox not found: $sandbox_dir" >&2; exit 1; }
             [[ ! -d "$target_dir" ]] && { echo "Error: Target not found: $target_dir" >&2; exit 1; }
@@ -813,7 +816,8 @@ main() {
                 target_dir="$TARGETS_DIR/$1"; shift
             fi
 
-            local target_arch="${1:-riscv64}"; shift
+            local target_arch="${1:-$(get_arch "$target_dir")}"; shift
+            [[ -z "$target_arch" ]] && { echo "Error: Cannot determine target arch. Specify explicitly." >&2; exit 1; }
             local pkg_file="$1"
 
             [[ ! -d "$sandbox_dir" ]] && { echo "Error: Sandbox not found: $sandbox_dir" >&2; exit 1; }
