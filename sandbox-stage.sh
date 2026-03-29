@@ -16,6 +16,15 @@ ensure_cache_dirs() {
     mkdir -p "$TARGETS_DIR"
 }
 
+get_arch() {
+    local dir="$1"
+    if [[ -f "$dir/.arch" ]]; then
+        cat "$dir/.arch"
+    else
+        echo ""
+    fi
+}
+
 get_latest_sandbox() {
     local latest_sandbox=""
     if [[ -d "$SANDBOXES_DIR" ]]; then
@@ -516,6 +525,7 @@ main() {
             echo "Setting up sandbox: $sandbox_name"
             local stage_file=$(fetch_stage "$arch") || exit 1
             local sandbox_dir=$(unpack_stage "$stage_file" "$sandbox_name") || exit 1
+            echo "$arch" > "$SANDBOXES_DIR/$sandbox_name/.arch"
             echo "Sandbox ready: $sandbox_dir"
             ;;
         prepare)
@@ -536,12 +546,11 @@ main() {
                 exit 1
             fi
 
-            # Detect architecture from sandbox name or use default
-            local arch=""
-            if [[ "$sandbox_dir" == *"$SANDBOXES_DIR/"* ]]; then
-                arch=$(basename "$sandbox_dir")
-            else
-                arch=$(uname -m)
+            local arch
+            arch=$(get_arch "$sandbox_dir")
+            if [[ -z "$arch" ]]; then
+                echo "Error: No .arch metadata in $sandbox_dir (old sandbox?)" >&2
+                exit 1
             fi
 
             prepare_sandbox "$sandbox_dir" "$arch"
@@ -566,11 +575,10 @@ main() {
                 target_arch="$1"
                 shift
             else
-                # Default to sandbox architecture
-                if [[ "$sandbox_dir" == *"$SANDBOXES_DIR/"* ]]; then
-                    target_arch=$(basename "$sandbox_dir")
-                else
-                    target_arch=$(uname -m)
+                target_arch=$(get_arch "$sandbox_dir")
+                if [[ -z "$target_arch" ]]; then
+                    echo "Error: No .arch metadata in $sandbox_dir (old sandbox?)" >&2
+                    exit 1
                 fi
             fi
 
@@ -641,6 +649,7 @@ main() {
                     local stage_file
                     stage_file=$(fetch_stage "$arch") || exit 1
                     unpack_target "$stage_file" "$target_name"
+                    echo "$arch" > "$TARGETS_DIR/$target_name/.arch"
                     ;;
                 update)
                     local sandbox_dir=""
