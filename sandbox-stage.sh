@@ -85,27 +85,31 @@ install_dependencies() {
     echo "Installing host system dependencies in sandbox..."
 
     # Host system dependencies from README.md (with categories)
-    local packages=(
+    local bin_packages=(
         "app-arch/zstd"
+        "app-arch/bzip2"
+        "app-arch/xz-utils"
+    )
+
+    local packages=(
         "sys-devel/crossdev"
         "sys-apps/merge-usr"
         "dev-vcs/git"
-        "sys-boot/u-boot-tools"
+        "dev-embedded/u-boot-tools"
         "sys-apps/dtc"
         "sys-kernel/dracut"
         "sys-apps/busybox"
-        "sys-boot/genimage"
-        "app-arch/xz-utils"
+        "sys-fs/genimage"
         "app-eselect/eselect-repository"
     )
 
-    # Update package database first
     echo "Running getuto..."
     run "$sandbox_dir" getuto || echo "getuto failed, continuing anyway..."
 
-    # Use the run command to emerge all packages at once with -G flag
-    echo "Emerging all host dependencies..."
-    run "$sandbox_dir" emerge -G "${packages[@]}" || echo "Some packages failed to emerge"
+    echo "Emerging bin dependencies..."
+    run "$sandbox_dir" emerge -G "${bin_packages[@]}" || echo "Some packages failed to emerge"
+    echo "Emerging dependencies..."
+    run "$sandbox_dir" emerge -b -k "${packages[@]}" || echo "Some packages failed to emerge"
 
     echo "Host dependencies installation complete"
 }
@@ -219,7 +223,9 @@ run() {
       -e COLORTERM="$COLORTERM" \
       -e NO_COLOR="$NO_COLOR" \
       -e HOME=/root \
-      -- $args
+      -- bash --login -c "
+         $args
+      "
 }
 
 usage() {
