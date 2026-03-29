@@ -377,15 +377,19 @@ main() {
         prepare)
             shift
             local sandbox_dir=""
-            if [[ -n "$1" ]]; then
+            if [[ -n "$1" && "$1" != "latest" ]]; then
                 sandbox_dir="$SANDBOXES_DIR/$1"
                 shift
             else
                 sandbox_dir=$(get_latest_sandbox)
+                if [[ -z "$sandbox_dir" ]]; then
+                    echo "Error: No sandbox found. Please run setup first." >&2
+                    exit 1
+                fi
             fi
 
             if [[ ! -d "$sandbox_dir" ]]; then
-                echo "Error: No sandbox found. Please run setup first." >&2
+                echo "Error: Sandbox not found: $sandbox_dir" >&2
                 exit 1
             fi
 
@@ -432,10 +436,14 @@ main() {
             ;;
         enter)
             local sandbox_dir=""
-            if [[ -n "$1" ]]; then
+            if [[ -n "$1" && "$1" != "latest" ]]; then
                 sandbox_dir="$SANDBOXES_DIR/$1"
             else
                 sandbox_dir=$(get_latest_sandbox)
+                if [[ -z "$sandbox_dir" ]]; then
+                    echo "Error: No sandbox found. Please run setup first." >&2
+                    exit 1
+                fi
             fi
 
             if [[ ! -d "$sandbox_dir" ]]; then
@@ -446,8 +454,18 @@ main() {
             run "$sandbox_dir" bash --login
             ;;
         run)
-            local sandbox_dir="$SANDBOXES_DIR/$1"
-            shift
+            local sandbox_dir=""
+            if [[ "$1" == "latest" ]]; then
+                sandbox_dir=$(get_latest_sandbox)
+                if [[ -z "$sandbox_dir" ]]; then
+                    echo "Error: No sandbox found. Please run setup first." >&2
+                    exit 1
+                fi
+                shift
+            else
+                sandbox_dir="$SANDBOXES_DIR/$1"
+                shift
+            fi
 
             if [[ ! -d "$sandbox_dir" ]]; then
                 echo "Error: Sandbox not found: $sandbox_dir" >&2
