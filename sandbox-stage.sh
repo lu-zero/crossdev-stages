@@ -8,10 +8,12 @@
 CACHE_DIR="${HOME}/.cache/crossdev-stages"
 STAGES_DIR="${CACHE_DIR}/stages"
 SANDBOXES_DIR="${CACHE_DIR}/sandboxes"
+TARGETS_DIR="${CACHE_DIR}/targets"
 
 ensure_cache_dirs() {
     mkdir -p "$STAGES_DIR"
     mkdir -p "$SANDBOXES_DIR"
+    mkdir -p "$TARGETS_DIR"
 }
 
 get_latest_sandbox() {
@@ -20,6 +22,19 @@ get_latest_sandbox() {
         latest_sandbox=$(ls -t "$SANDBOXES_DIR" | head -n 1)
         if [[ -n "$latest_sandbox" ]]; then
             echo "$SANDBOXES_DIR/$latest_sandbox"
+            return 0
+        fi
+    fi
+    echo "" >&2
+    return 1
+}
+
+get_latest_target() {
+    local latest_target=""
+    if [[ -d "$TARGETS_DIR" ]]; then
+        latest_target=$(ls -t "$TARGETS_DIR" | head -n 1)
+        if [[ -n "$latest_target" ]]; then
+            echo "$TARGETS_DIR/$latest_target"
             return 0
         fi
     fi
@@ -192,6 +207,7 @@ install_dependencies() {
         "sys-apps/busybox"
         "sys-fs/genimage"
         "app-eselect/eselect-repository"
+        "dev-lang/rust"
     )
 
     echo "Running getuto..."
@@ -201,6 +217,9 @@ install_dependencies() {
     run "$sandbox_dir" emerge -G "${bin_packages[@]}" || echo "Some packages failed to emerge"
     echo "Emerging dependencies..."
     run "$sandbox_dir" emerge -b -k "${packages[@]}" || echo "Some packages failed to emerge"
+
+    echo "Installing Rust ldconfig..."
+    run "$sandbox_dir" cargo install --root /usr/local ldconfig
 
     echo "Host dependencies installation complete"
 }
@@ -338,15 +357,126 @@ run() {
       "
 }
 
+run_with_stage() {
+    local sandbox_dir="$1"
+    local stage_dir="$2"
+    shift 2
+    local args=$@
+
+    hakoniwa run \
+      --rootdir "$sandbox_dir":rw \
+      --devfs /dev \
+      -b /etc/resolv.conf \
+      --unshare-all \
+      --allow-new-privs \
+      --userns=auto \
+      --network=host \
+      --tmpfs /tmp \
+      -B "$stage_dir":/target:rw \
+      -e TERM="$TERM" \
+      -e COLORTERM="$COLORTERM" \
+      -e NO_COLOR="$NO_COLOR" \
+      -e HOME=/root \
+      -- bash --login -c "
+         $args
+      "
+}
+
+unpack_target() {
+    local stage_file="$1"
+    local target_name="$2"
+    local target_dir="$TARGETS_DIR/$target_name"
+    local stage_filename=$(basename "$stage_file")
+
+    ensure_cache_dirs
+
+    if [[ -d "$target_dir" ]]; then
+        echo "Target $target_name already exists"
+        echo "$target_dir"
+        return 0
+    fi
+
+    echo "Creating target $target_name from $stage_file"
+
+    hakoniwa run \
+      --rootfs / --devfs /dev \
+      --unshare-all \
+      --allow-new-privs \
+      --userns=auto \
+      --tmpfs /tmp \
+      -B "$CACHE_DIR":/cache \
+      -- /bin/sh -c "
+        mkdir -p \"/cache/targets/$target_name\" &&
+        tar --overwrite -xpvf \"/cache/stages/$stage_filename\" \
+          --xattrs-include='*.*' \
+          --numeric-owner \
+          --exclude='./dev' \
+          -C \"/cache/targets/$target_name\" &&
+        echo \"/cache/targets/$target_name\"
+      "
+}
+
+update_ldconfig_sandbox() {
+    local sandbox_dir="$1"
+    local stage_dir="$2"
+
+    echo "Updating ld.so.cache in target..."
+    run_with_stage "$sandbox_dir" "$stage_dir" "ldconfig -v -r /target"
+}
+
+update_stage3() {
+    local sandbox_dir="$1"
+    local stage_dir="$2"
+    local target_arch="${3:-riscv64}"
+    local chost="${target_arch}-unknown-linux-gnu"
+
+    echo "Updating stage3 at $stage_dir for ${chost}..."
+    run_with_stage "$sandbox_dir" "$stage_dir" "${chost}-emerge -b -k gcc"
+    run_with_stage "$sandbox_dir" "$stage_dir" "${chost}-emerge -b -k sys-libs/binutils-libs"
+    run_with_stage "$sandbox_dir" "$stage_dir" "${chost}-emerge -b -k -u system"
+    run_with_stage "$sandbox_dir" "$stage_dir" "ROOT=/target ${chost}-emerge -k -e @world"
+    update_ldconfig_sandbox "$sandbox_dir" "$stage_dir"
+}
+
+install_packages() {
+    local sandbox_dir="$1"
+    local stage_dir="$2"
+    local target_arch="$3"
+    shift 3
+    local chost="${target_arch}-unknown-linux-gnu"
+
+    echo "Installing packages into target for ${chost}..."
+    run_with_stage "$sandbox_dir" "$stage_dir" "ROOT=/target ${chost}-emerge -b -k $*"
+    update_ldconfig_sandbox "$sandbox_dir" "$stage_dir"
+}
+
+packages_from_file() {
+    local file="$1"
+    grep -v '#' "$file" | grep -v '^[[:space:]]*$'
+}
+
 usage() {
-    echo "$0 <setup|prepare|setup-crossdev|enter|run> [options]"
-    echo "$0 setup [arch] [name]   - Setup sandbox for arch (default: host arch, name: arch)"
-    echo "$0 prepare [sandbox]     - Prepare sandbox with Portage config and host dependencies"
-    echo "$0 setup-crossdev [sandbox] [target-arch] - Setup cross-compilation environment in sandbox"
-    echo "$0 enter [sandbox]      - Enter interactive shell in sandbox (default: latest)"
-    echo "$0 run <sandbox> <cmd>  - Run command in specified sandbox"
+    echo "$0 <command> [options]"
     echo ""
-    echo "Sandboxes are cached in: $CACHE_DIR"
+    echo "Sandbox commands:"
+    echo "  $0 setup [arch] [name]          - Setup sandbox for arch (default: host arch, name: arch)"
+    echo "  $0 prepare [sandbox]            - Prepare sandbox with Portage config and host dependencies"
+    echo "  $0 setup-crossdev [sandbox] [target-arch] - Setup cross-compilation environment in sandbox"
+    echo "  $0 enter [sandbox]             - Enter interactive shell in sandbox (default: latest)"
+    echo "  $0 run <sandbox> <cmd>         - Run command in specified sandbox"
+    echo ""
+    echo "Target commands:"
+    echo "  $0 target list                 - List unpacked targets"
+    echo "  $0 target setup [arch] [name]  - Setup target sysroot for arch"
+    echo "  $0 target update [sandbox] [target] [arch] - Update target via cross-emerge"
+    echo "  $0 target pack [target] [arch] - Pack target as stage3 tarball in stages cache"
+    echo ""
+    echo "Package install commands:"
+    echo "  $0 install [sandbox] [target] [arch] pkg... - Install packages into target"
+    echo "  $0 install-from [sandbox] [target] [arch] file - Install packages from file"
+    echo "  $0 update-ldconfig [sandbox] [target] - Regenerate ld.so.cache in target"
+    echo ""
+    echo "Cache directory: $CACHE_DIR"
     exit 1
 }
 
@@ -472,6 +602,181 @@ main() {
             fi
 
             run "$sandbox_dir" "$@"
+            ;;
+        target)
+            local subcmd="${1:-list}"
+            shift
+
+            case $subcmd in
+                list)
+                    if [[ -d "$TARGETS_DIR" ]]; then
+                        ls -lt "$TARGETS_DIR" | tail -n +2
+                    else
+                        echo "No targets directory found."
+                    fi
+                    ;;
+                setup)
+                    local arch=""
+                    if [[ -n "$1" ]]; then
+                        arch="$1"; shift
+                    else
+                        arch=$(uname -m)
+                    fi
+                    local target_name="${1:-$arch}"
+                    [[ -n "$1" ]] && shift
+
+                    local stage_file
+                    stage_file=$(fetch_stage "$arch") || exit 1
+                    unpack_target "$stage_file" "$target_name"
+                    ;;
+                update)
+                    local sandbox_dir=""
+                    if [[ -z "$1" || "$1" == "latest" ]]; then
+                        sandbox_dir=$(get_latest_sandbox)
+                        [[ -z "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+                        [[ -n "$1" ]] && shift
+                    else
+                        sandbox_dir="$SANDBOXES_DIR/$1"; shift
+                    fi
+
+                    local target_dir=""
+                    if [[ -z "$1" || "$1" == "latest" ]]; then
+                        target_dir=$(get_latest_target)
+                        [[ -z "$target_dir" ]] && { echo "Error: No target found." >&2; exit 1; }
+                        [[ -n "$1" ]] && shift
+                    else
+                        target_dir="$TARGETS_DIR/$1"; shift
+                    fi
+
+                    local target_arch="${1:-riscv64}"
+                    [[ -n "$1" ]] && shift
+
+                    [[ ! -d "$sandbox_dir" ]] && { echo "Error: Sandbox not found: $sandbox_dir" >&2; exit 1; }
+                    [[ ! -d "$target_dir" ]] && { echo "Error: Target not found: $target_dir" >&2; exit 1; }
+
+                    update_stage3 "$sandbox_dir" "$target_dir" "$target_arch"
+                    ;;
+                pack)
+                    local target_dir=""
+                    if [[ -z "$1" || "$1" == "latest" ]]; then
+                        target_dir=$(get_latest_target)
+                        [[ -z "$target_dir" ]] && { echo "Error: No target found." >&2; exit 1; }
+                        [[ -n "$1" ]] && shift
+                    else
+                        target_dir="$TARGETS_DIR/$1"; shift
+                    fi
+
+                    local target_arch="${1:-riscv64}"
+                    [[ -n "$1" ]] && shift
+                    gentoo_arch "$target_arch"
+
+                    local timestamp
+                    timestamp=$(date +%Y%m%dT%H%M%SZ)
+                    local out_file="$STAGES_DIR/stage3-${FLAVOR}-${timestamp}.tar.xz"
+
+                    echo "Packing $target_dir -> $out_file"
+                    hakoniwa run \
+                      --rootfs / --devfs /dev \
+                      --unshare-all \
+                      --allow-new-privs \
+                      --userns=auto \
+                      --tmpfs /tmp \
+                      -B "$CACHE_DIR":/cache \
+                      -B "$target_dir":/target:ro \
+                      -- /bin/sh -c "
+                        tar -cpf \"/cache/stages/stage3-${FLAVOR}-${timestamp}.tar.xz\" \
+                          --xattrs-include='*.*' \
+                          --numeric-owner \
+                          --xz \
+                          --exclude='./dev' \
+                          -C /target .
+                      "
+                    echo "Packed: $out_file"
+                    ;;
+                *)
+                    usage
+                    ;;
+            esac
+            ;;
+        install)
+            local sandbox_dir=""
+            if [[ -z "$1" || "$1" == "latest" ]]; then
+                sandbox_dir=$(get_latest_sandbox)
+                [[ -z "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+                [[ -n "$1" ]] && shift
+            else
+                sandbox_dir="$SANDBOXES_DIR/$1"; shift
+            fi
+
+            local target_dir=""
+            if [[ -z "$1" || "$1" == "latest" ]]; then
+                target_dir=$(get_latest_target)
+                [[ -z "$target_dir" ]] && { echo "Error: No target found." >&2; exit 1; }
+                [[ -n "$1" ]] && shift
+            else
+                target_dir="$TARGETS_DIR/$1"; shift
+            fi
+
+            local target_arch="${1:-riscv64}"; shift
+
+            [[ ! -d "$sandbox_dir" ]] && { echo "Error: Sandbox not found: $sandbox_dir" >&2; exit 1; }
+            [[ ! -d "$target_dir" ]] && { echo "Error: Target not found: $target_dir" >&2; exit 1; }
+
+            install_packages "$sandbox_dir" "$target_dir" "$target_arch" "$@"
+            ;;
+        install-from)
+            local sandbox_dir=""
+            if [[ -z "$1" || "$1" == "latest" ]]; then
+                sandbox_dir=$(get_latest_sandbox)
+                [[ -z "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+                [[ -n "$1" ]] && shift
+            else
+                sandbox_dir="$SANDBOXES_DIR/$1"; shift
+            fi
+
+            local target_dir=""
+            if [[ -z "$1" || "$1" == "latest" ]]; then
+                target_dir=$(get_latest_target)
+                [[ -z "$target_dir" ]] && { echo "Error: No target found." >&2; exit 1; }
+                [[ -n "$1" ]] && shift
+            else
+                target_dir="$TARGETS_DIR/$1"; shift
+            fi
+
+            local target_arch="${1:-riscv64}"; shift
+            local pkg_file="$1"
+
+            [[ ! -d "$sandbox_dir" ]] && { echo "Error: Sandbox not found: $sandbox_dir" >&2; exit 1; }
+            [[ ! -d "$target_dir" ]] && { echo "Error: Target not found: $target_dir" >&2; exit 1; }
+            [[ ! -f "$pkg_file" ]] && { echo "Error: Package file not found: $pkg_file" >&2; exit 1; }
+
+            # shellcheck disable=SC2046
+            install_packages "$sandbox_dir" "$target_dir" "$target_arch" \
+                $(packages_from_file "$pkg_file")
+            ;;
+        update-ldconfig)
+            local sandbox_dir=""
+            if [[ -z "$1" || "$1" == "latest" ]]; then
+                sandbox_dir=$(get_latest_sandbox)
+                [[ -z "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+                [[ -n "$1" ]] && shift
+            else
+                sandbox_dir="$SANDBOXES_DIR/$1"; shift
+            fi
+
+            local target_dir=""
+            if [[ -z "$1" || "$1" == "latest" ]]; then
+                target_dir=$(get_latest_target)
+                [[ -z "$target_dir" ]] && { echo "Error: No target found." >&2; exit 1; }
+                [[ -n "$1" ]] && shift
+            else
+                target_dir="$TARGETS_DIR/$1"; shift
+            fi
+
+            [[ ! -d "$sandbox_dir" ]] && { echo "Error: Sandbox not found: $sandbox_dir" >&2; exit 1; }
+            [[ ! -d "$target_dir" ]] && { echo "Error: Target not found: $target_dir" >&2; exit 1; }
+
+            update_ldconfig_sandbox "$sandbox_dir" "$target_dir"
             ;;
         *)
             usage
