@@ -413,6 +413,7 @@ main() {
                 shift
             else
                 sandbox_dir=$(get_latest_sandbox)
+                shift  # Need to shift after using "latest"
             fi
 
             if [[ ! -d "$sandbox_dir" ]]; then
