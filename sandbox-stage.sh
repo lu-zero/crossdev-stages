@@ -335,9 +335,9 @@ unpack_stage() {
 }
 
 run() {
-    local sandbox_dir=${1}
+    local sandbox_dir="$1"
     shift
-    local args=$@
+    local args="$*"
 
     hakoniwa run \
       --rootdir "$sandbox_dir":rw \
@@ -361,7 +361,7 @@ run_with_stage() {
     local sandbox_dir="$1"
     local stage_dir="$2"
     shift 2
-    local args=$@
+    local args="$*"
 
     hakoniwa run \
       --rootdir "$sandbox_dir":rw \
