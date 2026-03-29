@@ -76,6 +76,12 @@ EOF
     # Add rust-std workaround
     echo "cross-${ARCH}-unknown-linux-gnu/rust-std **" > "$sandbox_dir/etc/portage/package.accept_keywords/rust-std"
 
+    # Set LLVM_TARGETS for cross-compilation
+#    local llvm_target=$(llvm_arch "$arch")
+#    if [[ -n "$llvm_target" ]]; then
+#        set_make_conf_var "$make_conf" "LLVM_TARGETS" "$llvm_target"
+#    fi
+
     echo "Portage configured for ${ARCH} in $sandbox_dir"
 }
 
@@ -138,6 +144,25 @@ gentoo_arch() {
         *) ARCH=$os_arch FLAVOR=$ARCH-openrc;;
     esac
 # echo "$os_arch => $ARCH"
+}
+
+# Map OS architecture to LLVM target for LLVM_TARGETS variable
+llvm_arch() {
+    local os_arch=$1
+    local llvm_target=""
+
+    case $os_arch in
+        x86*) llvm_arch="X86" ;;
+        arm*) llvm_arch="ARM" ;;
+        aarch64*) llvm_arch="AArch64" ;;
+        riscv*) llvm_arch="RISCV" ;;
+        mips*) llvm_arch="Mips" ;;
+        loongarch*) llvm_arch="LoongArch" ;;
+        powerpc*) llvm_arch="PowerPC" ;;
+        sparc*) llvm_arch="Sparc" ;;
+    esac
+
+    echo "$llvm_target"
 }
 
 fetch_stage() {

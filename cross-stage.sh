@@ -45,9 +45,9 @@ ADDITIONAL_PACKAGES="
 PROFILE=default/linux/riscv/23.0/rv64/lp64d
 # Please report bugs and link them to https://gcc.gnu.org/bugzilla/show_bug.cgi?id=116242
 # GCC_VER=16.0.9999
-GCC_VER=16.0.0_p20251005
-OUR_CFLAGS="-O3 -march=rv64gcv_zvl256b -pipe"
-#OUR_CFLAGS="-O3 -pipe"
+GCC_VER=16.0.1_p20260315
+#OUR_CFLAGS="-O3 -march=rv64gcv_zvl256b -pipe"
+OUR_CFLAGS="-O3 -march=rv64gc -pipe"
 OUR_CHOST=riscv64-unknown-linux-gnu
 OUR_KEYWORD=riscv
 CROSSDEV_ROOT=/usr/${OUR_CHOST}
