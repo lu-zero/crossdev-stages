@@ -93,7 +93,18 @@ setup_crossdev_sandbox() {
     # Map target architecture to Gentoo variables
     gentoo_arch "$target_arch"
     local chost="${ARCH}-unknown-linux-gnu"
-    local profile="default/linux/${ARCH}/23.0/${FLAVOR}"
+
+    # Fix profile path - need to handle riscv specially
+    local profile=""
+    case "$ARCH-$FLAVOR" in
+        riscv-rv64_lp64d-openrc)
+            profile="default/linux/riscv/23.0/rv64/lp64d"
+            ;;
+        *)
+            profile="default/linux/${ARCH}/23.0/${FLAVOR}"
+            ;;
+    esac
+
     local crossdev_root="/usr/${chost}"
     local crossdev_make_conf="${crossdev_root}/etc/portage/make.conf"
     local gcc_ver="16.0.1_p20260315"
