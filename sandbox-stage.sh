@@ -310,7 +310,7 @@ fetch_stage() {
     STAGE3_FILE=$(curl $LATEST_URL -s -f | grep -B1 'BEGIN PGP SIGNATURE' | head -n 1 | cut -d\  -f 1)
     STAGE3_URL="$BASE_URL/$STAGE3_FILE"
 
-    echo "Fetching $STAGE3_FILE"
+    echo "Fetching $STAGE3_FILE" >&2
 
     ensure_cache_dirs
 
@@ -323,7 +323,7 @@ fetch_stage() {
             return 1
         }
     else
-        echo "$stage_filename already cached"
+        echo "$stage_filename already cached" >&2
     fi
 
     echo "$stage_file_path"
@@ -341,12 +341,12 @@ unpack_stage() {
     ensure_cache_dirs
 
     if [[ -d "$sandbox_dir" ]]; then
-        echo "Sandbox $sandbox_name already exists"
+        echo "Sandbox $sandbox_name already exists" >&2
         echo "$sandbox_dir"
         return 0
     fi
 
-    echo "Creating sandbox $sandbox_name from $stage_file"
+    echo "Creating sandbox $sandbox_name from $stage_file" >&2
 
     hakoniwa run \
       --rootfs / --devfs /dev \
@@ -357,7 +357,7 @@ unpack_stage() {
       -B "$CACHE_DIR":/cache \
       -- /bin/sh -c "
         mkdir -p \"/cache/sandboxes/$sandbox_name\" &&
-        tar --overwrite -xpvf \"/cache/stages/$stage_filename\" \
+        tar --overwrite -xpf \"/cache/stages/$stage_filename\" \
           --xattrs-include='*.*' \
           --numeric-owner \
           --exclude='./dev' \
@@ -404,7 +404,7 @@ run_with_stage() {
       --userns=auto \
       --network=host \
       --tmpfs /tmp \
-      -B "$stage_dir":/target:rw \
+      -B "$stage_dir":/target \
       -e TERM="$TERM" \
       -e COLORTERM="$COLORTERM" \
       -e NO_COLOR="$NO_COLOR" \
@@ -423,12 +423,12 @@ unpack_target() {
     ensure_cache_dirs
 
     if [[ -d "$target_dir" ]]; then
-        echo "Target $target_name already exists"
+        echo "Target $target_name already exists" >&2
         echo "$target_dir"
         return 0
     fi
 
-    echo "Creating target $target_name from $stage_file"
+    echo "Creating target $target_name from $stage_file" >&2
 
     hakoniwa run \
       --rootfs / --devfs /dev \
@@ -439,7 +439,7 @@ unpack_target() {
       -B "$CACHE_DIR":/cache \
       -- /bin/sh -c "
         mkdir -p \"/cache/targets/$target_name\" &&
-        tar --overwrite -xpvf \"/cache/stages/$stage_filename\" \
+        tar --overwrite -xpf \"/cache/stages/$stage_filename\" \
           --xattrs-include='*.*' \
           --numeric-owner \
           --exclude='./dev' \
@@ -776,7 +776,7 @@ main() {
                       --userns=auto \
                       --tmpfs /tmp \
                       -B "$CACHE_DIR":/cache \
-                      -B "$target_dir":/target:ro \
+                      -b "$target_dir":/target \
                       -- /bin/sh -c "
                         tar -cpf \"/cache/stages/stage3-${FLAVOR}-${timestamp}.tar.xz\" \
                           --xattrs-include='*.*' \
