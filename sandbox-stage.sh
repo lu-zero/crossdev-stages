@@ -104,6 +104,11 @@ EOF
 #        set_make_conf_var "$make_conf" "LLVM_TARGETS" "$llvm_target"
 #    fi
 
+    # Set profile
+    local profile
+    profile=$(gentoo_profile "$arch")
+    run "$sandbox_dir" "eselect profile set ${profile}"
+
     echo "Portage configured for ${ARCH} in $sandbox_dir"
 }
 
@@ -211,6 +216,9 @@ install_dependencies() {
         "app-eselect/eselect-repository"
         "dev-lang/rust"
     )
+
+    echo "Syncing portage tree..."
+    run "$sandbox_dir" emerge-webrsync
 
     echo "Running getuto..."
     run "$sandbox_dir" getuto || echo "getuto failed, continuing anyway..."
@@ -486,7 +494,7 @@ usage() {
     echo "  $0 setup [arch] [name]          - Setup sandbox for arch (default: host arch, name: arch)"
     echo "  $0 list                         - List sandboxes"
     echo "  $0 destroy <name>              - Remove a sandbox"
-    echo "  $0 prepare [sandbox]            - Prepare sandbox with Portage config and host dependencies"
+    echo "  $0 prepare [--manual] [sandbox]  - Prepare sandbox (--manual: configure then enter shell)"
     echo "  $0 setup-crossdev [sandbox] [target-arch] - Setup cross-compilation environment in sandbox"
     echo "  $0 enter [sandbox]             - Enter interactive shell in sandbox (default: latest)"
     echo "  $0 run <sandbox> <cmd>         - Run command in specified sandbox"
@@ -560,6 +568,12 @@ main() {
             echo "Sandbox $1 removed."
             ;;
         prepare)
+            local manual=0
+            if [[ "$1" == "--manual" ]]; then
+                manual=1
+                shift
+            fi
+
             local sandbox_dir=""
             if [[ -n "$1" && "$1" != "latest" ]]; then
                 sandbox_dir="$SANDBOXES_DIR/$1"
@@ -584,7 +598,13 @@ main() {
                 exit 1
             fi
 
-            prepare_sandbox "$sandbox_dir" "$arch"
+            if [[ $manual -eq 1 ]]; then
+                configure_portage "$sandbox_dir" "$arch"
+                echo "Portage configured. Entering sandbox for manual setup..."
+                run "$sandbox_dir" bash --login
+            else
+                prepare_sandbox "$sandbox_dir" "$arch"
+            fi
             ;;
         setup-crossdev)
             local sandbox_dir=""
