@@ -5,19 +5,23 @@ if [[ `whoami` != "root" ]]; then
     exit 1
 fi
 
+BASE_DIR=$(cd "$(dirname "$0")" && pwd)
+source "$BASE_DIR/lib/board.sh"
+
 usage() {
-    echo "Usage: $0 <command> <stage-directory>"
+    echo "Usage: $0 <command> <board> <stage-directory>"
+    echo "       $0 prepare <board>"
+    echo
+    echo "Boards: $(list_boards | tr '\n' ' ')"
     echo
     echo "make   : Create a new stage1"
     echo "update : Update a pre-existing stage3"
     echo
     echo "install_clang : Install clang in the stage"
-    echo "install_boot  : Install the booloader requirements"
+    echo "install_boot  : Install the bootloader requirements"
     echo "install_more  : Install additional starting packages"
     exit 1
 }
-
-STAGE_DIR=$2
 
 STAGE1_PACKAGES=`grep -v '#' /var/db/repos/gentoo/profiles/default/linux/packages.build`
 ADDITIONAL_PACKAGES="
@@ -46,8 +50,6 @@ PROFILE=default/linux/riscv/23.0/rv64/lp64d
 # Please report bugs and link them to https://gcc.gnu.org/bugzilla/show_bug.cgi?id=116242
 # GCC_VER=16.0.9999
 GCC_VER=16.0.1_p20260315
-#OUR_CFLAGS="-O3 -march=rv64gcv_zvl256b -pipe"
-OUR_CFLAGS="-O3 -march=rv64gc -pipe"
 OUR_CHOST=riscv64-unknown-linux-gnu
 OUR_KEYWORD=riscv
 CROSSDEV_ROOT=/usr/${OUR_CHOST}
@@ -56,6 +58,14 @@ OPTS="-j50 --load-average 100"
 export EMERGE_DEFAULT_OPTS="$OPTS"
 export MAKEOPTS="$OPTS"
 export FEATURES="parallel-install -merge-wait"
+
+if [[ -z "$1" ]]; then
+    usage
+fi
+
+BOARD=$2
+load_board "$BOARD" || exit 1
+OUR_CFLAGS="$BOARD_CFLAGS"
 
 setup_crossdev() {
     local root=${CROSSDEV_ROOT}
@@ -78,7 +88,7 @@ setup_crossdev() {
     echo "=cross-riscv64-unknown-linux-gnu/gcc-15*" > /etc/portage/package.mask/cross-riscv64-unknown-linux-gnu-fixup
     # The new meson-based build system tries to run run iconv tests
     echo "dev-vcs/git -iconv" > ${root}/etc/portage/package.use/git
-    #echo 'CFLAGS="-O3 -march=rv64gc -pipe"' > ${root}/etc/portage/env/rv64gc
+    apply_workarounds "${root}"
     mkdir ${CROSSDEV_ROOT}/bin
     # crossdev starts as split_usr layout
     merge-usr --root ${CROSSDEV_ROOT}
@@ -102,6 +112,9 @@ prepare_stage1() {
 install_stage1() {
     ROOT=$1 USE=build riscv64-unknown-linux-gnu-emerge -k -b baselayout
     ROOT=$1 riscv64-unknown-linux-gnu-emerge -k -b ${STAGE1_PACKAGES}
+    if [[ ${#BOARD_PACKAGES_EXTRA[@]} -gt 0 ]]; then
+        ROOT=$1 riscv64-unknown-linux-gnu-emerge -k -b -o "${BOARD_PACKAGES_EXTRA[@]}"
+    fi
     ROOT=$1 USE=build riscv64-unknown-linux-gnu-emerge -k -b portage
 }
 
@@ -128,8 +141,7 @@ install_clang() {
 }
 
 install_boot() {
-    # dracut and busybox must be installed on host and target
-    ROOT=$1 riscv64-unknown-linux-gnu-emerge busybox dracut
+    ROOT=$1 riscv64-unknown-linux-gnu-emerge "${BOARD_PACKAGES_BOOT[@]}"
 }
 
 install_more() {
@@ -151,10 +163,6 @@ update_ldconfig() {
     ldconfig -v -C /etc/ld.so.cache -r $STAGE_DIR
 }
 
-if [[ -z "$1" ]]; then
-    usage
-fi
-
 case $1 in
     prepare)
         setup_crossdev
@@ -162,9 +170,11 @@ case $1 in
         ;;
 esac
 
-if [[ -z "$2" ]]; then
+if [[ -z "$3" ]]; then
     usage
 fi
+
+STAGE_DIR=$3
 
 case $1 in
     make)

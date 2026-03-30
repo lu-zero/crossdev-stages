@@ -1,0 +1,35 @@
+[board]
+name = "ky-x1"
+arch = "riscv64"
+cflags = "-O3 -march=rv64gcv_zvl256b -pipe"
+
+[repos.opensbi]
+url = "https://github.com/cyyself/opensbi"
+tag = "k1-opensbi"
+
+[repos.u-boot]
+url = "https://github.com/orangepi-xunlong/u-boot-orangepi.git"
+tag = "v2022.10-ky"
+
+[repos.linux]
+url = "https://github.com/OctopusET/linux-k1-x1.git"
+tag = "orange-pi-6.6-ky"
+
+[repos.firmware]
+url = "https://gitee.com/bianbu-linux/buildroot-ext.git"
+tag = "k1-bl-v2.1-release"
+
+[build]
+steps = ["checkout", "bootloader", "linux", "root", "boot", "image"]
+linux_defconfig = "x1_defconfig"
+uboot_defconfig = "x1_defconfig"
+opensbi_platform = "generic"
+opensbi_extra = "PLATFORM_DEFCONFIG=defconfig LLVM=1"
+opensbi_binary = "fw_dynamic.bin"
+
+[packages]
+boot = ["sys-apps/busybox", "sys-kernel/dracut"]
+extra = []
+
+[image]
+name = "gentoo-linux-ky-x1-sdcard.img"

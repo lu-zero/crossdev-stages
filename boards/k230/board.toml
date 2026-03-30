@@ -1,0 +1,36 @@
+[board]
+name = "k230"
+arch = "riscv64"
+cflags = "-O3 -march=rv64gcv_zvl128b -pipe"
+
+[repos.opensbi]
+url = "https://github.com/k230-linux/opensbi.git"
+tag = "k230"
+
+[repos.u-boot]
+url = "https://github.com/k230-linux/k230-vendor-uboot.git"
+tag = "k230"
+
+[repos.linux]
+url = "https://github.com/k230-linux/k230-linux-kernel.git"
+tag = "k230-v6.12.y"
+
+[build]
+# linux before bootloader: opensbi embeds kernel Image
+steps = ["checkout", "linux", "bootloader", "root", "boot", "image"]
+linux_defconfig = "k230_evb_linux_enable_vector_defconfig"
+linux_extra_targets = ["dtbs"]
+uboot_defconfig = "k230_canmv_defconfig"
+opensbi_platform = "generic"
+opensbi_extra = "FW_PAYLOAD=y FW_PAYLOAD_PATH={build_dir}/linux/arch/riscv/boot/Image"
+opensbi_binary = "fw_payload.bin"
+
+[packages]
+boot = ["sys-apps/busybox"]
+extra = ["dev-util/perf"]
+
+[workarounds.package_cflags]
+"dev-libs/libgcrypt" = "-O3 -march=rv64gc -pipe"
+
+[image]
+name = "gentoo-linux-k230_dev-sdcard.img"

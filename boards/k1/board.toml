@@ -1,0 +1,35 @@
+[board]
+name = "k1"
+arch = "riscv64"
+cflags = "-O3 -march=rv64gcv_zvl256b -pipe"
+
+[repos.opensbi]
+url = "https://github.com/cyyself/opensbi"
+tag = "k1-opensbi"
+
+[repos.u-boot]
+url = "https://gitee.com/bianbu-linux/uboot-2022.10.git"
+tag = "k1-bl-v2.2.7-release"
+
+[repos.linux]
+url = "https://gitee.com/bianbu-linux/linux-6.6.git"
+tag = "k1-bl-v2.2.7-release"
+
+[repos.firmware]
+url = "https://gitee.com/bianbu-linux/buildroot-ext.git"
+tag = "k1-bl-v2.2.7-release"
+
+[build]
+steps = ["checkout", "bootloader", "linux", "root", "boot", "image"]
+linux_defconfig = "k1_defconfig"
+uboot_defconfig = "k1_defconfig"
+opensbi_platform = "generic"
+opensbi_extra = "PLATFORM_DEFCONFIG=defconfig LLVM=1"
+opensbi_binary = "fw_dynamic.bin"
+
+[packages]
+boot = ["sys-apps/busybox", "sys-kernel/dracut"]
+extra = []
+
+[image]
+name = "gentoo-linux-k1_dev-sdcard.img"

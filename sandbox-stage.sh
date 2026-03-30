@@ -5,6 +5,9 @@
 # - unpack either in a known place in $CACHE_DIR/sandboxes/ or as needed
 # - provide an enter/run command that by default uses the latest sandbox
 
+BASE_DIR=$(cd "$(dirname "$0")" && pwd)
+source "$BASE_DIR/lib/board.sh"
+
 CACHE_DIR="${HOME}/.cache/crossdev-stages"
 STAGES_DIR="${CACHE_DIR}/stages"
 SANDBOXES_DIR="${CACHE_DIR}/sandboxes"
@@ -121,7 +124,11 @@ setup_crossdev_sandbox() {
     local crossdev_root="/usr/${chost}"
     local crossdev_make_conf="${crossdev_root}/etc/portage/make.conf"
     local cflags
-    cflags=$(target_cflags "$target_arch")
+    if [[ -n "$BOARD_CFLAGS" ]]; then
+        cflags="$BOARD_CFLAGS"
+    else
+        cflags=$(target_cflags "$target_arch")
+    fi
 
     echo "Setting up crossdev environment for ${chost} in sandbox..."
 
@@ -173,6 +180,11 @@ EOF"
 
     # Git iconv workaround
     run "$sandbox_dir" sh -c "echo \"dev-vcs/git -iconv\" > ${crossdev_root}/etc/portage/package.use/git"
+
+    # Apply board-specific workarounds
+    if [[ ${#BOARD_WORKAROUND_PKGS[@]} -gt 0 ]]; then
+        apply_workarounds "$sandbox_dir${crossdev_root}"
+    fi
 
     # Run merge-usr
     run "$sandbox_dir" merge-usr --root "${crossdev_root}"
@@ -300,7 +312,7 @@ fetch_stage() {
     STAGE3_FILE=$(curl $LATEST_URL -s -f | grep -B1 'BEGIN PGP SIGNATURE' | head -n 1 | cut -d\  -f 1)
     STAGE3_URL="$BASE_URL/$STAGE3_FILE"
 
-    echo "Fetching $STAGE3_FILE"
+    echo "Fetching $STAGE3_FILE" >&2
 
     ensure_cache_dirs
 
@@ -313,7 +325,7 @@ fetch_stage() {
             return 1
         }
     else
-        echo "$stage_filename already cached"
+        echo "$stage_filename already cached" >&2
     fi
 
     echo "$stage_file_path"
@@ -331,12 +343,12 @@ unpack_stage() {
     ensure_cache_dirs
 
     if [[ -d "$sandbox_dir" ]]; then
-        echo "Sandbox $sandbox_name already exists"
+        echo "Sandbox $sandbox_name already exists" >&2
         echo "$sandbox_dir"
         return 0
     fi
 
-    echo "Creating sandbox $sandbox_name from $stage_file"
+    echo "Creating sandbox $sandbox_name from $stage_file" >&2
 
     hakoniwa run \
       --rootfs / --devfs /dev \
@@ -347,7 +359,7 @@ unpack_stage() {
       -B "$CACHE_DIR":/cache \
       -- /bin/sh -c "
         mkdir -p \"/cache/sandboxes/$sandbox_name\" &&
-        tar --overwrite -xpvf \"/cache/stages/$stage_filename\" \
+        tar --overwrite -xpf \"/cache/stages/$stage_filename\" \
           --xattrs-include='*.*' \
           --numeric-owner \
           --exclude='./dev' \
@@ -413,12 +425,12 @@ unpack_target() {
     ensure_cache_dirs
 
     if [[ -d "$target_dir" ]]; then
-        echo "Target $target_name already exists"
+        echo "Target $target_name already exists" >&2
         echo "$target_dir"
         return 0
     fi
 
-    echo "Creating target $target_name from $stage_file"
+    echo "Creating target $target_name from $stage_file" >&2
 
     hakoniwa run \
       --rootfs / --devfs /dev \
@@ -429,7 +441,7 @@ unpack_target() {
       -B "$CACHE_DIR":/cache \
       -- /bin/sh -c "
         mkdir -p \"/cache/targets/$target_name\" &&
-        tar --overwrite -xpvf \"/cache/stages/$stage_filename\" \
+        tar --overwrite -xpf \"/cache/stages/$stage_filename\" \
           --xattrs-include='*.*' \
           --numeric-owner \
           --exclude='./dev' \
@@ -478,7 +490,11 @@ packages_from_file() {
 }
 
 usage() {
-    echo "$0 <command> [options]"
+    echo "$0 [--board <name>|--config <file>] <command> [options]"
+    echo ""
+    echo "Global options:"
+    echo "  --board <name>     - Load board config (from boards/<name>/board.toml)"
+    echo "  --config <file>    - Load board config from TOML file"
     echo ""
     echo "Sandbox commands:"
     echo "  $0 setup [arch] [name]          - Setup sandbox for arch (default: host arch, name: arch)"
@@ -501,18 +517,39 @@ usage() {
     echo "  $0 install-from [sandbox] [target] [arch] file - Install packages from file"
     echo "  $0 update-ldconfig [sandbox] [target] - Regenerate ld.so.cache in target"
     echo ""
+    echo "Boards: $(list_boards | tr '\n' ' ')"
     echo "Cache directory: $CACHE_DIR"
     exit 1
 }
 
 main() {
+    # Parse global flags
+    while [[ "$1" == --* ]]; do
+        case "$1" in
+            --board)
+                load_board "$2" || exit 1
+                shift 2
+                ;;
+            --config)
+                load_board "$2" || exit 1
+                shift 2
+                ;;
+            *)
+                echo "Unknown option: $1" >&2
+                usage
+                ;;
+        esac
+    done
+
     local cmd="$1"
     shift
 
     case $cmd in
         setup)
             local arch=""
-            if [[ -n "$1" ]]; then
+            if [[ -n "$BOARD_ARCH" ]]; then
+                arch="$BOARD_ARCH"
+            elif [[ -n "$1" ]]; then
                 arch="$1"
                 shift
             else
@@ -529,6 +566,7 @@ main() {
             local stage_file=$(fetch_stage "$arch") || exit 1
             local sandbox_dir=$(unpack_stage "$stage_file" "$sandbox_name") || exit 1
             echo "$arch" > "$SANDBOXES_DIR/$sandbox_name/.arch"
+            [[ -n "$BOARD_NAME" ]] && echo "$BOARD_NAME" > "$SANDBOXES_DIR/$sandbox_name/.board"
             echo "Sandbox ready: $sandbox_dir"
             ;;
         list)
@@ -686,18 +724,21 @@ main() {
                     ;;
                 setup)
                     local arch=""
-                    if [[ -n "$1" ]]; then
+                    if [[ -n "$BOARD_ARCH" ]]; then
+                        arch="$BOARD_ARCH"
+                    elif [[ -n "$1" ]]; then
                         arch="$1"; shift
                     else
                         arch=$(uname -m)
                     fi
-                    local target_name="${1:-$arch}"
+                    local target_name="${1:-${BOARD_NAME:-$arch}}"
                     [[ -n "$1" ]] && shift
 
                     local stage_file
                     stage_file=$(fetch_stage "$arch") || exit 1
                     unpack_target "$stage_file" "$target_name"
                     echo "$arch" > "$TARGETS_DIR/$target_name/.arch"
+                    [[ -n "$BOARD_NAME" ]] && echo "$BOARD_NAME" > "$TARGETS_DIR/$target_name/.board"
                     ;;
                 update)
                     local sandbox_dir=""
@@ -716,6 +757,11 @@ main() {
                         [[ -n "$1" ]] && shift
                     else
                         target_dir="$TARGETS_DIR/$1"; shift
+                    fi
+
+                    # Auto-load board config from target if not already loaded
+                    if [[ -z "$BOARD_NAME" && -f "$target_dir/.board" ]]; then
+                        load_board "$(cat "$target_dir/.board")"
                     fi
 
                     local target_arch="${1:-$(get_arch "$target_dir")}"
@@ -789,7 +835,8 @@ main() {
                 target_dir="$TARGETS_DIR/$1"; shift
             fi
 
-            local target_arch="${1:-$(get_arch "$target_dir")}"; shift
+            local target_arch="${1:-$(get_arch "$target_dir")}"
+            [[ -n "$1" ]] && shift
             [[ -z "$target_arch" ]] && { echo "Error: Cannot determine target arch. Specify explicitly." >&2; exit 1; }
 
             [[ ! -d "$sandbox_dir" ]] && { echo "Error: Sandbox not found: $sandbox_dir" >&2; exit 1; }
@@ -816,7 +863,8 @@ main() {
                 target_dir="$TARGETS_DIR/$1"; shift
             fi
 
-            local target_arch="${1:-$(get_arch "$target_dir")}"; shift
+            local target_arch="${1:-$(get_arch "$target_dir")}"
+            [[ -n "$1" ]] && shift
             [[ -z "$target_arch" ]] && { echo "Error: Cannot determine target arch. Specify explicitly." >&2; exit 1; }
             local pkg_file="$1"
 
