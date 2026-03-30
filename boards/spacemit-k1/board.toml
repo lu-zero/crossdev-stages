@@ -1,5 +1,5 @@
 [board]
-name = "k1"
+name = "spacemit-k1"
 arch = "riscv64"
 cflags = "-O3 -march=rv64gcv_zvl256b -pipe"
 
@@ -32,4 +32,4 @@ boot = ["sys-apps/busybox", "sys-kernel/dracut"]
 extra = []
 
 [image]
-name = "gentoo-linux-k1_dev-sdcard.img"
+name = "gentoo-linux-spacemit-k1-sdcard.img"

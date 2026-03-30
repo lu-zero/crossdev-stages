@@ -24,10 +24,10 @@ Build Gentoo stages leveraging crossdev
 ./sandbox-stage.sh setup-crossdev
 
 # Or with a specific board config
-./sandbox-stage.sh --board k1 setup
+./sandbox-stage.sh --board spacemit-k1 setup
 
 # Manage targets
-./sandbox-stage.sh --board k1 target setup
+./sandbox-stage.sh --board spacemit-k1 target setup
 ./sandbox-stage.sh target update
 ./sandbox-stage.sh target pack
 
@@ -39,16 +39,16 @@ Build Gentoo stages leveraging crossdev
 ### Direct workflow (requires root)
 ``` sh
 # Set up crossdev and build a stage
-./cross-stage.sh prepare k1
-./cross-stage.sh make k1 gentoo-k1
-./cross-stage.sh update k1 gentoo-k1
+./cross-stage.sh prepare spacemit-k1
+./cross-stage.sh make spacemit-k1 gentoo-k1
+./cross-stage.sh update spacemit-k1 gentoo-k1
 ```
 
 ### Build bootable images
 ``` sh
-./make-image.sh k1 build gentoo-k1
+./make-image.sh spacemit-k1 build gentoo-k1
 ./make-image.sh k230 build gentoo-k230
-./make-image.sh --dry-run k1 build gentoo-k1  # preview without building
+./make-image.sh --dry-run spacemit-k1 build gentoo-spacemit-k1  # preview without building
 ```
 
 ## Board configuration
@@ -56,7 +56,7 @@ Build Gentoo stages leveraging crossdev
 Each board is defined in `boards/<name>/`:
 
 ```
-boards/k1/
+boards/spacemit-k1/
   board.toml        # Board config: arch, cflags, repos, packages
   board.sh          # Optional: override build steps
   genimage.cfg      # Partition layout
@@ -68,7 +68,7 @@ All declarative config lives here. Shared by cross-stage.sh, sandbox-stage.sh, a
 
 ```toml
 [board]
-name = "k1"
+name = "spacemit-k1"
 arch = "riscv64"
 cflags = "-O3 -march=rv64gcv_zvl256b -pipe"
 
@@ -91,7 +91,7 @@ opensbi_extra = "PLATFORM_DEFCONFIG=defconfig LLVM=1"
 boot = ["sys-apps/busybox", "sys-kernel/dracut"]
 
 [image]
-name = "gentoo-linux-k1_dev-sdcard.img"
+name = "gentoo-linux-spacemit-k1-sdcard.img"
 ```
 
 ### board.sh (optional overrides)
