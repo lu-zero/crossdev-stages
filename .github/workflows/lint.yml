@@ -1,0 +1,28 @@
+name: Lint
+on: [push, pull_request]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Shell syntax check
+        run: |
+          for f in sandbox-stage.sh cross-stage.sh make-image.sh chroot-stage.sh lib/board.sh boards/*/board.sh; do
+            [ -f "$f" ] && bash -n "$f" && echo "$f: ok" || { echo "$f: FAIL"; exit 1; }
+          done
+
+      - name: TOML validation
+        run: |
+          for t in boards/*/board.toml; do
+            python3 -c "import tomllib; tomllib.load(open('$t','rb'))" && echo "$t: ok" || exit 1
+          done
+
+      - name: Python syntax check
+        run: python3 -m py_compile lib/toml2env.py
+
+      - name: Shellcheck
+        run: |
+          sudo apt-get install -y -qq shellcheck
+          shellcheck -s bash -e SC2164,SC2086,SC2034 sandbox-stage.sh || true
