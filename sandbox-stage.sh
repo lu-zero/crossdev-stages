@@ -104,11 +104,6 @@ EOF
 #        set_make_conf_var "$make_conf" "LLVM_TARGETS" "$llvm_target"
 #    fi
 
-    # Set profile
-    local profile
-    profile=$(gentoo_profile "$arch")
-    run "$sandbox_dir" "eselect profile set ${profile}"
-
     echo "Portage configured for ${ARCH} in $sandbox_dir"
 }
 
@@ -189,6 +184,7 @@ EOF"
     # Add gcc-16 prereleases
     run "$sandbox_dir" sh -c "echo \"<sys-devel/gcc-16.0.9999:16 **\" > ${crossdev_root}/etc/portage/package.accept_keywords/gcc"
 
+    touch "$sandbox_dir/.crossdev-${target_arch}"
     echo "Crossdev environment setup complete for ${chost}"
 }
 
@@ -247,6 +243,7 @@ prepare_sandbox() {
     # Install host dependencies
     install_dependencies "$sandbox_dir"
 
+    touch "$sandbox_dir/.prepared"
     echo "Sandbox preparation complete for $arch"
 }
 
@@ -301,6 +298,31 @@ llvm_arch() {
     echo "$llvm_target"
 }
 
+verify_stage() {
+    local stage_file="$1"
+    local digest_file="$2"
+    local filename=$(basename "$stage_file")
+
+    local expected
+    expected=$(awk '/# SHA512 HASH/{found=1; next} found && /'"$filename"'$/ && !/CONTENTS/{print $1; exit}' "$digest_file")
+
+    if [[ -z "$expected" ]]; then
+        echo "Warning: SHA512 hash not found in digests for $filename" >&2
+        return 0
+    fi
+
+    local actual
+    actual=$(sha512sum "$stage_file" | awk '{print $1}')
+
+    if [[ "$actual" == "$expected" ]]; then
+        echo "Hash verified: $filename" >&2
+        return 0
+    else
+        echo "Hash mismatch: $filename (corrupt or incomplete download)" >&2
+        return 1
+    fi
+}
+
 fetch_stage() {
     local arch=$1
     gentoo_arch $arch
@@ -316,14 +338,31 @@ fetch_stage() {
 
     local stage_filename=$(basename "$STAGE3_FILE")
     local stage_file_path="$STAGES_DIR/$stage_filename"
+    local digest_file_path="$stage_file_path.DIGESTS"
+
+    curl -sLf "$STAGE3_URL.DIGESTS" -o "$digest_file_path" || {
+        echo "Failed to download digests for $STAGE3_FILE" >&2
+        return 1
+    }
+
+    if [[ -f "$stage_file_path" ]]; then
+        echo "$stage_filename already cached, verifying..." >&2
+        if ! verify_stage "$stage_file_path" "$digest_file_path"; then
+            echo "Removing corrupt cached file, re-downloading..." >&2
+            rm -f "$stage_file_path"
+        fi
+    fi
 
     if [[ ! -f "$stage_file_path" ]]; then
-        curl -L "$STAGE3_URL" -o "$stage_file_path" || {
+        curl -Lf "$STAGE3_URL" -o "$stage_file_path" || {
             echo "Failed to download $STAGE3_FILE" >&2
+            rm -f "$stage_file_path"
             return 1
         }
-    else
-        echo "$stage_filename already cached" >&2
+        verify_stage "$stage_file_path" "$digest_file_path" || {
+            rm -f "$stage_file_path"
+            return 1
+        }
     fi
 
     echo "$stage_file_path"
@@ -488,56 +527,72 @@ packages_from_file() {
 }
 
 usage() {
-    echo "$0 <command> [options]"
+    echo "$0 [-s|--sandbox <name>] <command> [options]"
+    echo ""
+    echo "Global options:"
+    echo "  -s, --sandbox <name>           - Use named sandbox (default: latest)"
     echo ""
     echo "Sandbox commands:"
-    echo "  $0 setup [arch] [name]          - Setup sandbox for arch (default: host arch, name: arch)"
-    echo "  $0 list                         - List sandboxes"
-    echo "  $0 destroy <name>              - Remove a sandbox"
-    echo "  $0 prepare [--manual] [sandbox]  - Prepare sandbox (--manual: configure then enter shell)"
-    echo "  $0 setup-crossdev [sandbox] [target-arch] - Setup cross-compilation environment in sandbox"
-    echo "  $0 enter [sandbox]             - Enter interactive shell in sandbox (default: latest)"
-    echo "  $0 run <sandbox> <cmd>         - Run command in specified sandbox"
+    echo "  $0 setup [arch] [name]         - Setup sandbox for arch (default: host arch, name: arch)"
+    echo "  $0 list                        - List sandboxes"
+    echo "  $0 destroy [name]              - Remove a sandbox (name or -s)"
+    echo "  $0 prepare [--manual]          - Prepare sandbox (--manual: configure then enter shell)"
+    echo "  $0 setup-crossdev [target-arch] - Setup cross-compilation environment in sandbox"
+    echo "  $0 enter                       - Enter interactive shell in sandbox"
+    echo "  $0 run <cmd>                   - Run command in sandbox"
     echo ""
     echo "Target commands:"
     echo "  $0 target list                 - List unpacked targets"
     echo "  $0 target setup [arch] [name]  - Setup target sysroot for arch"
     echo "  $0 target destroy <name>       - Remove a target"
-    echo "  $0 target update [sandbox] [target] [arch] - Update target via cross-emerge"
+    echo "  $0 target update [target] [arch] - Update target via cross-emerge"
     echo "  $0 target pack [target] [arch] - Pack target as stage3 tarball in stages cache"
     echo ""
     echo "Package install commands:"
-    echo "  $0 install [sandbox] [target] [arch] pkg... - Install packages into target"
-    echo "  $0 install-from [sandbox] [target] [arch] file - Install packages from file"
-    echo "  $0 update-ldconfig [sandbox] [target] - Regenerate ld.so.cache in target"
+    echo "  $0 install [target] [arch] pkg... - Install packages into target"
+    echo "  $0 install-from [target] [arch] file - Install packages from file"
+    echo "  $0 update-ldconfig [target]    - Regenerate ld.so.cache in target"
     echo ""
     echo "Cache directory: $CACHE_DIR"
     exit 1
 }
 
 main() {
+    # Parse global --sandbox / -s flag before the command
+    local opt_sandbox=""
+    local filtered_args=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --sandbox|-s) opt_sandbox="$2"; shift 2 ;;
+            *) filtered_args+=("$1"); shift ;;
+        esac
+    done
+    set -- "${filtered_args[@]}"
+
+    # Resolve sandbox dir: from flag, or latest
+    resolve_sandbox() {
+        if [[ -n "$opt_sandbox" ]]; then
+            echo "$SANDBOXES_DIR/$opt_sandbox"
+        else
+            get_latest_sandbox
+        fi
+    }
+
     local cmd="$1"
     shift
 
     case $cmd in
         setup)
-            local arch=""
-            if [[ -n "$1" ]]; then
-                arch="$1"
-                shift
-            else
-                arch=$(uname -m)
-            fi
-
-            local sandbox_name="$arch"
-            if [[ -n "$1" ]]; then
-                sandbox_name="$1"
-                shift
-            fi
+            local arch="${1:-$(uname -m)}"
+            [[ -n "$1" ]] && shift
+            local sandbox_name="${1:-$arch}"
+            [[ -n "$1" ]] && shift
 
             echo "Setting up sandbox: $sandbox_name"
-            local stage_file=$(fetch_stage "$arch") || exit 1
-            local sandbox_dir=$(unpack_stage "$stage_file" "$sandbox_name") || exit 1
+            local stage_file
+            stage_file=$(fetch_stage "$arch") || exit 1
+            local sandbox_dir
+            sandbox_dir=$(unpack_stage "$stage_file" "$sandbox_name") || exit 1
             echo "$arch" > "$SANDBOXES_DIR/$sandbox_name/.arch"
             echo "Sandbox ready: $sandbox_dir"
             ;;
@@ -547,47 +602,44 @@ main() {
                     [[ -d "$d" ]] || continue
                     local name=$(basename "$d")
                     local arch=$(get_arch "$d")
-                    printf "%-20s %s\n" "$name" "${arch:-(unknown arch)}"
+                    local state="setup"
+                    [[ -f "$d/.prepared" ]] && state="prepared"
+                    local crossdev_targets=()
+                    for f in "$d"/.crossdev-*; do
+                        [[ -f "$f" ]] && crossdev_targets+=("${f##*/.crossdev-}")
+                    done
+                    if [[ ${#crossdev_targets[@]} -gt 0 ]]; then
+                        state="crossdev(${crossdev_targets[*]})"
+                    fi
+                    printf "%-20s %-10s %s\n" "$name" "${arch:-(unknown)}" "$state"
                 done
             else
                 echo "No sandboxes found."
             fi
             ;;
         destroy)
-            if [[ -z "$1" ]]; then
+            if [[ -z "$1" && -z "$opt_sandbox" ]]; then
                 echo "Usage: $0 destroy <sandbox-name>" >&2
                 exit 1
             fi
-            local target="$SANDBOXES_DIR/$1"
+            local name="${1:-$opt_sandbox}"
+            local target="$SANDBOXES_DIR/$name"
             if [[ ! -d "$target" ]]; then
-                echo "Error: Sandbox not found: $1" >&2
+                echo "Error: Sandbox not found: $name" >&2
                 exit 1
             fi
-            echo "Removing sandbox: $1"
+            echo "Removing sandbox: $name"
             rm -rf "$target"
-            echo "Sandbox $1 removed."
+            echo "Sandbox $name removed."
             ;;
         prepare)
             local manual=0
-            if [[ "$1" == "--manual" ]]; then
-                manual=1
-                shift
-            fi
+            [[ "$1" == "--manual" ]] && { manual=1; shift; }
 
-            local sandbox_dir=""
-            if [[ -n "$1" && "$1" != "latest" ]]; then
-                sandbox_dir="$SANDBOXES_DIR/$1"
-                shift
-            else
-                sandbox_dir=$(get_latest_sandbox)
-                if [[ -z "$sandbox_dir" ]]; then
-                    echo "Error: No sandbox found. Please run setup first." >&2
-                    exit 1
-                fi
-            fi
-
-            if [[ ! -d "$sandbox_dir" ]]; then
-                echo "Error: Sandbox not found: $sandbox_dir" >&2
+            local sandbox_dir
+            sandbox_dir=$(resolve_sandbox)
+            if [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]]; then
+                echo "Error: No sandbox found. Please run setup first." >&2
                 exit 1
             fi
 
@@ -607,72 +659,57 @@ main() {
             fi
             ;;
         setup-crossdev)
-            local sandbox_dir=""
-            local target_arch=""
-            if [[ -n "$1" && "$1" != "latest" ]]; then
-                sandbox_dir="$SANDBOXES_DIR/$1"
-                shift
-            else
-                sandbox_dir=$(get_latest_sandbox)
-                [[ -n "$1" ]] && shift
+            local target_arch="${1:-}"
+            [[ -n "$1" ]] && shift
+
+            local sandbox_dir
+            sandbox_dir=$(resolve_sandbox)
+
+            # Auto-setup sandbox if none exists
+            if [[ ! -d "$sandbox_dir" ]]; then
+                local host_arch=$(uname -m)
+                echo "No sandbox found, setting up sandbox for host arch ($host_arch)..."
+                local stage_file
+                stage_file=$(fetch_stage "$host_arch") || exit 1
+                unpack_stage "$stage_file" "$host_arch" || exit 1
+                sandbox_dir="$SANDBOXES_DIR/$host_arch"
+                echo "$host_arch" > "$sandbox_dir/.arch"
             fi
 
-            if [[ ! -d "$sandbox_dir" ]]; then
-                echo "Error: No sandbox found. Please run setup first." >&2
+            local arch
+            arch=$(get_arch "$sandbox_dir")
+            if [[ -z "$arch" ]]; then
+                echo "Error: No .arch metadata in $sandbox_dir (old sandbox?)" >&2
                 exit 1
             fi
 
-            if [[ -n "$1" ]]; then
-                target_arch="$1"
-                shift
-            else
-                target_arch=$(get_arch "$sandbox_dir")
-                if [[ -z "$target_arch" ]]; then
-                    echo "Error: No .arch metadata in $sandbox_dir (old sandbox?)" >&2
-                    exit 1
-                fi
+            # Auto-prepare sandbox if not yet prepared
+            if [[ ! -f "$sandbox_dir/.prepared" ]]; then
+                echo "Sandbox not prepared, running prepare..."
+                prepare_sandbox "$sandbox_dir" "$arch"
             fi
+
+            # Default target arch to sandbox host arch if not specified
+            : "${target_arch:=$arch}"
 
             setup_crossdev_sandbox "$sandbox_dir" "$target_arch"
             ;;
         enter)
-            local sandbox_dir=""
-            if [[ -n "$1" && "$1" != "latest" ]]; then
-                sandbox_dir="$SANDBOXES_DIR/$1"
-            else
-                sandbox_dir=$(get_latest_sandbox)
-                if [[ -z "$sandbox_dir" ]]; then
-                    echo "Error: No sandbox found. Please run setup first." >&2
-                    exit 1
-                fi
-            fi
-
-            if [[ ! -d "$sandbox_dir" ]]; then
+            local sandbox_dir
+            sandbox_dir=$(resolve_sandbox)
+            if [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]]; then
                 echo "Error: No sandbox found. Please run setup first." >&2
                 exit 1
             fi
-
             run "$sandbox_dir" bash --login
             ;;
         run)
-            local sandbox_dir=""
-            if [[ "$1" == "latest" ]]; then
-                sandbox_dir=$(get_latest_sandbox)
-                if [[ -z "$sandbox_dir" ]]; then
-                    echo "Error: No sandbox found. Please run setup first." >&2
-                    exit 1
-                fi
-                shift
-            else
-                sandbox_dir="$SANDBOXES_DIR/$1"
-                shift
-            fi
-
-            if [[ ! -d "$sandbox_dir" ]]; then
-                echo "Error: Sandbox not found: $sandbox_dir" >&2
+            local sandbox_dir
+            sandbox_dir=$(resolve_sandbox)
+            if [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]]; then
+                echo "Error: No sandbox found. Please run setup first." >&2
                 exit 1
             fi
-
             run "$sandbox_dir" "$@"
             ;;
         target)
@@ -707,12 +744,8 @@ main() {
                     echo "Target $1 removed."
                     ;;
                 setup)
-                    local arch=""
-                    if [[ -n "$1" ]]; then
-                        arch="$1"; shift
-                    else
-                        arch=$(uname -m)
-                    fi
+                    local arch="${1:-$(uname -m)}"
+                    [[ -n "$1" ]] && shift
                     local target_name="${1:-$arch}"
                     [[ -n "$1" ]] && shift
 
@@ -722,15 +755,6 @@ main() {
                     echo "$arch" > "$TARGETS_DIR/$target_name/.arch"
                     ;;
                 update)
-                    local sandbox_dir=""
-                    if [[ -z "$1" || "$1" == "latest" ]]; then
-                        sandbox_dir=$(get_latest_sandbox)
-                        [[ -z "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
-                        [[ -n "$1" ]] && shift
-                    else
-                        sandbox_dir="$SANDBOXES_DIR/$1"; shift
-                    fi
-
                     local target_dir=""
                     if [[ -z "$1" || "$1" == "latest" ]]; then
                         target_dir=$(get_latest_target)
@@ -742,6 +766,10 @@ main() {
 
                     local target_arch="${1:-$(get_arch "$target_dir")}"
                     [[ -n "$1" ]] && shift
+
+                    local sandbox_dir
+                    sandbox_dir=$(resolve_sandbox)
+                    [[ -z "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
 
                     [[ ! -d "$sandbox_dir" ]] && { echo "Error: Sandbox not found: $sandbox_dir" >&2; exit 1; }
                     [[ ! -d "$target_dir" ]] && { echo "Error: Target not found: $target_dir" >&2; exit 1; }
@@ -793,15 +821,6 @@ main() {
             esac
             ;;
         install)
-            local sandbox_dir=""
-            if [[ -z "$1" || "$1" == "latest" ]]; then
-                sandbox_dir=$(get_latest_sandbox)
-                [[ -z "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
-                [[ -n "$1" ]] && shift
-            else
-                sandbox_dir="$SANDBOXES_DIR/$1"; shift
-            fi
-
             local target_dir=""
             if [[ -z "$1" || "$1" == "latest" ]]; then
                 target_dir=$(get_latest_target)
@@ -811,8 +830,12 @@ main() {
                 target_dir="$TARGETS_DIR/$1"; shift
             fi
 
-            local target_arch="${1:-$(get_arch "$target_dir")}"; shift
+            local target_arch="${1:-$(get_arch "$target_dir")}"; [[ -n "$1" ]] && shift
             [[ -z "$target_arch" ]] && { echo "Error: Cannot determine target arch. Specify explicitly." >&2; exit 1; }
+
+            local sandbox_dir
+            sandbox_dir=$(resolve_sandbox)
+            [[ -z "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
 
             [[ ! -d "$sandbox_dir" ]] && { echo "Error: Sandbox not found: $sandbox_dir" >&2; exit 1; }
             [[ ! -d "$target_dir" ]] && { echo "Error: Target not found: $target_dir" >&2; exit 1; }
@@ -820,15 +843,6 @@ main() {
             install_packages "$sandbox_dir" "$target_dir" "$target_arch" "$@"
             ;;
         install-from)
-            local sandbox_dir=""
-            if [[ -z "$1" || "$1" == "latest" ]]; then
-                sandbox_dir=$(get_latest_sandbox)
-                [[ -z "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
-                [[ -n "$1" ]] && shift
-            else
-                sandbox_dir="$SANDBOXES_DIR/$1"; shift
-            fi
-
             local target_dir=""
             if [[ -z "$1" || "$1" == "latest" ]]; then
                 target_dir=$(get_latest_target)
@@ -838,8 +852,13 @@ main() {
                 target_dir="$TARGETS_DIR/$1"; shift
             fi
 
-            local target_arch="${1:-$(get_arch "$target_dir")}"; shift
+            local target_arch="${1:-$(get_arch "$target_dir")}"; [[ -n "$1" ]] && shift
             [[ -z "$target_arch" ]] && { echo "Error: Cannot determine target arch. Specify explicitly." >&2; exit 1; }
+
+            local sandbox_dir
+            sandbox_dir=$(resolve_sandbox)
+            [[ -z "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+
             local pkg_file="$1"
 
             [[ ! -d "$sandbox_dir" ]] && { echo "Error: Sandbox not found: $sandbox_dir" >&2; exit 1; }
@@ -851,15 +870,6 @@ main() {
                 $(packages_from_file "$pkg_file")
             ;;
         update-ldconfig)
-            local sandbox_dir=""
-            if [[ -z "$1" || "$1" == "latest" ]]; then
-                sandbox_dir=$(get_latest_sandbox)
-                [[ -z "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
-                [[ -n "$1" ]] && shift
-            else
-                sandbox_dir="$SANDBOXES_DIR/$1"; shift
-            fi
-
             local target_dir=""
             if [[ -z "$1" || "$1" == "latest" ]]; then
                 target_dir=$(get_latest_target)
@@ -868,6 +878,10 @@ main() {
             else
                 target_dir="$TARGETS_DIR/$1"; shift
             fi
+
+            local sandbox_dir
+            sandbox_dir=$(resolve_sandbox)
+            [[ -z "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
 
             [[ ! -d "$sandbox_dir" ]] && { echo "Error: Sandbox not found: $sandbox_dir" >&2; exit 1; }
             [[ ! -d "$target_dir" ]] && { echo "Error: Target not found: $target_dir" >&2; exit 1; }
