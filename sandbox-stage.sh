@@ -138,10 +138,16 @@ setup_crossdev_sandbox() {
     # Set up portage profile (crossdev links a wrong default)
     run "$sandbox_dir" "export PORTAGE_CONFIGROOT=${crossdev_root}; eselect profile set ${profile}"
 
-    # Configure CFLAGS/CXXFLAGS and LLVM_TARGETS in make.conf
+    # Configure make.conf for cross environment
     local host_make_conf="$sandbox_dir${crossdev_make_conf}"
+    local cpu_count=$(nproc 2>/dev/null || echo 4)
+    local p=$((cpu_count / 2 + 1))
+    local q="$cpu_count"
     set_make_conf_var "$host_make_conf" "CFLAGS" "${cflags}"
     set_make_conf_var "$host_make_conf" "CXXFLAGS" "${cflags}"
+    set_make_conf_var "$host_make_conf" "MAKEOPTS" "-j${p} --load-average ${q}"
+    set_make_conf_var "$host_make_conf" "EMERGE_DEFAULT_OPTS" "--jobs=${p} --load-average ${q}"
+    set_make_conf_var "$host_make_conf" "FEATURES" "parallel-install -merge-wait"
 
     local llvm_target=$(llvm_arch "$target_arch")
     if [[ -n "$llvm_target" ]]; then
@@ -213,6 +219,7 @@ install_dependencies() {
         "sys-fs/genimage"
         "app-eselect/eselect-repository"
         "dev-lang/rust"
+        "sys-kernel/gentoo-sources"
     )
 
     echo "Syncing portage tree..."
@@ -507,7 +514,7 @@ update_stage3() {
     run_with_stage "$sandbox_dir" "$stage_dir" "${chost}-emerge -b -k gcc"
     run_with_stage "$sandbox_dir" "$stage_dir" "${chost}-emerge -b -k sys-libs/binutils-libs"
     run_with_stage "$sandbox_dir" "$stage_dir" "${chost}-emerge -b -k -u system"
-    run_with_stage "$sandbox_dir" "$stage_dir" "ROOT=/target ${chost}-emerge -b -k -e @world"
+    run_with_stage "$sandbox_dir" "$stage_dir" "KERNEL_DIR=/usr/src/linux ROOT=/target ${chost}-emerge -b -k -e @world"
     update_ldconfig_sandbox "$sandbox_dir" "$stage_dir"
     echo "$(date -u +%Y%m%dT%H%M%SZ)" >> "$stage_dir/.updated"
 }
