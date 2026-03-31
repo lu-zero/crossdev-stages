@@ -135,7 +135,7 @@ setup_crossdev_sandbox() {
     # Add rust-std workaround
     run "$sandbox_dir" "echo \"cross-${target_arch}-unknown-linux-gnu/rust-std **\" > /etc/portage/package.accept_keywords/rust-std"
 
-    # Set up portage profile
+    # Set up portage profile (crossdev links a wrong default)
     run "$sandbox_dir" "export PORTAGE_CONFIGROOT=${crossdev_root}; eselect profile set ${profile}"
 
     # Configure CFLAGS/CXXFLAGS and LLVM_TARGETS in make.conf
@@ -180,7 +180,7 @@ EOF
     # Apply host sandbox workarounds
     run "$sandbox_dir" mkdir -p "/etc/portage/package.{accept_keywords,mask}"
 
-    # Run merge-usr
+    # Fix split-usr layout created by crossdev before emerging into the sysroot
     run "$sandbox_dir" merge-usr --root "${crossdev_root}"
 
     # Install crossdev toolchain
@@ -507,7 +507,7 @@ update_stage3() {
     run_with_stage "$sandbox_dir" "$stage_dir" "${chost}-emerge -b -k gcc"
     run_with_stage "$sandbox_dir" "$stage_dir" "${chost}-emerge -b -k sys-libs/binutils-libs"
     run_with_stage "$sandbox_dir" "$stage_dir" "${chost}-emerge -b -k -u system"
-    run_with_stage "$sandbox_dir" "$stage_dir" "ROOT=/target ${chost}-emerge -k -e @world"
+    run_with_stage "$sandbox_dir" "$stage_dir" "ROOT=/target ${chost}-emerge -b -k -e @world"
     update_ldconfig_sandbox "$sandbox_dir" "$stage_dir"
     echo "$(date -u +%Y%m%dT%H%M%SZ)" >> "$stage_dir/.updated"
 }
