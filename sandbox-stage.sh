@@ -138,51 +138,53 @@ setup_crossdev_sandbox() {
     # Set up portage profile
     run "$sandbox_dir" "export PORTAGE_CONFIGROOT=${crossdev_root}; eselect profile set ${profile}"
 
-    # Configure CFLAGS in make.conf
-    run "$sandbox_dir" sed -i -e "s:CFLAGS=.*:CFLAGS=\"${cflags}\":" "${crossdev_make_conf}"
+    # Configure CFLAGS/CXXFLAGS and LLVM_TARGETS in make.conf
+    local host_make_conf="$sandbox_dir${crossdev_make_conf}"
+    set_make_conf_var "$host_make_conf" "CFLAGS" "${cflags}"
+    set_make_conf_var "$host_make_conf" "CXXFLAGS" "${cflags}"
 
-    # Set LLVM_TARGETS using our llvm_arch function
     local llvm_target=$(llvm_arch "$target_arch")
     if [[ -n "$llvm_target" ]]; then
-        run "$sandbox_dir" sh -c "echo \"LLVM_TARGETS=\\\"${llvm_target}\\\"\" >> ${crossdev_make_conf}"
+        set_make_conf_var "$host_make_conf" "LLVM_TARGETS" "${llvm_target}"
     fi
 
-    # Create portage environment directories
-    run "$sandbox_dir" mkdir -p "${crossdev_root}/etc/portage/env"
-    run "$sandbox_dir" sh -c "echo 'CFLAGS=\"-O3 -pipe\"' >> ${crossdev_root}/etc/portage/env/plain.conf"
-    run "$sandbox_dir" sh -c "echo 'CXXFLAGS=\"-O3 -pipe\"' >> ${crossdev_root}/etc/portage/env/plain.conf"
+    # Write crossdev portage config directly on the host filesystem
+    local host_crossdev_root="$sandbox_dir${crossdev_root}"
+    mkdir -p "$host_crossdev_root/etc/portage/env"
+    mkdir -p "$host_crossdev_root/etc/portage/package.env"
+    mkdir -p "$host_crossdev_root/etc/portage/package.use"
+    mkdir -p "$host_crossdev_root/etc/portage/package.accept_keywords"
 
-    # Create package.env directory
-    run "$sandbox_dir" mkdir -p "${crossdev_root}/etc/portage/package.env"
-    run "$sandbox_dir" sh -c "echo \"dev-lang/rust plain.conf\" > ${crossdev_root}/etc/portage/package.env/rust"
+    # env/plain.conf: strip arch-specific flags (used for packages like rust)
+    cat > "$host_crossdev_root/etc/portage/env/plain.conf" << 'EOF'
+CFLAGS="-O3 -pipe"
+CXXFLAGS="-O3 -pipe"
+EOF
 
-    # Create package.use and package.accept_keywords directories
-    run "$sandbox_dir" mkdir -p "${crossdev_root}/etc/portage/package.{use,accept_keywords}"
+    # package.env
+    echo "dev-lang/rust plain.conf" > "$host_crossdev_root/etc/portage/package.env/rust"
 
-    # Configure busybox, clang, and rust package settings
-    run "$sandbox_dir" sh -c "cat > ${crossdev_root}/etc/portage/package.use/busybox << 'EOF'
+    # package.use
+    cat > "$host_crossdev_root/etc/portage/package.use/busybox" << 'EOF'
 >=virtual/libcrypt-2-r1 static-libs
 >=sys-libs/libxcrypt-4.4.36-r3 static-libs
 >=sys-apps/busybox-1.36.1-r3 -pam static
-EOF"
+EOF
+    echo "llvm-core/clang -extra" > "$host_crossdev_root/etc/portage/package.use/clang"
+    echo "dev-lang/rust rustfmt -system-llvm" > "$host_crossdev_root/etc/portage/package.use/rust"
+    echo "dev-vcs/git -iconv" > "$host_crossdev_root/etc/portage/package.use/git"
 
-    run "$sandbox_dir" sh -c "echo \"llvm-core/clang -extra\" > ${crossdev_root}/etc/portage/package.use/clang"
-    run "$sandbox_dir" sh -c "echo \"dev-lang/rust rustfmt -system-llvm\" > ${crossdev_root}/etc/portage/package.use/rust"
+    # package.accept_keywords
+    echo "<sys-devel/gcc-16.0.9999:16 **" > "$host_crossdev_root/etc/portage/package.accept_keywords/gcc"
 
-    # Apply workarounds
+    # Apply host sandbox workarounds
     run "$sandbox_dir" mkdir -p "/etc/portage/package.{accept_keywords,mask}"
-
-    # Git iconv workaround
-    run "$sandbox_dir" sh -c "echo \"dev-vcs/git -iconv\" > ${crossdev_root}/etc/portage/package.use/git"
 
     # Run merge-usr
     run "$sandbox_dir" merge-usr --root "${crossdev_root}"
 
     # Install crossdev toolchain
     run "$sandbox_dir" crossdev "${chost}" --ex-pkg sys-devel/clang-crossdev-wrappers --ex-pkg sys-devel/rust-std
-
-    # Add gcc-16 prereleases
-    run "$sandbox_dir" sh -c "echo \"<sys-devel/gcc-16.0.9999:16 **\" > ${crossdev_root}/etc/portage/package.accept_keywords/gcc"
 
     touch "$sandbox_dir/.crossdev-${target_arch}"
     echo "Crossdev environment setup complete for ${chost}"
@@ -507,6 +509,7 @@ update_stage3() {
     run_with_stage "$sandbox_dir" "$stage_dir" "${chost}-emerge -b -k -u system"
     run_with_stage "$sandbox_dir" "$stage_dir" "ROOT=/target ${chost}-emerge -k -e @world"
     update_ldconfig_sandbox "$sandbox_dir" "$stage_dir"
+    echo "$(date -u +%Y%m%dT%H%M%SZ)" >> "$stage_dir/.updated"
 }
 
 install_packages() {
@@ -519,6 +522,7 @@ install_packages() {
     echo "Installing packages into target for ${chost}..."
     run_with_stage "$sandbox_dir" "$stage_dir" "ROOT=/target ${chost}-emerge -b -k $*"
     update_ldconfig_sandbox "$sandbox_dir" "$stage_dir"
+    echo "$(date -u +%Y%m%dT%H%M%SZ) $*" >> "$stage_dir/.packages"
 }
 
 packages_from_file() {
@@ -723,7 +727,18 @@ main() {
                             [[ -d "$d" ]] || continue
                             local name=$(basename "$d")
                             local arch=$(get_arch "$d")
-                            printf "%-20s %s\n" "$name" "${arch:-(unknown arch)}"
+                            local state="setup"
+                            if [[ -f "$d/.updated" ]]; then
+                                local last_update
+                                last_update=$(tail -n1 "$d/.updated")
+                                state="updated($last_update)"
+                            fi
+                            if [[ -f "$d/.packages" ]]; then
+                                local pkg_count
+                                pkg_count=$(wc -l < "$d/.packages")
+                                state="${state} packages(${pkg_count})"
+                            fi
+                            printf "%-20s %-10s %s\n" "$name" "${arch:-(unknown)}" "${state# }"
                         done
                     else
                         echo "No targets found."
