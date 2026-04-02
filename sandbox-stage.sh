@@ -537,6 +537,43 @@ packages_from_file() {
     grep -v '#' "$file" | grep -v '^[[:space:]]*$'
 }
 
+ensure_crossdev() {
+    local sandbox_dir="$1"
+    local target_arch="${2:-}"
+
+    # Auto-setup sandbox if none exists
+    if [[ ! -d "$sandbox_dir" ]]; then
+        local host_arch=$(uname -m)
+        echo "No sandbox found, setting up sandbox for host arch ($host_arch)..."
+        local stage_file
+        stage_file=$(fetch_stage "$host_arch") || return 1
+        unpack_stage "$stage_file" "$host_arch" || return 1
+        sandbox_dir="$SANDBOXES_DIR/$host_arch"
+        echo "$host_arch" > "$sandbox_dir/.arch"
+    fi
+
+    local arch
+    arch=$(get_arch "$sandbox_dir")
+    if [[ -z "$arch" ]]; then
+        echo "Error: No .arch metadata in $sandbox_dir (old sandbox?)" >&2
+        return 1
+    fi
+
+    # Auto-prepare sandbox if not yet prepared
+    if [[ ! -f "$sandbox_dir/.prepared" ]]; then
+        echo "Sandbox not prepared, running prepare..."
+        prepare_sandbox "$sandbox_dir" "$arch"
+    fi
+
+    # Default target arch to sandbox host arch if not specified
+    : "${target_arch:=$arch}"
+
+    # Auto-setup crossdev if not yet done for this target arch
+    if [[ ! -f "$sandbox_dir/.crossdev-${target_arch}" ]]; then
+        setup_crossdev_sandbox "$sandbox_dir" "$target_arch"
+    fi
+}
+
 usage() {
     echo "$0 [-s|--sandbox <name>] <command> [options]"
     echo ""
@@ -675,35 +712,7 @@ main() {
 
             local sandbox_dir
             sandbox_dir=$(resolve_sandbox)
-
-            # Auto-setup sandbox if none exists
-            if [[ ! -d "$sandbox_dir" ]]; then
-                local host_arch=$(uname -m)
-                echo "No sandbox found, setting up sandbox for host arch ($host_arch)..."
-                local stage_file
-                stage_file=$(fetch_stage "$host_arch") || exit 1
-                unpack_stage "$stage_file" "$host_arch" || exit 1
-                sandbox_dir="$SANDBOXES_DIR/$host_arch"
-                echo "$host_arch" > "$sandbox_dir/.arch"
-            fi
-
-            local arch
-            arch=$(get_arch "$sandbox_dir")
-            if [[ -z "$arch" ]]; then
-                echo "Error: No .arch metadata in $sandbox_dir (old sandbox?)" >&2
-                exit 1
-            fi
-
-            # Auto-prepare sandbox if not yet prepared
-            if [[ ! -f "$sandbox_dir/.prepared" ]]; then
-                echo "Sandbox not prepared, running prepare..."
-                prepare_sandbox "$sandbox_dir" "$arch"
-            fi
-
-            # Default target arch to sandbox host arch if not specified
-            : "${target_arch:=$arch}"
-
-            setup_crossdev_sandbox "$sandbox_dir" "$target_arch"
+            ensure_crossdev "$sandbox_dir" "${target_arch:-}"
             ;;
         enter)
             local sandbox_dir
@@ -775,6 +784,7 @@ main() {
                     stage_file=$(fetch_stage "$arch") || exit 1
                     unpack_target "$stage_file" "$target_name"
                     echo "$arch" > "$TARGETS_DIR/$target_name/.arch"
+                    ensure_crossdev "$(resolve_sandbox)" "$arch" || exit 1
                     ;;
                 update)
                     local target_dir=""
