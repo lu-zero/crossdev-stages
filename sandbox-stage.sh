@@ -187,6 +187,7 @@ EOF
     run "$sandbox_dir" mkdir -p "/etc/portage/package.{accept_keywords,mask}"
 
     # Fix split-usr layout created by crossdev before emerging into the sysroot
+    run "$sandbox_dir" mkdir "${crossdev_root}/bin"
     run "$sandbox_dir" merge-usr --root "${crossdev_root}"
 
     # Install crossdev toolchain
