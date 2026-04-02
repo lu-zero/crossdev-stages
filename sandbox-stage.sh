@@ -574,6 +574,21 @@ ensure_crossdev() {
     fi
 }
 
+ensure_target() {
+    local arch="$1"
+    local target_name="$2"
+    local target_dir="$TARGETS_DIR/$target_name"
+
+    if [[ ! -d "$target_dir" ]]; then
+        local stage_file
+        stage_file=$(fetch_stage "$arch") || return 1
+        unpack_target "$stage_file" "$target_name"
+        echo "$arch" > "$target_dir/.arch"
+    fi
+
+    ensure_crossdev "$(resolve_sandbox)" "$arch" || return 1
+}
+
 usage() {
     echo "$0 [-s|--sandbox <name>] <command> [options]"
     echo ""
@@ -780,11 +795,7 @@ main() {
                     local target_name="${1:-$arch}"
                     [[ -n "$1" ]] && shift
 
-                    local stage_file
-                    stage_file=$(fetch_stage "$arch") || exit 1
-                    unpack_target "$stage_file" "$target_name"
-                    echo "$arch" > "$TARGETS_DIR/$target_name/.arch"
-                    ensure_crossdev "$(resolve_sandbox)" "$arch" || exit 1
+                    ensure_target "$arch" "$target_name" || exit 1
                     ;;
                 update)
                     local target_dir=""
@@ -798,15 +809,13 @@ main() {
 
                     local target_arch="${1:-$(get_arch "$target_dir")}"
                     [[ -n "$1" ]] && shift
+                    [[ -z "$target_arch" ]] && { echo "Error: Cannot determine target arch. Specify explicitly." >&2; exit 1; }
+
+                    local target_name=$(basename "$target_dir")
+                    ensure_target "$target_arch" "$target_name" || exit 1
 
                     local sandbox_dir
                     sandbox_dir=$(resolve_sandbox)
-                    [[ -z "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
-
-                    [[ ! -d "$sandbox_dir" ]] && { echo "Error: Sandbox not found: $sandbox_dir" >&2; exit 1; }
-                    [[ ! -d "$target_dir" ]] && { echo "Error: Target not found: $target_dir" >&2; exit 1; }
-                    [[ -z "$target_arch" ]] && { echo "Error: Cannot determine target arch. Specify explicitly." >&2; exit 1; }
-
                     update_stage3 "$sandbox_dir" "$target_dir" "$target_arch"
                     ;;
                 pack)
