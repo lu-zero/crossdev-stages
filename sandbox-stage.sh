@@ -145,7 +145,7 @@ setup_crossdev_sandbox() {
 
     # Get the latest gcc-16 version and set it for both host and cross
     local gcc_16_version
-    gcc_16_version=$(run "$sandbox_dir" "gcc-config -l | grep '^\s*\[' | grep '16' | head -n1 | sed 's/^\[//;s/\]//'" | tail -n1)
+    gcc_16_version=$(run "$sandbox_dir" "gcc-config -l | grep '16' | head -n1 | awk '{print \$2}'")
 
     # Set the host compiler to use gcc-16
     run "$sandbox_dir" "gcc-config ${gcc_16_version}"
