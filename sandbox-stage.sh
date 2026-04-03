@@ -1,4 +1,5 @@
 #! /bin/bash
+set -euo pipefail
 # More structured sandbox prototype
 #
 # - cache the stage3 in a .cache path
@@ -143,7 +144,8 @@ setup_crossdev_sandbox() {
     run "$sandbox_dir" "emerge -1 sys-devel/gcc:16"
 
     # Get the latest gcc-16 version and set it for both host and cross
-    local gcc_16_version=$(run "$sandbox_dir" "gcc-config -l | grep '^\s*\[' | grep '16' | head -n1 | sed 's/^\[//;s/\]//'" | tail -n1)
+    local gcc_16_version
+    gcc_16_version=$(run "$sandbox_dir" "gcc-config -l | grep '^\s*\[' | grep '16' | head -n1 | sed 's/^\[//;s/\]//'" | tail -n1)
 
     # Set the host compiler to use gcc-16
     run "$sandbox_dir" "gcc-config ${gcc_16_version}"
@@ -241,12 +243,12 @@ install_dependencies() {
     run "$sandbox_dir" emerge-webrsync
 
     echo "Running getuto..."
-    run "$sandbox_dir" getuto || echo "getuto failed, continuing anyway..."
+    run "$sandbox_dir" getuto || true
 
     echo "Emerging bin dependencies..."
-    run "$sandbox_dir" emerge -G "${bin_packages[@]}" || echo "Some packages failed to emerge"
+    run "$sandbox_dir" emerge -G "${bin_packages[@]}"
     echo "Emerging dependencies..."
-    run "$sandbox_dir" emerge -b -k "${packages[@]}" || echo "Some packages failed to emerge"
+    run "$sandbox_dir" emerge -b -k "${packages[@]}"
 
     echo "Installing Rust ldconfig..."
     run "$sandbox_dir" cargo install --root /usr/local ldconfig
@@ -446,8 +448,8 @@ run() {
       --tmpfs /tmp \
       --tmpfs /dev/shm \
       -e TERM="$TERM" \
-      -e COLORTERM="$COLORTERM" \
-      -e NO_COLOR="$NO_COLOR" \
+      -e COLORTERM="${COLORTERM:-}" \
+      -e NO_COLOR="${NO_COLOR:-}" \
       -e HOME=/root \
       -e CONFIG_CHECK="" \
       -- bash --login -c "
@@ -473,8 +475,8 @@ run_with_stage() {
       --tmpfs /dev/shm \
       -B "$stage_dir":/target \
       -e TERM="$TERM" \
-      -e COLORTERM="$COLORTERM" \
-      -e NO_COLOR="$NO_COLOR" \
+      -e COLORTERM="${COLORTERM:-}" \
+      -e NO_COLOR="${NO_COLOR:-}" \
       -e HOME=/root \
       -e CONFIG_CHECK="" \
       -- bash --login -c "
