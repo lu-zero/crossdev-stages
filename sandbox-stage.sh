@@ -403,6 +403,7 @@ unpack_stage() {
       --allow-new-privs \
       --userns=auto \
       --tmpfs /tmp \
+      --tmpfs /dev/shm \
       -B "$CACHE_DIR":/cache \
       -- /bin/sh -c "
         mkdir -p \"/cache/sandboxes/$sandbox_name\" &&
@@ -429,6 +430,7 @@ run() {
       --userns=auto \
       --network=host \
       --tmpfs /tmp \
+      --tmpfs /dev/shm \
       -e TERM="$TERM" \
       -e COLORTERM="$COLORTERM" \
       -e NO_COLOR="$NO_COLOR" \
@@ -453,6 +455,7 @@ run_with_stage() {
       --userns=auto \
       --network=host \
       --tmpfs /tmp \
+      --tmpfs /dev/shm \
       -B "$stage_dir":/target \
       -e TERM="$TERM" \
       -e COLORTERM="$COLORTERM" \
@@ -481,9 +484,9 @@ unpack_target() {
 
     hakoniwa run \
       --rootfs / --devfs /dev \
-      --unshare-all \
       --allow-new-privs \
       --userns=auto \
+      --tmpfs /dev/shm \
       --tmpfs /tmp \
       -B "$CACHE_DIR":/cache \
       -- /bin/sh -c "
@@ -845,6 +848,7 @@ main() {
                       --allow-new-privs \
                       --userns=auto \
                       --tmpfs /tmp \
+                      --tmpfs /dev/shm \
                       -B "$CACHE_DIR":/cache \
                       -b "$target_dir":/target \
                       -- /bin/sh -c "
