@@ -135,6 +135,20 @@ setup_crossdev_sandbox() {
     # Add rust-std workaround
     run "$sandbox_dir" "echo \"cross-${target_arch}-unknown-linux-gnu/rust-std **\" > /etc/portage/package.accept_keywords/rust-std"
 
+    # Enable gcc-16 prerelease
+    run "$sandbox_dir" "echo \"<sys-devel/gcc-16.0.9999:16 **\" > /etc/portage/package.accept_keywords/gcc"
+
+    # Ensure consistent gcc versions for host and cross compilers
+    # Use the latest gcc-16 snapshot for both to avoid version mismatches
+    run "$sandbox_dir" "emerge -1 sys-devel/gcc:16"
+
+    # Get the latest gcc-16 version and set it for both host and cross
+    local gcc_16_version=$(run "$sandbox_dir" "gcc-config -l | grep '^\s*\[' | grep '16' | head -n1 | sed 's/^\[//;s/\]//'" | tail -n1)
+
+    # Set the host compiler to use gcc-16
+    run "$sandbox_dir" "gcc-config ${gcc_16_version}"
+    run "$sandbox_dir" "source /etc/profile && env-update"
+
     # Set up portage profile (crossdev links a wrong default)
     run "$sandbox_dir" "export PORTAGE_CONFIGROOT=${crossdev_root}; eselect profile set ${profile}"
 
@@ -190,8 +204,8 @@ EOF
     run "$sandbox_dir" mkdir "${crossdev_root}/bin"
     run "$sandbox_dir" merge-usr --root "${crossdev_root}"
 
-    # Install crossdev toolchain
-    run "$sandbox_dir" crossdev "${chost}" --ex-pkg sys-devel/clang-crossdev-wrappers --ex-pkg sys-devel/rust-std
+    # Install crossdev toolchain with the same gcc version as host
+    run "$sandbox_dir" crossdev "${chost}" --gcc "${gcc_16_version}" --ex-pkg sys-devel/clang-crossdev-wrappers --ex-pkg sys-devel/rust-std
 
     touch "$sandbox_dir/.crossdev-${target_arch}"
     echo "Crossdev environment setup complete for ${chost}"
