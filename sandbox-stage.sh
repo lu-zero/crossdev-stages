@@ -435,6 +435,7 @@ run() {
       -e COLORTERM="$COLORTERM" \
       -e NO_COLOR="$NO_COLOR" \
       -e HOME=/root \
+      -e CONFIG_CHECK="" \
       -- bash --login -c "
          $args
       "
@@ -461,6 +462,7 @@ run_with_stage() {
       -e COLORTERM="$COLORTERM" \
       -e NO_COLOR="$NO_COLOR" \
       -e HOME=/root \
+      -e CONFIG_CHECK="" \
       -- bash --login -c "
          $args
       "
