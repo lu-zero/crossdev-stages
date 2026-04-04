@@ -128,7 +128,7 @@ setup_crossdev_sandbox() {
     echo "Setting up crossdev environment for ${chost} in sandbox..."
 
     # Create the crossdev overlay
-    run "$sandbox_dir" eselect repository create crossdev
+    run "$sandbox_dir" "eselect repository list -i | grep -q crossdev || eselect repository create crossdev"
 
     # Initialize crossdev for target architecture
     run "$sandbox_dir" crossdev "${chost}" --init-target
@@ -141,14 +141,15 @@ setup_crossdev_sandbox() {
 
     # Ensure consistent gcc versions for host and cross compilers
     # Use the latest gcc-16 snapshot for both to avoid version mismatches
-    run "$sandbox_dir" "emerge -1 sys-devel/gcc:16"
+    run "$sandbox_dir" "emerge -b -k sys-devel/gcc:16"
 
     # Get the latest gcc-16 version and set it for both host and cross
     local gcc_16_version
     gcc_16_version=$(run "$sandbox_dir" "qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'")
 
     # Set the host compiler to use gcc-16
-    run "$sandbox_dir" "gcc-config ${gcc_16_version}"
+    local gcc_16_profile=$(run "$sandbox_dir" "gcc-config -l | grep '16' | head -n1 | awk '{print \$2}'")
+    run "$sandbox_dir" "gcc-config ${gcc_16_profile}"
     run "$sandbox_dir" "source /etc/profile && env-update"
 
     # Set up portage profile (crossdev links a wrong default)
