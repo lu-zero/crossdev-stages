@@ -145,7 +145,7 @@ setup_crossdev_sandbox() {
 
     # Get the latest gcc-16 version and set it for both host and cross
     local gcc_16_version
-    gcc_16_version=$(run "$sandbox_dir" "gcc-config -l | grep '16' | head -n1 | awk '{print \$2}'")
+    gcc_16_version=$(run "$sandbox_dir" "qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'")
 
     # Set the host compiler to use gcc-16
     run "$sandbox_dir" "gcc-config ${gcc_16_version}"
@@ -396,7 +396,24 @@ fetch_stage() {
 
 
 
-# We use hakoniwa even here to preserve the owners
+# We use hakoniwa even here to preserve the owners, same for removal
+remove_dir() {
+    local dir="$1"
+    local parent
+    parent=$(dirname "$dir")
+    local name
+    name=$(basename "$dir")
+
+    hakoniwa run \
+      --rootfs / --devfs /dev \
+      --allow-new-privs \
+      --userns=auto \
+      --tmpfs /dev/shm \
+      --tmpfs /tmp \
+      -B "$parent":/target \
+      -- /bin/sh -c "rm -rf \"/target/$name\""
+}
+
 unpack_stage() {
     local stage_file="$1"
     local sandbox_name="$2"
@@ -716,7 +733,7 @@ main() {
                 exit 1
             fi
             echo "Removing sandbox: $name"
-            rm -rf "$target"
+            remove_dir "$target"
             echo "Sandbox $name removed."
             ;;
         prepare)
@@ -810,7 +827,7 @@ main() {
                         exit 1
                     fi
                     echo "Removing target: $1"
-                    rm -rf "$target"
+                    remove_dir "$target"
                     echo "Target $1 removed."
                     ;;
                 setup)
