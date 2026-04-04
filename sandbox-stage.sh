@@ -643,6 +643,8 @@ usage() {
 }
 
 main() {
+    [[ $# -gt 0 ]] || usage
+
     # Parse global --sandbox / -s flag before the command
     local opt_sandbox=""
     local filtered_args=()
