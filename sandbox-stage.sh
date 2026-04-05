@@ -946,7 +946,10 @@ image_pack() {
     local sandbox_dir="$1"
     local build_dir="$2"
     local board="$3"
+    local compress="${4:-xz}"
     load_board_config "$board"
+
+    local img_name="gentoo-linux-${BOARD_NAME}_dev-sdcard.img"
 
     echo "Packing image for $board..."
     run_with_build "$sandbox_dir" "$build_dir" "
@@ -956,10 +959,16 @@ image_pack() {
             --inputpath /build \
             --outputpath /build \
             --rootpath /build/gen
-        xz -f -T0 -9 /build/gentoo-linux-${BOARD_NAME}_dev-sdcard.img
     "
+
+    if [[ "$compress" == "none" ]]; then
+        echo "Image ready: $build_dir/$img_name"
+    else
+        run_with_build "$sandbox_dir" "$build_dir" \
+            "xz -f -T0 -9 /build/$img_name"
+        echo "Image ready: $build_dir/$img_name.xz"
+    fi
     echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.packed"
-    echo "Image ready: $build_dir/gentoo-linux-${BOARD_NAME}_dev-sdcard.img.xz"
 }
 
 ensure_crossdev() {
@@ -1062,7 +1071,7 @@ usage() {
     echo "  $0 image build-boot [build]    - Build OpenSBI + u-boot"
     echo "  $0 image build-kernel [build]  - Build Linux kernel + modules"
     echo "  $0 image assemble [build] [target] - Copy rootfs, install modules+firmware, create initramfs"
-    echo "  $0 image pack [build]          - Run genimage + xz compress"
+    echo "  $0 image pack [build]          - Run genimage + xz compress (--no-compress to skip xz)"
     echo "  $0 image build <board> [name] [target] - Full pipeline (setup+deps+checkout+build+assemble+pack)"
     echo ""
     echo "Cache directory: $CACHE_DIR"
@@ -1075,11 +1084,13 @@ main() {
     # Parse global flags before the command
     local opt_sandbox=""
     local opt_mirror=""
+    local opt_compress="xz"
     local filtered_args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --sandbox|-s) opt_sandbox="$2"; shift 2 ;;
             --mirror|-m) opt_mirror="$2"; shift 2 ;;
+            --no-compress) opt_compress="none"; shift ;;
             *) filtered_args+=("$1"); shift ;;
         esac
     done
@@ -1512,7 +1523,7 @@ main() {
                     sandbox_dir=$(resolve_sandbox)
                     [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
 
-                    image_pack "$sandbox_dir" "$build_dir" "$board"
+                    image_pack "$sandbox_dir" "$build_dir" "$board" "$opt_compress"
                     ;;
                 build)
                     require_args 1 "image build requires a board name" "$@"
@@ -1541,7 +1552,7 @@ main() {
                     image_build_bootloader "$sandbox_dir" "$build_dir" "$board"
                     image_build_kernel "$sandbox_dir" "$build_dir" "$board"
                     image_assemble "$sandbox_dir" "$build_dir" "$target_dir" "$board"
-                    image_pack "$sandbox_dir" "$build_dir" "$board"
+                    image_pack "$sandbox_dir" "$build_dir" "$board" "$opt_compress"
                     ;;
                 *)
                     usage
