@@ -324,8 +324,13 @@ gentoo_arch() {
 }
 
 # Map OS architecture to default CFLAGS for cross-compilation
+# Board-specific BOARD_CFLAGS (from board.conf) takes precedence
 target_cflags() {
     local arch=$1
+    if [[ -n "${BOARD_CFLAGS:-}" ]]; then
+        echo "$BOARD_CFLAGS"
+        return
+    fi
     case $arch in
         x86_64)  echo "-O3 -march=x86-64 -pipe" ;;
         aarch64) echo "-O3 -pipe" ;;
