@@ -1029,14 +1029,14 @@ usage() {
     echo "Image build commands:"
     echo "  $0 image list                  - List builds (name, board, state)"
     echo "  $0 image destroy <name>        - Remove a build"
-    echo "  $0 image setup [board] [name]  - Create named build dir for board (default board: k1)"
+    echo "  $0 image setup <board> [name]  - Create named build dir for board"
     echo "  $0 image install-deps [build] [target] - Install sandbox + target packages for board"
     echo "  $0 image checkout [build]      - Clone/update source repos"
     echo "  $0 image build-boot [build]    - Build OpenSBI + u-boot"
     echo "  $0 image build-kernel [build]  - Build Linux kernel + modules"
     echo "  $0 image assemble [build] [target] - Copy rootfs, install modules+firmware, create initramfs"
     echo "  $0 image pack [build]          - Run genimage + xz compress"
-    echo "  $0 image build [board] [name]  - Full pipeline (setup+deps+checkout+build+assemble+pack)"
+    echo "  $0 image build <board> [name]  - Full pipeline (setup+deps+checkout+build+assemble+pack)"
     echo ""
     echo "Cache directory: $CACHE_DIR"
     exit 1
@@ -1396,8 +1396,8 @@ main() {
                     echo "Build $1 removed."
                     ;;
                 setup)
-                    local board="${1:-k1}"
-                    [[ $# -gt 0 ]] && shift
+                    require_args 1 "image setup requires a board name" "$@"
+                    local board="$1"; shift
                     local timestamp
                     timestamp=$(date -u +%Y%m%dT%H%M%SZ)
                     local build_name="${1:-${board}-${timestamp}}"
@@ -1548,8 +1548,8 @@ main() {
                     image_pack "$sandbox_dir" "$build_dir" "$board"
                     ;;
                 build)
-                    local board="${1:-k1}"
-                    [[ $# -gt 0 ]] && shift
+                    require_args 1 "image build requires a board name" "$@"
+                    local board="$1"; shift
                     local timestamp
                     timestamp=$(date -u +%Y%m%dT%H%M%SZ)
                     local build_name="${1:-${board}-${timestamp}}"
