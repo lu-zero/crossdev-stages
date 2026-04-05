@@ -1,0 +1,2 @@
+# Packages for Blackhole target
+net-misc/openssh
