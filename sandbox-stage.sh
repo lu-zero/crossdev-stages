@@ -987,6 +987,16 @@ ensure_target() {
     ensure_crossdev "$(resolve_sandbox)" "$arch" || return 1
 }
 
+require_args() {
+    local n="$1"
+    local msg="$2"
+    shift 2
+    if [[ $# -lt $n ]]; then
+        echo "Error: $msg" >&2
+        usage
+    fi
+}
+
 usage() {
     echo "$0 [-s|--sandbox <name>] [-m|--mirror <url>] <command> [options]"
     echo ""
@@ -1097,10 +1107,7 @@ main() {
             fi
             ;;
         destroy)
-            if [[ -z "$1" && -z "$opt_sandbox" ]]; then
-                echo "Usage: $0 destroy <sandbox-name>" >&2
-                exit 1
-            fi
+            [[ -z "$opt_sandbox" ]] && require_args 1 "destroy requires a sandbox name" "$@"
             local name="${1:-$opt_sandbox}"
             local target="$SANDBOXES_DIR/$name"
             if [[ ! -d "$target" ]]; then
@@ -1192,10 +1199,7 @@ main() {
                     fi
                     ;;
                 destroy)
-                    if [[ -z "$1" ]]; then
-                        echo "Usage: $0 target destroy <target-name>" >&2
-                        exit 1
-                    fi
+                    require_args 1 "target destroy requires a target name" "$@"
                     local target="$TARGETS_DIR/$1"
                     if [[ ! -d "$target" ]]; then
                         echo "Error: Target not found: $1" >&2
@@ -1381,10 +1385,7 @@ main() {
                     fi
                     ;;
                 destroy)
-                    if [[ -z "$1" ]]; then
-                        echo "Usage: $0 image destroy <build-name>" >&2
-                        exit 1
-                    fi
+                    require_args 1 "image destroy requires a build name" "$@"
                     local target="$BUILDS_DIR/$1"
                     if [[ ! -d "$target" ]]; then
                         echo "Error: Build not found: $1" >&2
