@@ -790,10 +790,12 @@ image_install_deps() {
         run "$sandbox_dir" emerge -b -k $(packages_from_file "$sandbox_pkgs")
     fi
 
-    if [[ -f "$target_pkgs" ]]; then
+    if [[ -f "$target_pkgs" && -n "$target_dir" ]]; then
         echo "Cross-installing target packages for $board..."
         install_packages "$sandbox_dir" "$target_dir" "$target_arch" \
             $(packages_from_file "$target_pkgs")
+    elif [[ -f "$target_pkgs" ]]; then
+        echo "Skipping target packages (no target sysroot available)"
     fi
 }
 
@@ -1420,9 +1422,12 @@ main() {
                     require_args 1 "image install-deps requires a board name" "$@"
                     local board="$1"; shift
 
-                    local target_dir
-                    resolve_target target_dir "${1-}"
-                    [[ $# -gt 0 ]] && shift
+                    local target_dir=""
+                    if [[ $# -gt 0 ]]; then
+                        resolve_target target_dir "$1"; shift
+                    else
+                        target_dir=$(get_latest_target) || true
+                    fi
 
                     local sandbox_dir
                     sandbox_dir=$(resolve_sandbox)
