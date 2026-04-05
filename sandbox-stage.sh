@@ -884,28 +884,35 @@ image_assemble() {
         ${svc_cmds}
 
         # System configuration
+        mkdir -p /build/gen/root/etc/conf.d
         echo 'hostname=\"${BOOT_HOSTNAME}\"' > /build/gen/root/etc/conf.d/hostname
         echo 'x1:12345:respawn:/sbin/agetty ${BOOT_SERIAL_BAUD} ${BOOT_SERIAL_TTY} linux' >> /build/gen/root/etc/inittab
         sed -i -e 's/root:x:/root::/' /build/gen/root/etc/passwd
+        mkdir -p /build/gen/root/etc/ssh
         printf 'PermitRootLogin yes\nPermitEmptyPasswords yes\nStrictModes yes\n' >> /build/gen/root/etc/ssh/sshd_config
 
         # Update ldconfig in assembled root
         ${LDCONFIG} -v -r /build/gen/root
 
         # Copy kernel image to boot
-        cp /build/linux/arch/riscv/boot/Image.gz.itb /build/gen/boot/
+        cp /build/linux/arch/${KERNEL_ARCH}/boot/${BOOT_KERNEL_NAME} /build/gen/boot/
 
         # Write u-boot environment file
         printf 'console=${BOOT_CONSOLE}\ninit=/init\nbootdelay=0\nloglevel=${BOOT_LOGLEVEL}\nknl_name=${BOOT_KERNEL_NAME}\nramdisk_name=${BOOT_RAMDISK_NAME}\nset_root_arg=setenv bootargs root=${BOOT_ROOT_DEV}\n' \
             > /build/gen/boot/env_${BOARD_NAME}-x.txt
 
         # Build initramfs
+        # Make host dracut files available in sysroot (dracut --sysroot
+        # sources scripts from the sysroot, not from the host)
+        ln -sfn /usr/lib/dracut /build/gen/root/usr/lib/dracut
+        local kver=\$(ls /build/gen/root/lib/modules/ | head -1)
         DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
           dracut -f --no-early-microcode --no-kernel \
             -m '${DRACUT_MODULES}' --gzip \
             --sysroot /build/gen/root \
             --tmpdir /tmp \
-            /build/gen/boot/initramfs.img generic
+            /build/gen/boot/initramfs.img \"\$kver\"
+        rm -f /build/gen/root/usr/lib/dracut
     "
     echo "$(date -u +%Y%m%dT%H%M%SZ)" >> "$build_dir/.assembled"
 }
