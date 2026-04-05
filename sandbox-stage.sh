@@ -743,6 +743,27 @@ packages_from_file() {
     grep -v '#' "$file" | grep -v '^[[:space:]]*$'
 }
 
+# resolve_dir <nameref> <base_dir> <get_latest_fn> <label> [arg]
+# Sets <nameref> to base_dir/arg, or to the latest entry if arg is absent or "latest".
+# Caller should follow with: [[ $# -gt 0 ]] && shift
+resolve_dir() {
+    local -n _rd_out=$1
+    local base=$2
+    local fn=$3
+    local label=$4
+    local arg="${5-}"
+
+    if [[ -z "$arg" || "$arg" == "latest" ]]; then
+        _rd_out=$("$fn")
+        [[ -z "$_rd_out" ]] && { echo "Error: No $label found." >&2; exit 1; }
+    else
+        _rd_out="$base/$arg"
+    fi
+}
+
+resolve_build()  { resolve_dir "$1" "$BUILDS_DIR"  get_latest_build  "build"  "${2-}"; }
+resolve_target() { resolve_dir "$1" "$TARGETS_DIR" get_latest_target "target" "${2-}"; }
+
 load_board_config() {
     local board="$1"
     local cfg="$BASE_DIR/boards/$board/board.conf"
@@ -1233,14 +1254,9 @@ main() {
                     build_stage1 "$sandbox_dir" "$target_dir" "$arch"
                     ;;
                 update)
-                    local target_dir=""
-                    if [[ -z "${1:-}" || "${1:-}" == "latest" ]]; then
-                        target_dir=$(get_latest_target)
-                        [[ -z "$target_dir" ]] && { echo "Error: No target found." >&2; exit 1; }
-                        [[ $# -gt 0 ]] && shift
-                    else
-                        target_dir="$TARGETS_DIR/$1"; shift
-                    fi
+                    local target_dir
+                    resolve_target target_dir "${1-}"
+                    [[ $# -gt 0 ]] && shift
 
                     local target_arch="${1:-$(get_arch "$target_dir")}"
                     [[ $# -gt 0 ]] && shift
@@ -1254,14 +1270,9 @@ main() {
                     update_stage3 "$sandbox_dir" "$target_dir" "$target_arch"
                     ;;
                 pack)
-                    local target_dir=""
-                    if [[ -z "${1:-}" || "${1:-}" == "latest" ]]; then
-                        target_dir=$(get_latest_target)
-                        [[ -z "$target_dir" ]] && { echo "Error: No target found." >&2; exit 1; }
-                        [[ $# -gt 0 ]] && shift
-                    else
-                        target_dir="$TARGETS_DIR/$1"; shift
-                    fi
+                    local target_dir
+                    resolve_target target_dir "${1-}"
+                    [[ $# -gt 0 ]] && shift
 
                     local target_arch="${1:-$(get_arch "$target_dir")}"
                     [[ $# -gt 0 ]] && shift
@@ -1298,14 +1309,9 @@ main() {
             esac
             ;;
         install)
-            local target_dir=""
-            if [[ -z "${1:-}" || "${1:-}" == "latest" ]]; then
-                target_dir=$(get_latest_target)
-                [[ -z "$target_dir" ]] && { echo "Error: No target found." >&2; exit 1; }
-                [[ $# -gt 0 ]] && shift
-            else
-                target_dir="$TARGETS_DIR/$1"; shift
-            fi
+            local target_dir
+            resolve_target target_dir "${1-}"
+            [[ $# -gt 0 ]] && shift
 
             local target_arch="${1:-$(get_arch "$target_dir")}"; [[ $# -gt 0 ]] && shift
             [[ -z "$target_arch" ]] && { echo "Error: Cannot determine target arch. Specify explicitly." >&2; exit 1; }
@@ -1320,14 +1326,9 @@ main() {
             install_packages "$sandbox_dir" "$target_dir" "$target_arch" "$@"
             ;;
         install-from)
-            local target_dir=""
-            if [[ -z "${1:-}" || "${1:-}" == "latest" ]]; then
-                target_dir=$(get_latest_target)
-                [[ -z "$target_dir" ]] && { echo "Error: No target found." >&2; exit 1; }
-                [[ $# -gt 0 ]] && shift
-            else
-                target_dir="$TARGETS_DIR/$1"; shift
-            fi
+            local target_dir
+            resolve_target target_dir "${1-}"
+            [[ $# -gt 0 ]] && shift
 
             local target_arch="${1:-$(get_arch "$target_dir")}"; [[ $# -gt 0 ]] && shift
             [[ -z "$target_arch" ]] && { echo "Error: Cannot determine target arch. Specify explicitly." >&2; exit 1; }
@@ -1347,14 +1348,9 @@ main() {
                 $(packages_from_file "$pkg_file")
             ;;
         update-ldconfig)
-            local target_dir=""
-            if [[ -z "${1:-}" || "${1:-}" == "latest" ]]; then
-                target_dir=$(get_latest_target)
-                [[ -z "$target_dir" ]] && { echo "Error: No target found." >&2; exit 1; }
-                [[ $# -gt 0 ]] && shift
-            else
-                target_dir="$TARGETS_DIR/$1"; shift
-            fi
+            local target_dir
+            resolve_target target_dir "${1-}"
+            [[ $# -gt 0 ]] && shift
 
             local sandbox_dir
             sandbox_dir=$(resolve_sandbox)
@@ -1410,23 +1406,13 @@ main() {
                     echo "Build ready: $build_dir (board: $board)"
                     ;;
                 install-deps)
-                    local build_dir=""
-                    if [[ -z "${1:-}" || "${1:-}" == "latest" ]]; then
-                        build_dir=$(get_latest_build)
-                        [[ -z "$build_dir" ]] && { echo "Error: No build found." >&2; exit 1; }
-                        [[ $# -gt 0 ]] && shift
-                    else
-                        build_dir="$BUILDS_DIR/$1"; shift
-                    fi
+                    local build_dir
+                    resolve_build build_dir "${1-}"
+                    [[ $# -gt 0 ]] && shift
 
-                    local target_dir=""
-                    if [[ -z "${1:-}" || "${1:-}" == "latest" ]]; then
-                        target_dir=$(get_latest_target)
-                        [[ -z "$target_dir" ]] && { echo "Error: No target found." >&2; exit 1; }
-                        [[ $# -gt 0 ]] && shift
-                    else
-                        target_dir="$TARGETS_DIR/$1"; shift
-                    fi
+                    local target_dir
+                    resolve_target target_dir "${1-}"
+                    [[ $# -gt 0 ]] && shift
 
                     local board
                     board=$(get_build_board "$build_dir")
@@ -1439,14 +1425,9 @@ main() {
                     image_install_deps "$sandbox_dir" "$target_dir" "$board"
                     ;;
                 checkout)
-                    local build_dir=""
-                    if [[ -z "${1:-}" || "${1:-}" == "latest" ]]; then
-                        build_dir=$(get_latest_build)
-                        [[ -z "$build_dir" ]] && { echo "Error: No build found." >&2; exit 1; }
-                        [[ $# -gt 0 ]] && shift
-                    else
-                        build_dir="$BUILDS_DIR/$1"; shift
-                    fi
+                    local build_dir
+                    resolve_build build_dir "${1-}"
+                    [[ $# -gt 0 ]] && shift
 
                     local board
                     board=$(get_build_board "$build_dir")
@@ -1459,14 +1440,9 @@ main() {
                     image_checkout "$sandbox_dir" "$build_dir" "$board"
                     ;;
                 build-boot)
-                    local build_dir=""
-                    if [[ -z "${1:-}" || "${1:-}" == "latest" ]]; then
-                        build_dir=$(get_latest_build)
-                        [[ -z "$build_dir" ]] && { echo "Error: No build found." >&2; exit 1; }
-                        [[ $# -gt 0 ]] && shift
-                    else
-                        build_dir="$BUILDS_DIR/$1"; shift
-                    fi
+                    local build_dir
+                    resolve_build build_dir "${1-}"
+                    [[ $# -gt 0 ]] && shift
 
                     local board
                     board=$(get_build_board "$build_dir")
@@ -1479,14 +1455,9 @@ main() {
                     image_build_bootloader "$sandbox_dir" "$build_dir" "$board"
                     ;;
                 build-kernel)
-                    local build_dir=""
-                    if [[ -z "${1:-}" || "${1:-}" == "latest" ]]; then
-                        build_dir=$(get_latest_build)
-                        [[ -z "$build_dir" ]] && { echo "Error: No build found." >&2; exit 1; }
-                        [[ $# -gt 0 ]] && shift
-                    else
-                        build_dir="$BUILDS_DIR/$1"; shift
-                    fi
+                    local build_dir
+                    resolve_build build_dir "${1-}"
+                    [[ $# -gt 0 ]] && shift
 
                     local board
                     board=$(get_build_board "$build_dir")
@@ -1499,23 +1470,13 @@ main() {
                     image_build_kernel "$sandbox_dir" "$build_dir" "$board"
                     ;;
                 assemble)
-                    local build_dir=""
-                    if [[ -z "${1:-}" || "${1:-}" == "latest" ]]; then
-                        build_dir=$(get_latest_build)
-                        [[ -z "$build_dir" ]] && { echo "Error: No build found." >&2; exit 1; }
-                        [[ $# -gt 0 ]] && shift
-                    else
-                        build_dir="$BUILDS_DIR/$1"; shift
-                    fi
+                    local build_dir
+                    resolve_build build_dir "${1-}"
+                    [[ $# -gt 0 ]] && shift
 
-                    local target_dir=""
-                    if [[ -z "${1:-}" || "${1:-}" == "latest" ]]; then
-                        target_dir=$(get_latest_target)
-                        [[ -z "$target_dir" ]] && { echo "Error: No target found." >&2; exit 1; }
-                        [[ $# -gt 0 ]] && shift
-                    else
-                        target_dir="$TARGETS_DIR/$1"; shift
-                    fi
+                    local target_dir
+                    resolve_target target_dir "${1-}"
+                    [[ $# -gt 0 ]] && shift
 
                     local board
                     board=$(get_build_board "$build_dir")
@@ -1528,14 +1489,9 @@ main() {
                     image_assemble "$sandbox_dir" "$build_dir" "$target_dir" "$board"
                     ;;
                 pack)
-                    local build_dir=""
-                    if [[ -z "${1:-}" || "${1:-}" == "latest" ]]; then
-                        build_dir=$(get_latest_build)
-                        [[ -z "$build_dir" ]] && { echo "Error: No build found." >&2; exit 1; }
-                        [[ $# -gt 0 ]] && shift
-                    else
-                        build_dir="$BUILDS_DIR/$1"; shift
-                    fi
+                    local build_dir
+                    resolve_build build_dir "${1-}"
+                    [[ $# -gt 0 ]] && shift
 
                     local board
                     board=$(get_build_board "$build_dir")
