@@ -1081,6 +1081,10 @@ usage() {
     echo "  $0 image pack [build]          - Run genimage + xz compress (--no-compress to skip xz)"
     echo "  $0 image build <board> [name] [target] - Full pipeline (setup+deps+checkout+build+assemble+pack)"
     echo ""
+    echo "Maintenance:"
+    echo "  $0 prune [board]               - Remove incomplete builds (keep packed ones)"
+    echo "  $0 prune [board] --all         - Remove all builds (for board if specified)"
+    echo ""
     echo "Cache directory: $CACHE_DIR"
     exit 1
 }
@@ -1571,6 +1575,39 @@ main() {
                     usage
                     ;;
             esac
+            ;;
+        prune)
+            local prune_all=0
+            local prune_board=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --all) prune_all=1; shift ;;
+                    *) prune_board="$1"; shift ;;
+                esac
+            done
+
+            if [[ ! -d "$BUILDS_DIR" ]]; then
+                echo "No builds to prune."
+            else
+                local count=0
+                for d in "$BUILDS_DIR"/*/; do
+                    [[ -d "$d" ]] || continue
+                    local name=$(basename "$d")
+                    local board=$(get_build_board "$d")
+
+                    # Filter by board if specified
+                    if [[ -n "$prune_board" && "$board" != "$prune_board" ]]; then
+                        continue
+                    fi
+
+                    if [[ $prune_all -eq 1 ]] || [[ ! -f "$d/.packed" ]]; then
+                        echo "Removing: $name ($board)"
+                        remove_dir "$d"
+                        count=$((count + 1))
+                    fi
+                done
+                echo "Pruned $count build(s)."
+            fi
             ;;
         *)
             usage
