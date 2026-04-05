@@ -818,6 +818,7 @@ image_checkout() {
         checkout '${KERNEL_REPO}' '${TAG}' linux
         checkout '${FIRMWARE_REPO}' '${TAG}' firmware
     "
+    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.sources"
 }
 
 image_build_bootloader() {
@@ -832,6 +833,7 @@ image_build_bootloader() {
         make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${U_BOOT_DEFCONFIG}
         make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
     "
+    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.bootloader"
 }
 
 image_build_kernel() {
@@ -846,6 +848,7 @@ image_build_kernel() {
         make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
         make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules -j\$(nproc)
     "
+    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.kernel"
 }
 
 image_assemble() {
@@ -953,6 +956,7 @@ image_pack() {
             --rootpath /build/gen
         xz -f -T0 -9 /build/gentoo-linux-${BOARD_NAME}_dev-sdcard.img
     "
+    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.packed"
     echo "Image ready: $build_dir/gentoo-linux-${BOARD_NAME}_dev-sdcard.img.xz"
 }
 
@@ -1372,8 +1376,14 @@ main() {
                             [[ -d "$d" ]] || continue
                             local name=$(basename "$d")
                             local board=$(get_build_board "$d")
+                            local steps=()
+                            [[ -f "$d/.sources"    ]] && steps+=("sources")
+                            [[ -f "$d/.bootloader" ]] && steps+=("bootloader")
+                            [[ -f "$d/.kernel"     ]] && steps+=("kernel")
+                            [[ -f "$d/.assembled"  ]] && steps+=("assembled($(cat "$d/.assembled"))")
+                            [[ -f "$d/.packed"     ]] && steps+=("packed")
                             local state="setup"
-                            [[ -f "$d/.assembled" ]] && state="assembled($(tail -n1 "$d/.assembled"))"
+                            [[ ${#steps[@]} -gt 0 ]] && state="${steps[*]}"
                             printf "%-30s %-10s %s\n" "$name" "${board:-(unknown)}" "$state"
                         done
                     else
