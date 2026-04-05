@@ -807,9 +807,9 @@ image_build_bootloader() {
 
     echo "Building bootloader for $board..."
     run_with_build "$sandbox_dir" "$build_dir" "
-        make -C /build/opensbi PLATFORM=${OPENSBI_PLATFORM} PLATFORM_DEFCONFIG=defconfig -j\$(nproc) LLVM=1
-        make -C /build/u-boot ${U_BOOT_DEFCONFIG}
-        make -C /build/u-boot -j\$(nproc)
+        make -C /build/opensbi PLATFORM=${OPENSBI_PLATFORM} PLATFORM_DEFCONFIG=defconfig CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc) LLVM=1
+        make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${U_BOOT_DEFCONFIG}
+        make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
     "
 }
 
@@ -821,9 +821,9 @@ image_build_kernel() {
 
     echo "Building kernel for $board..."
     run_with_build "$sandbox_dir" "$build_dir" "
-        make -C /build/linux ${KERNEL_DEFCONFIG}
-        make -C /build/linux -j\$(nproc)
-        make -C /build/linux modules -j\$(nproc)
+        make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${KERNEL_DEFCONFIG}
+        make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
+        make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules -j\$(nproc)
     "
 }
 
@@ -863,7 +863,7 @@ image_assemble() {
         cp -a /target_src/. /build/gen/root/
 
         # Install kernel modules into root
-        INSTALL_MOD_PATH=/build/gen/root make -C /build/linux modules_install
+        INSTALL_MOD_PATH=/build/gen/root make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules_install
 
         # Copy DTBs to boot
         cp /build/linux/${BOARD_DTB_GLOB} /build/gen/boot/
