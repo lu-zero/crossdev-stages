@@ -880,6 +880,7 @@ image_assemble() {
         echo 'install_items+=\" /lib/firmware/esos.elf \"' > /build/gen/root/etc/dracut.conf.d/firmware.conf
 
         # Enable services
+        mkdir -p /build/gen/root/etc/runlevels/{boot,default,nonetwork,shutdown,sysinit}
         ${svc_cmds}
 
         # System configuration
