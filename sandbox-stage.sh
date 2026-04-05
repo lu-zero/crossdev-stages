@@ -544,6 +544,72 @@ update_ldconfig_sandbox() {
     run_with_stage "$sandbox_dir" "$stage_dir" "$LDCONFIG -v -r /target"
 }
 
+prepare_target_portage() {
+    local target_dir="$1"
+    local target_arch="$2"
+
+    gentoo_arch "$target_arch"
+    local chost="${target_arch}-unknown-linux-gnu"
+    local cflags
+    cflags=$(target_cflags "$target_arch")
+    local profile
+    profile=$(gentoo_profile "$target_arch")
+
+    mkdir -p "$target_dir/etc/portage"
+
+    cat > "$target_dir/etc/portage/make.conf" << EOF
+CHOST="${chost}"
+ACCEPT_KEYWORDS="~${ARCH}"
+CFLAGS="${cflags}"
+CXXFLAGS="\${CFLAGS}"
+EOF
+
+    # Copy profile link from crossdev sysroot
+    local sandbox_dir
+    sandbox_dir=$(get_latest_sandbox)
+    local crossdev_root="$sandbox_dir/usr/${chost}"
+    if [[ -d "$crossdev_root/etc/portage/profile" ]]; then
+        cp -a "$crossdev_root/etc/portage/profile" "$target_dir/etc/portage/"
+    fi
+    if [[ -L "$crossdev_root/etc/portage/make.profile" ]]; then
+        cp -a "$crossdev_root/etc/portage/make.profile" "$target_dir/etc/portage/"
+    fi
+}
+
+build_stage1() {
+    local sandbox_dir="$1"
+    local target_dir="$2"
+    local target_arch="${3:-riscv64}"
+    local chost="${target_arch}-unknown-linux-gnu"
+
+    echo "Building stage1 for ${chost} from scratch..."
+
+    # Prepare target portage configuration
+    prepare_target_portage "$target_dir" "$target_arch"
+
+    # Step 1: baselayout (directory skeleton)
+    echo "==> Installing baselayout..."
+    run_with_stage "$sandbox_dir" "$target_dir" \
+        "USE=build ROOT=/target ${chost}-emerge -b -k sys-apps/baselayout"
+
+    # Step 2: packages.build (core system)
+    echo "==> Installing stage1 packages..."
+    local packages
+    packages=$(run "$sandbox_dir" \
+        "grep -v '^#' /var/db/repos/gentoo/profiles/default/linux/packages.build | grep -v '^\$'")
+    run_with_stage "$sandbox_dir" "$target_dir" \
+        "ROOT=/target ${chost}-emerge -b -k ${packages}"
+
+    # Step 3: portage
+    echo "==> Installing portage..."
+    run_with_stage "$sandbox_dir" "$target_dir" \
+        "USE=build ROOT=/target ${chost}-emerge -b -k sys-apps/portage"
+
+    update_ldconfig_sandbox "$sandbox_dir" "$target_dir"
+    echo "$(date -u +%Y%m%dT%H%M%SZ) stage1" >> "$target_dir/.updated"
+    echo "Stage1 build complete for ${chost}"
+}
+
 update_stage3() {
     local sandbox_dir="$1"
     local stage_dir="$2"
@@ -646,7 +712,8 @@ usage() {
     echo ""
     echo "Target commands:"
     echo "  $0 target list                 - List unpacked targets"
-    echo "  $0 target setup [arch] [name]  - Setup target sysroot for arch"
+    echo "  $0 target setup [arch] [name]  - Setup target sysroot for arch (from stage3)"
+    echo "  $0 target build-stage1 [arch] [name] - Build stage1 from scratch via crossdev"
     echo "  $0 target destroy <name>       - Remove a target"
     echo "  $0 target update [target] [arch] - Update target via cross-emerge"
     echo "  $0 target pack [target] [arch] - Pack target as stage3 tarball in stages cache"
@@ -838,6 +905,21 @@ main() {
                     [[ -n "$1" ]] && shift
 
                     ensure_target "$arch" "$target_name" || exit 1
+                    ;;
+                build-stage1)
+                    local arch="${1:-riscv64}"
+                    [[ -n "$1" ]] && shift
+                    local target_name="${1:-${arch}-stage1}"
+                    [[ -n "$1" ]] && shift
+
+                    local target_dir="$TARGETS_DIR/$target_name"
+                    mkdir -p "$target_dir"
+                    echo "$arch" > "$target_dir/.arch"
+
+                    local sandbox_dir
+                    sandbox_dir=$(resolve_sandbox)
+                    ensure_crossdev "$sandbox_dir" "$arch" || exit 1
+                    build_stage1 "$sandbox_dir" "$target_dir" "$arch"
                     ;;
                 update)
                     local target_dir=""
