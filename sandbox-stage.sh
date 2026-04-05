@@ -646,8 +646,9 @@ update_ldconfig_sandbox() {
 }
 
 prepare_target_portage() {
-    local target_dir="$1"
-    local target_arch="$2"
+    local sandbox_dir="$1"
+    local target_dir="$2"
+    local target_arch="$3"
 
     gentoo_arch "$target_arch"
     local chost="${target_arch}-unknown-linux-gnu"
@@ -666,8 +667,6 @@ CXXFLAGS="\${CFLAGS}"
 EOF
 
     # Copy profile link from crossdev sysroot
-    local sandbox_dir
-    sandbox_dir=$(get_latest_sandbox)
     local crossdev_root="$sandbox_dir/usr/${chost}"
     if [[ -d "$crossdev_root/etc/portage/profile" ]]; then
         cp -a "$crossdev_root/etc/portage/profile" "$target_dir/etc/portage/"
@@ -686,7 +685,7 @@ build_stage1() {
     echo "Building stage1 for ${chost} from scratch..."
 
     # Prepare target portage configuration
-    prepare_target_portage "$target_dir" "$target_arch"
+    prepare_target_portage "$sandbox_dir" "$target_dir" "$target_arch"
 
     # Step 1: baselayout (directory skeleton)
     echo "==> Installing baselayout..."
