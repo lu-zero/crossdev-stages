@@ -2,3 +2,4 @@
 
 # FAT32 boot partition
 sys-fs/dosfstools
+sys-fs/mtools
