@@ -218,6 +218,9 @@ EOF
     # Install crossdev toolchain with the same gcc version as host
     run "$sandbox_dir" crossdev "${chost}" --gcc "${gcc_16_version}" --ex-pkg sys-devel/clang-crossdev-wrappers --ex-pkg sys-devel/rust-std
 
+    # Switch cross compiler to gcc-16 (crossdev may leave gcc-15 as default)
+    run "$sandbox_dir" "gcc-config ${chost}-16 && source /etc/profile"
+
     touch "$sandbox_dir/.crossdev-${target_arch}"
     echo "Crossdev environment setup complete for ${chost}"
 }
