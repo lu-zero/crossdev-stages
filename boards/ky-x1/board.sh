@@ -8,8 +8,12 @@ board_build_bootloader() {
 
     run_with_build "$sandbox_dir" "$build_dir" "
         make -C /build/opensbi PLATFORM=${OPENSBI_PLATFORM} PLATFORM_DEFCONFIG=defconfig CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc) LLVM=1
-        make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${U_BOOT_DEFCONFIG}
-        make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
+        make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} \
+            OPENSBI=/build/opensbi/build/platform/${OPENSBI_PLATFORM}/firmware/fw_dynamic.bin \
+            ${U_BOOT_DEFCONFIG}
+        make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} \
+            OPENSBI=/build/opensbi/build/platform/${OPENSBI_PLATFORM}/firmware/fw_dynamic.bin \
+            -j\$(nproc)
     "
 }
 
