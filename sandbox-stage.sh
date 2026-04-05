@@ -1051,7 +1051,7 @@ usage() {
     echo "  $0 image list                  - List builds (name, board, state)"
     echo "  $0 image destroy <name>        - Remove a build"
     echo "  $0 image setup <board> [name]  - Create named build dir for board"
-    echo "  $0 image install-deps [build] [target] - Install sandbox + target packages for board"
+    echo "  $0 image install-deps <board> [target] - Install sandbox + target packages for board"
     echo "  $0 image checkout [build]      - Clone/update source repos"
     echo "  $0 image build-boot [build]    - Build OpenSBI + u-boot"
     echo "  $0 image build-kernel [build]  - Build Linux kernel + modules"
@@ -1406,17 +1406,12 @@ main() {
                     echo "Build ready: $build_dir (board: $board)"
                     ;;
                 install-deps)
-                    local build_dir
-                    resolve_build build_dir "${1-}"
-                    [[ $# -gt 0 ]] && shift
+                    require_args 1 "image install-deps requires a board name" "$@"
+                    local board="$1"; shift
 
                     local target_dir
                     resolve_target target_dir "${1-}"
                     [[ $# -gt 0 ]] && shift
-
-                    local board
-                    board=$(get_build_board "$build_dir")
-                    [[ -z "$board" ]] && { echo "Error: No .board metadata in $build_dir" >&2; exit 1; }
 
                     local sandbox_dir
                     sandbox_dir=$(resolve_sandbox)
