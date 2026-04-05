@@ -1,0 +1,4 @@
+# Additional packages needed in the sandbox for K230 image builds
+
+# FAT32 boot partition
+sys-fs/dosfstools
