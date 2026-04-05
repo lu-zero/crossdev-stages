@@ -902,17 +902,16 @@ image_assemble() {
             > /build/gen/boot/env_${BOARD_NAME}-x.txt
 
         # Build initramfs
-        # Make host dracut files available in sysroot (dracut --sysroot
-        # sources scripts from the sysroot, not from the host)
-        ln -sfn /usr/lib/dracut /build/gen/root/usr/lib/dracut
+        # dracutbasedir tells dracut where its modules live on the host,
+        # avoiding the need to install dracut into the target sysroot
         kver=\$(ls /build/gen/root/lib/modules/ | head -1)
+        dracutbasedir=/usr/lib/dracut \
         DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
           dracut -f --no-early-microcode --no-kernel \
             -m '${DRACUT_MODULES}' --gzip \
             --sysroot /build/gen/root \
             --tmpdir /tmp \
             /build/gen/boot/initramfs.img \"\$kver\"
-        rm -f /build/gen/root/usr/lib/dracut
     "
     echo "$(date -u +%Y%m%dT%H%M%SZ)" >> "$build_dir/.assembled"
 }
