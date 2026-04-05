@@ -1055,13 +1055,13 @@ usage() {
     echo "  $0 image list                  - List builds (name, board, state)"
     echo "  $0 image destroy <name>        - Remove a build"
     echo "  $0 image setup <board> [name]  - Create named build dir for board"
-    echo "  $0 image install-deps <board> [target] - Install sandbox + target packages for board"
+    echo "  $0 image install-deps [build] [target] - Install sandbox + target packages for board"
     echo "  $0 image checkout [build]      - Clone/update source repos"
     echo "  $0 image build-boot [build]    - Build OpenSBI + u-boot"
     echo "  $0 image build-kernel [build]  - Build Linux kernel + modules"
     echo "  $0 image assemble [build] [target] - Copy rootfs, install modules+firmware, create initramfs"
     echo "  $0 image pack [build]          - Run genimage + xz compress"
-    echo "  $0 image build <board> [name]  - Full pipeline (setup+deps+checkout+build+assemble+pack)"
+    echo "  $0 image build <board> [name] [target] - Full pipeline (setup+deps+checkout+build+assemble+pack)"
     echo ""
     echo "Cache directory: $CACHE_DIR"
     exit 1
@@ -1377,6 +1377,7 @@ main() {
                             local name=$(basename "$d")
                             local board=$(get_build_board "$d")
                             local steps=()
+                            [[ -f "$d/.deps"       ]] && steps+=("deps")
                             [[ -f "$d/.sources"    ]] && steps+=("sources")
                             [[ -f "$d/.bootloader" ]] && steps+=("bootloader")
                             [[ -f "$d/.kernel"     ]] && steps+=("kernel")
@@ -1416,18 +1417,24 @@ main() {
                     echo "Build ready: $build_dir (board: $board)"
                     ;;
                 install-deps)
-                    require_args 1 "image install-deps requires a board name" "$@"
-                    local board="$1"; shift
+                    local build_dir
+                    resolve_build build_dir "${1-}"
+                    [[ $# -gt 0 ]] && shift
 
                     local target_dir
                     resolve_target target_dir "${1-}"
                     [[ $# -gt 0 ]] && shift
+
+                    local board
+                    board=$(get_build_board "$build_dir")
+                    [[ -z "$board" ]] && { echo "Error: No .board metadata in $build_dir" >&2; exit 1; }
 
                     local sandbox_dir
                     sandbox_dir=$(resolve_sandbox)
                     [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
 
                     image_install_deps "$sandbox_dir" "$target_dir" "$board"
+                    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.deps"
                     ;;
                 checkout)
                     local build_dir
@@ -1522,14 +1529,15 @@ main() {
                     echo "$board" > "$build_dir/.board"
 
                     local target_dir
-                    target_dir=$(get_latest_target)
-                    [[ -z "$target_dir" ]] && { echo "Error: No target found. Run 'target setup' first." >&2; exit 1; }
+                    resolve_target target_dir "${1-}"
+                    [[ $# -gt 0 ]] && shift
 
                     local sandbox_dir
                     sandbox_dir=$(resolve_sandbox)
                     [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
 
                     image_install_deps "$sandbox_dir" "$target_dir" "$board"
+                    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.deps"
                     image_checkout "$sandbox_dir" "$build_dir" "$board"
                     image_build_bootloader "$sandbox_dir" "$build_dir" "$board"
                     image_build_kernel "$sandbox_dir" "$build_dir" "$board"
