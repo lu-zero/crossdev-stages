@@ -607,7 +607,7 @@ build_stage1() {
     echo "==> Installing stage1 packages..."
     local packages
     packages=$(run "$sandbox_dir" \
-        "grep -v '^#' /var/db/repos/gentoo/profiles/default/linux/packages.build | grep -v '^\$'")
+        "grep -v '^#' /var/db/repos/gentoo/profiles/default/linux/packages.build | grep -v '^\$' | tr '\n' ' '")
     run_with_stage "$sandbox_dir" "$target_dir" \
         "ROOT=/target ${chost}-emerge -b -k ${packages}"
 
@@ -922,9 +922,9 @@ main() {
                     ;;
                 build-stage1)
                     local arch="${1:-riscv64}"
-                    [[ -n "$1" ]] && shift
+                    [[ $# -gt 0 ]] && shift
                     local target_name="${1:-${arch}-stage1}"
-                    [[ -n "$1" ]] && shift
+                    [[ $# -gt 0 ]] && shift
 
                     local target_dir="$TARGETS_DIR/$target_name"
                     mkdir -p "$target_dir"
