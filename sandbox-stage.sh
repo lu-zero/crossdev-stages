@@ -813,20 +813,24 @@ image_checkout() {
     load_board_config "$board"
 
     echo "Checking out sources for $board into $build_dir..."
-    run_with_build "$sandbox_dir" "$build_dir" "
-        checkout() {
-            local repo=\$1 tag=\$2 src=/build/\$3
-            if [[ -d \"\$src\" ]]; then
-                (cd \"\$src\" && git fetch && git checkout \"\$tag\")
-            else
-                git clone --depth 1 --branch \"\$tag\" \"\$repo\" \"\$src\"
-            fi
-        }
-        checkout '${OPENSBI_REPO}' '${OPENSBI_TAG}' opensbi
-        checkout '${U_BOOT_REPO}' '${TAG}' u-boot
-        checkout '${KERNEL_REPO}' '${TAG}' linux
-        checkout '${FIRMWARE_REPO}' '${TAG}' firmware
-    "
+    if type -t board_checkout &>/dev/null; then
+        board_checkout "$sandbox_dir" "$build_dir"
+    else
+        run_with_build "$sandbox_dir" "$build_dir" "
+            checkout() {
+                local repo=\$1 tag=\$2 src=/build/\$3
+                if [[ -d \"\$src\" ]]; then
+                    (cd \"\$src\" && git fetch && git checkout \"\$tag\")
+                else
+                    git clone --depth 1 --branch \"\$tag\" \"\$repo\" \"\$src\"
+                fi
+            }
+            checkout '${OPENSBI_REPO}' '${OPENSBI_TAG}' opensbi
+            checkout '${U_BOOT_REPO}' '${TAG}' u-boot
+            checkout '${KERNEL_REPO}' '${TAG}' linux
+            checkout '${FIRMWARE_REPO}' '${TAG}' firmware
+        "
+    fi
     echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.sources"
 }
 
