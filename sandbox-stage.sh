@@ -961,7 +961,7 @@ image_pack() {
     local compress="${4:-xz}"
     load_board_config "$board"
 
-    local img_name="gentoo-linux-${BOARD_NAME}_dev-sdcard.img"
+    local img_name="${IMAGE_NAME:-gentoo-linux-${BOARD_NAME}_dev-sdcard.img}"
 
     echo "Packing image for $board..."
     run_with_build "$sandbox_dir" "$build_dir" "
