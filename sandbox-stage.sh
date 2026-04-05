@@ -99,6 +99,10 @@ EOF
         set_make_conf_var "$make_conf" "ACCEPT_KEYWORDS" "~${ARCH}"
     fi
 
+    if [[ -n "${opt_mirror:-}" ]]; then
+        set_make_conf_var "$make_conf" "GENTOO_MIRRORS" "${opt_mirror}"
+    fi
+
     # Set LLVM_TARGETS for cross-compilation
 #    local llvm_target=$(llvm_arch "$arch")
 #    if [[ -n "$llvm_target" ]]; then
@@ -169,6 +173,10 @@ setup_crossdev_sandbox() {
     local llvm_target=$(llvm_arch "$target_arch")
     if [[ -n "$llvm_target" ]]; then
         set_make_conf_var "$host_make_conf" "LLVM_TARGETS" "${llvm_target}"
+    fi
+
+    if [[ -n "${opt_mirror:-}" ]]; then
+        set_make_conf_var "$host_make_conf" "GENTOO_MIRRORS" "${opt_mirror}"
     fi
 
     # Write crossdev portage config directly on the host filesystem
@@ -696,10 +704,11 @@ ensure_target() {
 }
 
 usage() {
-    echo "$0 [-s|--sandbox <name>] <command> [options]"
+    echo "$0 [-s|--sandbox <name>] [-m|--mirror <url>] <command> [options]"
     echo ""
     echo "Global options:"
     echo "  -s, --sandbox <name>           - Use named sandbox (default: latest)"
+    echo "  -m, --mirror <url>             - Set Gentoo mirror (e.g. https://ftp.kaist.ac.kr/gentoo/)"
     echo ""
     echo "Sandbox commands:"
     echo "  $0 setup [arch] [name]         - Setup sandbox for arch (default: host arch, name: arch)"
@@ -730,12 +739,14 @@ usage() {
 main() {
     [[ $# -gt 0 ]] || usage
 
-    # Parse global --sandbox / -s flag before the command
+    # Parse global flags before the command
     local opt_sandbox=""
+    local opt_mirror=""
     local filtered_args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --sandbox|-s) opt_sandbox="$2"; shift 2 ;;
+            --mirror|-m) opt_mirror="$2"; shift 2 ;;
             *) filtered_args+=("$1"); shift ;;
         esac
     done
