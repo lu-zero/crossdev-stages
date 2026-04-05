@@ -905,7 +905,7 @@ image_assemble() {
         # Make host dracut files available in sysroot (dracut --sysroot
         # sources scripts from the sysroot, not from the host)
         ln -sfn /usr/lib/dracut /build/gen/root/usr/lib/dracut
-        local kver=\$(ls /build/gen/root/lib/modules/ | head -1)
+        kver=\$(ls /build/gen/root/lib/modules/ | head -1)
         DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
           dracut -f --no-early-microcode --no-kernel \
             -m '${DRACUT_MODULES}' --gzip \
