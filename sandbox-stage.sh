@@ -755,7 +755,10 @@ resolve_dir() {
 
     if [[ -z "$arg" || "$arg" == "latest" ]]; then
         _rd_out=$("$fn")
-        [[ -z "$_rd_out" ]] && { echo "Error: No $label found." >&2; exit 1; }
+        if [[ -z "$_rd_out" ]]; then
+            echo "Error: No $label found." >&2
+            exit 1
+        fi
     else
         _rd_out="$base/$arg"
     fi
