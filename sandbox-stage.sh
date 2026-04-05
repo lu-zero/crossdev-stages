@@ -271,6 +271,8 @@ install_dependencies() {
         "sys-kernel/dracut"
         "sys-apps/busybox"
         "sys-fs/genimage"
+        "sys-fs/dosfstools"
+        "sys-fs/mtools"
         "app-eselect/eselect-repository"
         "dev-lang/rust"
         "sys-kernel/gentoo-sources"
@@ -848,7 +850,7 @@ image_build_bootloader() {
         board_build_bootloader "$sandbox_dir" "$build_dir"
     else
         run_with_build "$sandbox_dir" "$build_dir" "
-            make -C /build/opensbi PLATFORM=${OPENSBI_PLATFORM} PLATFORM_DEFCONFIG=defconfig CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc) LLVM=1
+            make -C /build/opensbi PLATFORM=${OPENSBI_PLATFORM} PLATFORM_DEFCONFIG=defconfig CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
             make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${U_BOOT_DEFCONFIG}
             make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
         "
@@ -902,8 +904,7 @@ image_assemble() {
     done
 
     echo "Assembling image for $board from $source_dir..."
-    run_with_build_and_source "$sandbox_dir" "$build_dir" "$source_dir" \
-      "${extra_args[@]}" -- "
+    run_with_build_and_source "$sandbox_dir" "$build_dir" "$source_dir" -- "
         set -e
         mkdir -p /build/gen/root /build/gen/boot
 
@@ -935,7 +936,7 @@ image_assemble() {
     else
         # Default: copy DTBs, kernel, firmware overlay, host firmware
         run_with_build_and_source "$sandbox_dir" "$build_dir" "$source_dir" \
-          "${extra_args[@]}" -- "
+          ${extra_args[@]+"${extra_args[@]}"} -- "
             set -e
             cp /build/linux/${BOARD_DTB_GLOB} /build/gen/boot/
             mkdir -p /build/gen/root/lib/firmware
