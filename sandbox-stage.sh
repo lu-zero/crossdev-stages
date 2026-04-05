@@ -10,12 +10,15 @@ CACHE_DIR="${HOME}/.cache/crossdev-stages"
 STAGES_DIR="${CACHE_DIR}/stages"
 SANDBOXES_DIR="${CACHE_DIR}/sandboxes"
 TARGETS_DIR="${CACHE_DIR}/targets"
+BUILDS_DIR="${CACHE_DIR}/builds"
 LDCONFIG="/usr/local/bin/ldconfig"
+BASE_DIR=$(dirname "$(readlink -f "$0")")
 
 ensure_cache_dirs() {
     mkdir -p "$STAGES_DIR"
     mkdir -p "$SANDBOXES_DIR"
     mkdir -p "$TARGETS_DIR"
+    mkdir -p "$BUILDS_DIR"
 }
 
 get_arch() {
@@ -46,6 +49,28 @@ get_latest_target() {
         latest_target=$(ls -t "$TARGETS_DIR" | head -n 1)
         if [[ -n "$latest_target" ]]; then
             echo "$TARGETS_DIR/$latest_target"
+            return 0
+        fi
+    fi
+    echo "" >&2
+    return 1
+}
+
+get_build_board() {
+    local dir="$1"
+    if [[ -f "$dir/.board" ]]; then
+        cat "$dir/.board"
+    else
+        echo ""
+    fi
+}
+
+get_latest_build() {
+    if [[ -d "$BUILDS_DIR" ]]; then
+        local latest
+        latest=$(ls -t "$BUILDS_DIR" | head -n 1)
+        if [[ -n "$latest" ]]; then
+            echo "$BUILDS_DIR/$latest"
             return 0
         fi
     fi
@@ -513,6 +538,71 @@ run_with_stage() {
       "
 }
 
+run_with_build() {
+    local sandbox_dir="$1"
+    local build_dir="$2"
+    shift 2
+    local args="$*"
+
+    hakoniwa run \
+      --rootdir "$sandbox_dir":rw \
+      --devfs /dev \
+      -b /etc/resolv.conf \
+      --unshare-all \
+      --allow-new-privs \
+      --userns=auto \
+      --network=host \
+      --tmpfs /tmp \
+      --tmpfs /dev/shm \
+      -B "$build_dir":/build \
+      -b "$BASE_DIR":/scripts \
+      -e TERM="$TERM" \
+      -e COLORTERM="${COLORTERM:-}" \
+      -e NO_COLOR="${NO_COLOR:-}" \
+      -e HOME=/root \
+      -e CONFIG_CHECK="" \
+      -- bash --login -c "
+         $args
+      "
+}
+
+run_with_build_and_source() {
+    local sandbox_dir="$1"
+    local build_dir="$2"
+    local source_dir="$3"
+    shift 3
+    # collect extra hakoniwa args until "--" sentinel
+    local extra_args=()
+    while [[ $# -gt 0 && "$1" != "--" ]]; do
+        extra_args+=("$1"); shift
+    done
+    [[ $# -gt 0 && "$1" == "--" ]] && shift
+    local args="$*"
+
+    hakoniwa run \
+      --rootdir "$sandbox_dir":rw \
+      --devfs /dev \
+      -b /etc/resolv.conf \
+      --unshare-all \
+      --allow-new-privs \
+      --userns=auto \
+      --network=host \
+      --tmpfs /tmp \
+      --tmpfs /dev/shm \
+      -B "$build_dir":/build \
+      -b "$source_dir":/target_src \
+      -b "$BASE_DIR":/scripts \
+      "${extra_args[@]}" \
+      -e TERM="$TERM" \
+      -e COLORTERM="${COLORTERM:-}" \
+      -e NO_COLOR="${NO_COLOR:-}" \
+      -e HOME=/root \
+      -e CONFIG_CHECK="" \
+      -- bash --login -c "
+         $args
+      "
+}
+
 unpack_target() {
     local stage_file="$1"
     local target_name="$2"
@@ -654,6 +744,191 @@ packages_from_file() {
     grep -v '#' "$file" | grep -v '^[[:space:]]*$'
 }
 
+load_board_config() {
+    local board="$1"
+    local cfg="$BASE_DIR/boards/$board/board.conf"
+    [[ -f "$cfg" ]] || { echo "Board config not found: $cfg" >&2; return 1; }
+    # shellcheck source=/dev/null
+    source "$cfg"
+    BOARD_CFG_DIR="$BASE_DIR/boards/$board"
+}
+
+image_install_deps() {
+    local sandbox_dir="$1"
+    local target_dir="$2"
+    local board="$3"
+    load_board_config "$board"
+
+    local sandbox_pkgs="$BOARD_CFG_DIR/sandbox-packages.txt"
+    local target_pkgs="$BOARD_CFG_DIR/target-packages.txt"
+    local target_arch="$BOARD_ARCH"
+    local chost="${target_arch}-unknown-linux-gnu"
+
+    if [[ -f "$sandbox_pkgs" ]]; then
+        echo "Installing sandbox packages for $board..."
+        # shellcheck disable=SC2046
+        run "$sandbox_dir" emerge -b -k $(packages_from_file "$sandbox_pkgs")
+    fi
+
+    if [[ -f "$target_pkgs" ]]; then
+        echo "Cross-installing target packages for $board..."
+        install_packages "$sandbox_dir" "$target_dir" "$target_arch" \
+            $(packages_from_file "$target_pkgs")
+    fi
+}
+
+image_checkout() {
+    local sandbox_dir="$1"
+    local build_dir="$2"
+    local board="$3"
+    load_board_config "$board"
+
+    echo "Checking out sources for $board into $build_dir..."
+    run_with_build "$sandbox_dir" "$build_dir" "
+        checkout() {
+            local repo=\$1 tag=\$2 src=/build/\$3
+            if [[ -d \"\$src\" ]]; then
+                (cd \"\$src\" && git fetch && git checkout \"\$tag\")
+            else
+                git clone --depth 1 --branch \"\$tag\" \"\$repo\" \"\$src\"
+            fi
+        }
+        checkout '${OPENSBI_REPO}' '${OPENSBI_TAG}' opensbi
+        checkout '${U_BOOT_REPO}' '${TAG}' u-boot
+        checkout '${KERNEL_REPO}' '${TAG}' linux
+        checkout '${FIRMWARE_REPO}' '${TAG}' firmware
+    "
+}
+
+image_build_bootloader() {
+    local sandbox_dir="$1"
+    local build_dir="$2"
+    local board="$3"
+    load_board_config "$board"
+
+    echo "Building bootloader for $board..."
+    run_with_build "$sandbox_dir" "$build_dir" "
+        make -C /build/opensbi PLATFORM=${OPENSBI_PLATFORM} PLATFORM_DEFCONFIG=defconfig -j\$(nproc) LLVM=1
+        make -C /build/u-boot ${U_BOOT_DEFCONFIG}
+        make -C /build/u-boot -j\$(nproc)
+    "
+}
+
+image_build_kernel() {
+    local sandbox_dir="$1"
+    local build_dir="$2"
+    local board="$3"
+    load_board_config "$board"
+
+    echo "Building kernel for $board..."
+    run_with_build "$sandbox_dir" "$build_dir" "
+        make -C /build/linux ${KERNEL_DEFCONFIG}
+        make -C /build/linux -j\$(nproc)
+        make -C /build/linux modules -j\$(nproc)
+    "
+}
+
+image_assemble() {
+    local sandbox_dir="$1"
+    local build_dir="$2"
+    local source_dir="$3"
+    local board="$4"
+    load_board_config "$board"
+
+    # Build extra bind args for host firmware paths
+    local extra_args=()
+    for fw_path in "${HOST_FIRMWARE_PATHS[@]+"${HOST_FIRMWARE_PATHS[@]}"}"; do
+        [[ -d "$fw_path" ]] && extra_args+=("-b" "${fw_path}:${fw_path}")
+    done
+
+    # Pre-compute service setup commands (runs inside sandbox)
+    local svc_cmds=""
+    for svc_pair in "${BOOT_SERVICES[@]+"${BOOT_SERVICES[@]}"}"; do
+        local svc="${svc_pair%%:*}" lvl="${svc_pair##*:}"
+        svc_cmds+="ln -sf /etc/init.d/${svc} /build/gen/root/etc/runlevels/${lvl}/; "
+    done
+
+    # Pre-compute host firmware copy commands
+    local fw_cmds=""
+    for fw_path in "${HOST_FIRMWARE_PATHS[@]+"${HOST_FIRMWARE_PATHS[@]}"}"; do
+        fw_cmds+="cp -a '${fw_path}' /build/gen/root/lib/firmware/ 2>/dev/null || true; "
+    done
+
+    echo "Assembling image for $board from $source_dir..."
+    run_with_build_and_source "$sandbox_dir" "$build_dir" "$source_dir" \
+      "${extra_args[@]}" -- "
+        set -e
+        mkdir -p /build/gen/root /build/gen/boot
+
+        # Copy target sysroot into build area
+        cp -a /target_src/. /build/gen/root/
+
+        # Install kernel modules into root
+        INSTALL_MOD_PATH=/build/gen/root make -C /build/linux modules_install
+
+        # Copy DTBs to boot
+        cp /build/linux/${BOARD_DTB_GLOB} /build/gen/boot/
+
+        # Copy board firmware overlay
+        mkdir -p /build/gen/root/lib/firmware
+        cp -a /build/firmware/${BOARD_FIRMWARE_OVERLAY}/. /build/gen/root/lib/firmware/
+
+        # Copy host firmware (wifi, etc.)
+        ${fw_cmds}
+
+        # Configure dracut firmware hint
+        mkdir -p /build/gen/root/etc/dracut.conf.d
+        echo 'install_items+=\" /lib/firmware/esos.elf \"' > /build/gen/root/etc/dracut.conf.d/firmware.conf
+
+        # Enable services
+        ${svc_cmds}
+
+        # System configuration
+        echo 'hostname=\"${BOOT_HOSTNAME}\"' > /build/gen/root/etc/conf.d/hostname
+        echo 'x1:12345:respawn:/sbin/agetty ${BOOT_SERIAL_BAUD} ${BOOT_SERIAL_TTY} linux' >> /build/gen/root/etc/inittab
+        sed -i -e 's/root:x:/root::/' /build/gen/root/etc/passwd
+        printf 'PermitRootLogin yes\nPermitEmptyPasswords yes\nStrictModes yes\n' >> /build/gen/root/etc/ssh/sshd_config
+
+        # Update ldconfig in assembled root
+        ${LDCONFIG} -v -r /build/gen/root
+
+        # Copy kernel image to boot
+        cp /build/linux/arch/riscv/boot/Image.gz.itb /build/gen/boot/
+
+        # Write u-boot environment file
+        printf 'console=${BOOT_CONSOLE}\ninit=/init\nbootdelay=0\nloglevel=${BOOT_LOGLEVEL}\nknl_name=${BOOT_KERNEL_NAME}\nramdisk_name=${BOOT_RAMDISK_NAME}\nset_root_arg=setenv bootargs root=${BOOT_ROOT_DEV}\n' \
+            > /build/gen/boot/env_${BOARD_NAME}-x.txt
+
+        # Build initramfs
+        DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
+          dracut -f --no-early-microcode --no-kernel \
+            -m '${DRACUT_MODULES}' --gzip \
+            --sysroot /build/gen/root \
+            --tmpdir /tmp \
+            /build/gen/boot/initramfs.img generic
+    "
+    echo "$(date -u +%Y%m%dT%H%M%SZ)" >> "$build_dir/.assembled"
+}
+
+image_pack() {
+    local sandbox_dir="$1"
+    local build_dir="$2"
+    local board="$3"
+    load_board_config "$board"
+
+    echo "Packing image for $board..."
+    run_with_build "$sandbox_dir" "$build_dir" "
+        rm -rf /build/tmp
+        cd /build
+        genimage --config /scripts/boards/${board}/genimage.cfg \
+            --inputpath /build \
+            --outputpath /build \
+            --rootpath /build/gen
+        xz -f -T0 -9 /build/gentoo-linux-${BOARD_NAME}_dev-sdcard.img
+    "
+    echo "Image ready: $build_dir/gentoo-linux-${BOARD_NAME}_dev-sdcard.img.xz"
+}
+
 ensure_crossdev() {
     local sandbox_dir="$1"
     local target_arch="${2:-}"
@@ -734,6 +1009,18 @@ usage() {
     echo "  $0 install [target] [arch] pkg... - Install packages into target"
     echo "  $0 install-from [target] [arch] file - Install packages from file"
     echo "  $0 update-ldconfig [target]    - Regenerate ld.so.cache in target"
+    echo ""
+    echo "Image build commands:"
+    echo "  $0 image list                  - List builds (name, board, state)"
+    echo "  $0 image destroy <name>        - Remove a build"
+    echo "  $0 image setup [board] [name]  - Create named build dir for board (default board: k1)"
+    echo "  $0 image install-deps [build] [target] - Install sandbox + target packages for board"
+    echo "  $0 image checkout [build]      - Clone/update source repos"
+    echo "  $0 image build-boot [build]    - Build OpenSBI + u-boot"
+    echo "  $0 image build-kernel [build]  - Build Linux kernel + modules"
+    echo "  $0 image assemble [build] [target] - Copy rootfs, install modules+firmware, create initramfs"
+    echo "  $0 image pack [build]          - Run genimage + xz compress"
+    echo "  $0 image build [board] [name]  - Full pipeline (setup+deps+checkout+build+assemble+pack)"
     echo ""
     echo "Cache directory: $CACHE_DIR"
     exit 1
@@ -1067,6 +1354,224 @@ main() {
             [[ ! -d "$target_dir" ]] && { echo "Error: Target not found: $target_dir" >&2; exit 1; }
 
             update_ldconfig_sandbox "$sandbox_dir" "$target_dir"
+            ;;
+        image)
+            local subcmd="${1:-list}"
+            shift
+
+            case $subcmd in
+                list)
+                    if [[ -d "$BUILDS_DIR" ]]; then
+                        for d in "$BUILDS_DIR"/*/; do
+                            [[ -d "$d" ]] || continue
+                            local name=$(basename "$d")
+                            local board=$(get_build_board "$d")
+                            local state="setup"
+                            [[ -f "$d/.assembled" ]] && state="assembled($(tail -n1 "$d/.assembled"))"
+                            printf "%-30s %-10s %s\n" "$name" "${board:-(unknown)}" "$state"
+                        done
+                    else
+                        echo "No builds found."
+                    fi
+                    ;;
+                destroy)
+                    if [[ -z "$1" ]]; then
+                        echo "Usage: $0 image destroy <build-name>" >&2
+                        exit 1
+                    fi
+                    local target="$BUILDS_DIR/$1"
+                    if [[ ! -d "$target" ]]; then
+                        echo "Error: Build not found: $1" >&2
+                        exit 1
+                    fi
+                    echo "Removing build: $1"
+                    remove_dir "$target"
+                    echo "Build $1 removed."
+                    ;;
+                setup)
+                    local board="${1:-k1}"
+                    [[ -n "$1" ]] && shift
+                    local timestamp
+                    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+                    local build_name="${1:-${board}-${timestamp}}"
+                    [[ -n "$1" ]] && shift
+
+                    ensure_cache_dirs
+                    local build_dir="$BUILDS_DIR/$build_name"
+                    mkdir -p "$build_dir"
+                    echo "$board" > "$build_dir/.board"
+                    echo "Build ready: $build_dir (board: $board)"
+                    ;;
+                install-deps)
+                    local build_dir=""
+                    if [[ -z "$1" || "$1" == "latest" ]]; then
+                        build_dir=$(get_latest_build)
+                        [[ -z "$build_dir" ]] && { echo "Error: No build found." >&2; exit 1; }
+                        [[ -n "$1" ]] && shift
+                    else
+                        build_dir="$BUILDS_DIR/$1"; shift
+                    fi
+
+                    local target_dir=""
+                    if [[ -z "$1" || "$1" == "latest" ]]; then
+                        target_dir=$(get_latest_target)
+                        [[ -z "$target_dir" ]] && { echo "Error: No target found." >&2; exit 1; }
+                        [[ -n "$1" ]] && shift
+                    else
+                        target_dir="$TARGETS_DIR/$1"; shift
+                    fi
+
+                    local board
+                    board=$(get_build_board "$build_dir")
+                    [[ -z "$board" ]] && { echo "Error: No .board metadata in $build_dir" >&2; exit 1; }
+
+                    local sandbox_dir
+                    sandbox_dir=$(resolve_sandbox)
+                    [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+
+                    image_install_deps "$sandbox_dir" "$target_dir" "$board"
+                    ;;
+                checkout)
+                    local build_dir=""
+                    if [[ -z "$1" || "$1" == "latest" ]]; then
+                        build_dir=$(get_latest_build)
+                        [[ -z "$build_dir" ]] && { echo "Error: No build found." >&2; exit 1; }
+                        [[ -n "$1" ]] && shift
+                    else
+                        build_dir="$BUILDS_DIR/$1"; shift
+                    fi
+
+                    local board
+                    board=$(get_build_board "$build_dir")
+                    [[ -z "$board" ]] && { echo "Error: No .board metadata in $build_dir" >&2; exit 1; }
+
+                    local sandbox_dir
+                    sandbox_dir=$(resolve_sandbox)
+                    [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+
+                    image_checkout "$sandbox_dir" "$build_dir" "$board"
+                    ;;
+                build-boot)
+                    local build_dir=""
+                    if [[ -z "$1" || "$1" == "latest" ]]; then
+                        build_dir=$(get_latest_build)
+                        [[ -z "$build_dir" ]] && { echo "Error: No build found." >&2; exit 1; }
+                        [[ -n "$1" ]] && shift
+                    else
+                        build_dir="$BUILDS_DIR/$1"; shift
+                    fi
+
+                    local board
+                    board=$(get_build_board "$build_dir")
+                    [[ -z "$board" ]] && { echo "Error: No .board metadata in $build_dir" >&2; exit 1; }
+
+                    local sandbox_dir
+                    sandbox_dir=$(resolve_sandbox)
+                    [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+
+                    image_build_bootloader "$sandbox_dir" "$build_dir" "$board"
+                    ;;
+                build-kernel)
+                    local build_dir=""
+                    if [[ -z "$1" || "$1" == "latest" ]]; then
+                        build_dir=$(get_latest_build)
+                        [[ -z "$build_dir" ]] && { echo "Error: No build found." >&2; exit 1; }
+                        [[ -n "$1" ]] && shift
+                    else
+                        build_dir="$BUILDS_DIR/$1"; shift
+                    fi
+
+                    local board
+                    board=$(get_build_board "$build_dir")
+                    [[ -z "$board" ]] && { echo "Error: No .board metadata in $build_dir" >&2; exit 1; }
+
+                    local sandbox_dir
+                    sandbox_dir=$(resolve_sandbox)
+                    [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+
+                    image_build_kernel "$sandbox_dir" "$build_dir" "$board"
+                    ;;
+                assemble)
+                    local build_dir=""
+                    if [[ -z "$1" || "$1" == "latest" ]]; then
+                        build_dir=$(get_latest_build)
+                        [[ -z "$build_dir" ]] && { echo "Error: No build found." >&2; exit 1; }
+                        [[ -n "$1" ]] && shift
+                    else
+                        build_dir="$BUILDS_DIR/$1"; shift
+                    fi
+
+                    local target_dir=""
+                    if [[ -z "$1" || "$1" == "latest" ]]; then
+                        target_dir=$(get_latest_target)
+                        [[ -z "$target_dir" ]] && { echo "Error: No target found." >&2; exit 1; }
+                        [[ -n "$1" ]] && shift
+                    else
+                        target_dir="$TARGETS_DIR/$1"; shift
+                    fi
+
+                    local board
+                    board=$(get_build_board "$build_dir")
+                    [[ -z "$board" ]] && { echo "Error: No .board metadata in $build_dir" >&2; exit 1; }
+
+                    local sandbox_dir
+                    sandbox_dir=$(resolve_sandbox)
+                    [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+
+                    image_assemble "$sandbox_dir" "$build_dir" "$target_dir" "$board"
+                    ;;
+                pack)
+                    local build_dir=""
+                    if [[ -z "$1" || "$1" == "latest" ]]; then
+                        build_dir=$(get_latest_build)
+                        [[ -z "$build_dir" ]] && { echo "Error: No build found." >&2; exit 1; }
+                        [[ -n "$1" ]] && shift
+                    else
+                        build_dir="$BUILDS_DIR/$1"; shift
+                    fi
+
+                    local board
+                    board=$(get_build_board "$build_dir")
+                    [[ -z "$board" ]] && { echo "Error: No .board metadata in $build_dir" >&2; exit 1; }
+
+                    local sandbox_dir
+                    sandbox_dir=$(resolve_sandbox)
+                    [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+
+                    image_pack "$sandbox_dir" "$build_dir" "$board"
+                    ;;
+                build)
+                    local board="${1:-k1}"
+                    [[ -n "$1" ]] && shift
+                    local timestamp
+                    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+                    local build_name="${1:-${board}-${timestamp}}"
+                    [[ -n "$1" ]] && shift
+
+                    ensure_cache_dirs
+                    local build_dir="$BUILDS_DIR/$build_name"
+                    mkdir -p "$build_dir"
+                    echo "$board" > "$build_dir/.board"
+
+                    local target_dir
+                    target_dir=$(get_latest_target)
+                    [[ -z "$target_dir" ]] && { echo "Error: No target found. Run 'target setup' first." >&2; exit 1; }
+
+                    local sandbox_dir
+                    sandbox_dir=$(resolve_sandbox)
+                    [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+
+                    image_install_deps "$sandbox_dir" "$target_dir" "$board"
+                    image_checkout "$sandbox_dir" "$build_dir" "$board"
+                    image_build_bootloader "$sandbox_dir" "$build_dir" "$board"
+                    image_build_kernel "$sandbox_dir" "$build_dir" "$board"
+                    image_assemble "$sandbox_dir" "$build_dir" "$target_dir" "$board"
+                    image_pack "$sandbox_dir" "$build_dir" "$board"
+                    ;;
+                *)
+                    usage
+                    ;;
+            esac
             ;;
         *)
             usage

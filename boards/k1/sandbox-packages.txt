@@ -1,0 +1,5 @@
+# Additional packages needed in the sandbox for K1 image builds
+# (genimage, dracut, u-boot-tools, dtc, busybox are already in install_dependencies)
+
+# OpenSBI is built with LLVM
+llvm-core/clang
