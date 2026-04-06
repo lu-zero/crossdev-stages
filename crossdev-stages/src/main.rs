@@ -16,7 +16,7 @@ use workspace::Workspace;
 // ── Top-level CLI ────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
-#[command(name = "crossdev-stages", about = "Gentoo-based RISC-V cross-build toolchain")]
+#[command(name = "crossdev-stages", about = "Gentoo-based cross-compilation stage builder")]
 struct Cli {
     /// Path to the project root (where boards/ lives). Defaults to the current directory.
     #[arg(long, global = true, default_value = ".")]
@@ -359,7 +359,7 @@ fn default_board_config(arch: &str) -> board::BoardConfig {
         arch: arch.to_string(),
         cflags: None,
         cross_compile: format!("{arch}-unknown-linux-gnu-"),
-        kernel_arch: stage::gentoo_arch(arch).unwrap_or("riscv").to_string(),
+        kernel_arch: String::new(),
         opensbi_repo: None,
         opensbi_tag: None,
         opensbi_platform: None,

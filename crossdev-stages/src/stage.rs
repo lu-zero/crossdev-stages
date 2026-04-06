@@ -35,6 +35,20 @@ pub fn gentoo_profile(arch: &str) -> Result<&'static str> {
     })
 }
 
+/// Map an OS architecture string to the Linux kernel `ARCH` value (passed to `make ARCH=…`).
+pub fn kernel_arch(arch: &str) -> Result<&'static str> {
+    Ok(match arch {
+        "x86_64" => "x86",
+        "aarch64" => "arm64",
+        a if a.starts_with("arm") => "arm",
+        a if a.starts_with("riscv") => "riscv",
+        a if a.starts_with("mips") => "mips",
+        a if a.starts_with("powerpc") => "powerpc",
+        a if a.starts_with("loongarch") => "loongarch",
+        other => return Err(crate::error::Error::UnknownArch(other.to_string())),
+    })
+}
+
 /// Default CFLAGS for cross-compilation (board-specific CFLAGS take precedence).
 pub fn default_cflags(arch: &str) -> &'static str {
     match arch {

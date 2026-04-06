@@ -9,7 +9,7 @@ pub struct BoardConfig {
     pub arch: String,           // e.g. "riscv64"
     pub cflags: Option<String>, // BOARD_CFLAGS; None → use default_cflags(arch)
     pub cross_compile: String,  // e.g. "riscv64-unknown-linux-gnu-"
-    pub kernel_arch: String,    // e.g. "riscv"
+    pub kernel_arch: String,    // e.g. "riscv", "arm64", "x86"
 
     // OpenSBI
     pub opensbi_repo: Option<String>,
