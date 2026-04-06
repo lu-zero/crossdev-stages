@@ -1,0 +1,191 @@
+use std::path::Path;
+
+use crate::container::SandboxRunner;
+use crate::error::Result;
+use crate::stage::{default_cflags, gentoo_arch, llvm_target};
+
+/// Parameters for a Portage `make.conf` file.
+pub struct MakeConf<'a> {
+    pub arch: &'a str,           // OS arch, e.g. "riscv64"
+    pub chost: Option<&'a str>,  // set for cross-sysroot make.conf
+    pub cflags: Option<&'a str>, // defaults to `default_cflags(arch)`
+    pub mirror: Option<&'a str>,
+}
+
+impl<'a> MakeConf<'a> {
+    /// Write `make.conf` into `portage_dir` (i.e. `/etc/portage` of a sandbox or sysroot).
+    pub fn write(&self, portage_dir: &Path) -> Result<()> {
+        std::fs::create_dir_all(portage_dir)?;
+        std::fs::create_dir_all(portage_dir.join("package.accept_keywords"))?;
+
+        let make_conf = portage_dir.join("make.conf");
+        let (jobs, load) = parallelism();
+        let garch = gentoo_arch(self.arch)?;
+        let cflags = self.cflags.unwrap_or_else(|| default_cflags(self.arch));
+
+        let mut conf = format!(
+            r#"MAKEOPTS="-j{jobs} --load-average {load}"
+EMERGE_DEFAULT_OPTS="--jobs={jobs} --load-average {load}"
+FEATURES="parallel-install -merge-wait"
+ACCEPT_KEYWORDS="~{garch}"
+"#
+        );
+
+        if let Some(chost) = self.chost {
+            conf += &format!("CHOST=\"{chost}\"\n");
+            conf += &format!("CFLAGS=\"{cflags}\"\n");
+            conf += &format!("CXXFLAGS=\"{cflags}\"\n");
+            if let Some(llvm) = llvm_target(self.arch) {
+                conf += &format!("LLVM_TARGETS=\"{llvm}\"\n");
+            }
+        }
+
+        if let Some(mirror) = self.mirror {
+            conf += &format!("GENTOO_MIRRORS=\"{mirror}\"\n");
+        }
+
+        // Only write if the file doesn't exist or needs an update.
+        let existing = std::fs::read_to_string(&make_conf).unwrap_or_default();
+        if existing != conf {
+            std::fs::write(&make_conf, &conf)?;
+        }
+        Ok(())
+    }
+}
+
+fn parallelism() -> (usize, usize) {
+    let n = num_cpus::get();
+    let jobs = n / 2 + 1;
+    let load = n;
+    (jobs, load)
+}
+
+/// Set or replace a variable in a make.conf file.
+/// If the variable exists, replace its value; otherwise append.
+pub fn set_make_conf_var(file: &Path, name: &str, value: &str) -> Result<()> {
+    let content = std::fs::read_to_string(file).unwrap_or_default();
+    let prefix = format!("{name}=");
+    let new_line = format!("{name}=\"{value}\"");
+
+    let mut found = false;
+    let mut lines: Vec<String> = content
+        .lines()
+        .map(|line| {
+            if line.starts_with(&prefix) {
+                found = true;
+                new_line.clone()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+
+    if !found {
+        lines.push(new_line);
+    }
+
+    std::fs::write(file, lines.join("\n") + "\n")?;
+    Ok(())
+}
+
+/// Portage operations that run *inside* a sandbox container.
+pub struct Portage<'a> {
+    runner: &'a SandboxRunner,
+}
+
+impl<'a> Portage<'a> {
+    pub fn new(runner: &'a SandboxRunner) -> Self {
+        Self { runner }
+    }
+
+    /// Initial sync of the portage tree.
+    pub fn webrsync(&self) -> Result<()> {
+        self.runner.run("emerge-webrsync")
+    }
+
+    /// `getuto` — fetch binary package signing keys (best-effort).
+    pub fn getuto(&self) -> Result<()> {
+        // Ignore failures: getuto may not be available or may fail on first run.
+        let _ = self.runner.run("getuto");
+        Ok(())
+    }
+
+    /// Emerge packages from binary packages only (`-G`).
+    pub fn emerge_binary(&self, packages: &[&str]) -> Result<()> {
+        let pkgs = packages.join(" ");
+        self.runner.run(&format!("emerge -G {pkgs}"))
+    }
+
+    /// Emerge packages, using binary if available (`-b -k`).
+    pub fn emerge(&self, packages: &[&str]) -> Result<()> {
+        let pkgs = packages.join(" ");
+        self.runner.run(&format!("emerge -b -k {pkgs}"))
+    }
+
+    /// Rebuild the world set.
+    #[allow(dead_code)]
+    pub fn emerge_world(&self) -> Result<()> {
+        self.runner.run("emerge -b -k -e @world")
+    }
+
+    /// Cross-emerge packages into a target sysroot (mounted at `/target`).
+    /// Uses `{chost}-emerge` which crossdev installs.
+    pub fn cross_emerge(&self, chost: &str, packages: &[&str]) -> Result<()> {
+        let pkgs = packages.join(" ");
+        self.runner.run(&format!(
+            "ROOT=/target {chost}-emerge -b -k {pkgs}",
+            chost = chost,
+            pkgs = pkgs,
+        ))
+    }
+
+    /// Cross-emerge with `USE=build` for bootstrapping (baselayout, portage).
+    pub fn cross_emerge_build(&self, chost: &str, packages: &[&str]) -> Result<()> {
+        let pkgs = packages.join(" ");
+        self.runner.run(&format!(
+            "USE=build ROOT=/target {chost}-emerge -b -k {pkgs}",
+            chost = chost,
+            pkgs = pkgs,
+        ))
+    }
+}
+
+/// Install all host-side dependencies required for cross-compilation.
+pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
+    let portage = Portage::new(runner);
+
+    log::info!("Syncing portage tree…");
+    portage.webrsync()?;
+    let _ = portage.getuto();
+
+    let bin_packages = [
+        "app-arch/zstd",
+        "app-arch/bzip2",
+        "app-arch/xz-utils",
+    ];
+    log::info!("Installing binary packages…");
+    portage.emerge_binary(&bin_packages)?;
+
+    let packages = [
+        "sys-devel/crossdev",
+        "sys-apps/merge-usr",
+        "dev-vcs/git",
+        "dev-embedded/u-boot-tools",
+        "sys-apps/dtc",
+        "sys-kernel/dracut",
+        "sys-apps/busybox",
+        "sys-fs/genimage",
+        "sys-fs/dosfstools",
+        "sys-fs/mtools",
+        "app-eselect/eselect-repository",
+        "dev-lang/rust",
+        "sys-kernel/gentoo-sources",
+    ];
+    log::info!("Installing build dependencies…");
+    portage.emerge(&packages)?;
+
+    log::info!("Installing Rust ldconfig…");
+    runner.run("cargo install --root /usr/local ldconfig")?;
+
+    Ok(())
+}
