@@ -9,7 +9,7 @@ pub struct BoardConfig {
     pub arch: String,           // e.g. "riscv64"
     pub cflags: Option<String>, // BOARD_CFLAGS; None → use default_cflags(arch)
     pub cross_compile: String,  // e.g. "riscv64-unknown-linux-gnu-"
-    pub kernel_arch: String,    // e.g. "riscv", "arm64", "x86"
+    pub kernel_arch: Option<String>, // e.g. "riscv", "arm64", "x86" — required for image builds
 
     // OpenSBI
     pub opensbi_repo: Option<String>,
@@ -142,7 +142,7 @@ fn parse(name: &str, path: &Path, content: &str) -> Result<BoardConfig> {
         arch: req!("BOARD_ARCH"),
         cflags: kv.get("BOARD_CFLAGS").cloned(),
         cross_compile: req!("CROSS_COMPILE"),
-        kernel_arch: req!("KERNEL_ARCH"),
+        kernel_arch: kv.get("KERNEL_ARCH").cloned(),
 
         opensbi_repo: kv.get("OPENSBI_REPO").cloned(),
         opensbi_tag: kv.get("OPENSBI_TAG").cloned(),

@@ -359,7 +359,7 @@ fn default_board_config(arch: &str) -> board::BoardConfig {
         arch: arch.to_string(),
         cflags: None,
         cross_compile: format!("{arch}-unknown-linux-gnu-"),
-        kernel_arch: String::new(),
+        kernel_arch: None,
         opensbi_repo: None,
         opensbi_tag: None,
         opensbi_platform: None,

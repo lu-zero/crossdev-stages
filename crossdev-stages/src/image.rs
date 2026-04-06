@@ -169,10 +169,15 @@ pub fn build_bootloader(
             ))?;
         }
         if let Some(defconfig) = &board.u_boot_defconfig {
+            let karch = board.kernel_arch.as_deref().ok_or_else(|| {
+                crate::error::Error::BoardConfigParse {
+                    file: board.name.clone(),
+                    msg: "KERNEL_ARCH required for bootloader build".into(),
+                }
+            })?;
             runner.run(&format!(
                 "make -C /build/u-boot ARCH={karch} CROSS_COMPILE={cc} {defconfig} && \
                  make -C /build/u-boot ARCH={karch} CROSS_COMPILE={cc} -j$(nproc)",
-                karch = board.kernel_arch,
                 cc = board.cross_compile,
             ))?;
         }
@@ -201,10 +206,15 @@ pub fn build_kernel(
             name = board.name
         ))?;
     } else {
+        let karch = board.kernel_arch.as_deref().ok_or_else(|| {
+            crate::error::Error::BoardConfigParse {
+                file: board.name.clone(),
+                msg: "KERNEL_ARCH required for kernel build".into(),
+            }
+        })?;
         runner.run(&format!(
             "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} {defconfig} && \
              make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} -j$(nproc)",
-            karch = board.kernel_arch,
             cc = board.cross_compile,
             defconfig = board.kernel_defconfig,
         ))?;
@@ -236,10 +246,15 @@ pub fn assemble(
     runner.run("cp -a /target/. /build/rootfs/")?;
 
     // Install kernel modules.
+    let karch = board.kernel_arch.as_deref().ok_or_else(|| {
+        crate::error::Error::BoardConfigParse {
+            file: board.name.clone(),
+            msg: "KERNEL_ARCH required for modules_install".into(),
+        }
+    })?;
     runner.run(&format!(
         "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} \
          INSTALL_MOD_PATH=/build/rootfs modules_install",
-        karch = board.kernel_arch,
         cc = board.cross_compile,
     ))?;
 
