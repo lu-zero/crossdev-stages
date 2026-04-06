@@ -1562,19 +1562,43 @@ main() {
                     sandbox_dir=$(resolve_sandbox)
                     [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
 
-                    echo "==> [1/6] Installing dependencies..."
-                    image_install_deps "$sandbox_dir" "$target_dir" "$board"
-                    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.deps"
-                    echo "==> [2/6] Checking out sources..."
-                    image_checkout "$sandbox_dir" "$build_dir" "$board"
-                    echo "==> [3/6] Building bootloader..."
-                    image_build_bootloader "$sandbox_dir" "$build_dir" "$board"
-                    echo "==> [4/6] Building kernel..."
-                    image_build_kernel "$sandbox_dir" "$build_dir" "$board"
-                    echo "==> [5/6] Assembling image..."
-                    image_assemble "$sandbox_dir" "$build_dir" "$target_dir" "$board"
-                    echo "==> [6/6] Packing image..."
-                    image_pack "$sandbox_dir" "$build_dir" "$board" "$opt_compress"
+                    load_board_config "$board"
+                    if [[ -z "${BUILD_STEPS+x}" ]]; then
+                        BUILD_STEPS=(deps checkout bootloader kernel assemble pack)
+                    fi
+                    local steps=("${BUILD_STEPS[@]}")
+                    local total=${#steps[@]}
+                    local step_num=0
+
+                    for step in "${steps[@]}"; do
+                        step_num=$((step_num + 1))
+                        echo "==> [$step_num/$total] ${step}..."
+                        case "$step" in
+                            deps)
+                                image_install_deps "$sandbox_dir" "$target_dir" "$board"
+                                echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.deps"
+                                ;;
+                            checkout)
+                                image_checkout "$sandbox_dir" "$build_dir" "$board"
+                                ;;
+                            bootloader)
+                                image_build_bootloader "$sandbox_dir" "$build_dir" "$board"
+                                ;;
+                            kernel)
+                                image_build_kernel "$sandbox_dir" "$build_dir" "$board"
+                                ;;
+                            assemble)
+                                image_assemble "$sandbox_dir" "$build_dir" "$target_dir" "$board"
+                                ;;
+                            pack)
+                                image_pack "$sandbox_dir" "$build_dir" "$board" "$opt_compress"
+                                ;;
+                            *)
+                                echo "Error: Unknown build step: $step" >&2
+                                exit 1
+                                ;;
+                        esac
+                    done
                     ;;
                 *)
                     usage

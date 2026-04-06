@@ -22,22 +22,24 @@ board_checkout() {
     "
 }
 
-board_build_bootloader() {
-    # no-op: K230 builds bootloader after kernel (opensbi embeds kernel Image)
-    echo "K230: bootloader deferred to kernel step (opensbi needs kernel Image)"
-}
-
 board_build_kernel() {
     local sandbox_dir="$1"
     local build_dir="$2"
 
-    # K230 build order: kernel first, then opensbi (embeds Image), then u-boot
     run_with_build "$sandbox_dir" "$build_dir" "
         make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${KERNEL_DEFCONFIG}
         make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
         make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules -j\$(nproc)
         make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} dtbs
+    "
+}
 
+board_build_bootloader() {
+    local sandbox_dir="$1"
+    local build_dir="$2"
+
+    # opensbi embeds kernel Image as FW_PAYLOAD (BUILD_STEPS runs kernel before bootloader)
+    run_with_build "$sandbox_dir" "$build_dir" "
         make -C /build/opensbi PLATFORM=${OPENSBI_PLATFORM} CROSS_COMPILE=${CROSS_COMPILE} \
             FW_PAYLOAD=y FW_PAYLOAD_PATH=/build/linux/arch/${KERNEL_ARCH}/boot/Image -j\$(nproc)
         make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${U_BOOT_DEFCONFIG}
