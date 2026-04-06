@@ -790,6 +790,36 @@ load_board_config() {
     fi
 }
 
+# Apply per-package CFLAGS workarounds to a crossdev sysroot
+# Reads WORKAROUND_PKGS and WORKAROUND_CFLAGS arrays from board.conf
+apply_workarounds() {
+    local sandbox_dir="$1"
+    local target_arch="$2"
+    local chost="${target_arch}-unknown-linux-gnu"
+    local crossdev_root="/usr/${chost}"
+    local host_crossdev_root="$sandbox_dir${crossdev_root}"
+
+    [[ -z "${WORKAROUND_PKGS+x}" ]] && return 0
+    [[ ${#WORKAROUND_PKGS[@]} -eq 0 ]] && return 0
+
+    mkdir -p "$host_crossdev_root/etc/portage/env"
+    mkdir -p "$host_crossdev_root/etc/portage/package.env"
+
+    local i pkg cflags env_name
+    for ((i = 0; i < ${#WORKAROUND_PKGS[@]}; i++)); do
+        pkg="${WORKAROUND_PKGS[$i]}"
+        cflags="${WORKAROUND_CFLAGS[$i]}"
+        env_name="${pkg##*/}"
+
+        cat > "$host_crossdev_root/etc/portage/env/${env_name}.conf" << EOF
+CFLAGS="${cflags}"
+CXXFLAGS="${cflags}"
+EOF
+        echo "$pkg ${env_name}.conf" >> "$host_crossdev_root/etc/portage/package.env/workarounds"
+    done
+    echo "Applied ${#WORKAROUND_PKGS[@]} CFLAGS workaround(s) for $BOARD_NAME"
+}
+
 image_install_deps() {
     local sandbox_dir="$1"
     local target_dir="$2"
@@ -800,6 +830,9 @@ image_install_deps() {
     local target_pkgs="$BOARD_CFG_DIR/target-packages.txt"
     local target_arch="$BOARD_ARCH"
     local chost="${target_arch}-unknown-linux-gnu"
+
+    # Apply per-package CFLAGS workarounds before emerging
+    apply_workarounds "$sandbox_dir" "$target_arch"
 
     if [[ -f "$sandbox_pkgs" ]]; then
         echo "Installing sandbox packages for $board..."
