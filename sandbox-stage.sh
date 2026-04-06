@@ -863,6 +863,7 @@ image_checkout() {
         board_checkout "$sandbox_dir" "$build_dir"
     else
         run_with_build "$sandbox_dir" "$build_dir" "
+            set -e
             checkout() {
                 local repo=\$1 tag=\$2 src=/build/\$3
                 if [[ -d \"\$src\" ]]; then
@@ -891,6 +892,7 @@ image_build_bootloader() {
         board_build_bootloader "$sandbox_dir" "$build_dir"
     else
         run_with_build "$sandbox_dir" "$build_dir" "
+            set -e
             make -C /build/opensbi PLATFORM=${OPENSBI_PLATFORM} PLATFORM_DEFCONFIG=defconfig CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
             make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${U_BOOT_DEFCONFIG}
             make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
@@ -910,6 +912,7 @@ image_build_kernel() {
         board_build_kernel "$sandbox_dir" "$build_dir"
     else
         run_with_build "$sandbox_dir" "$build_dir" "
+            set -e
             make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${KERNEL_DEFCONFIG}
             make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
             make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules -j\$(nproc)
