@@ -1108,6 +1108,7 @@ usage() {
     echo "  $0 update-ldconfig [target]    - Regenerate ld.so.cache in target"
     echo ""
     echo "Image build commands:"
+    echo "  $0 image boards                - List available boards"
     echo "  $0 image list                  - List builds (name, board, state)"
     echo "  $0 image destroy <name>        - Remove a build"
     echo "  $0 image setup <board> [name]  - Create named build dir for board"
@@ -1117,7 +1118,8 @@ usage() {
     echo "  $0 image build-kernel [build]  - Build Linux kernel + modules"
     echo "  $0 image assemble [build] [target] - Copy rootfs, install modules+firmware, create initramfs"
     echo "  $0 image pack [build]          - Run genimage + xz compress (--no-compress to skip xz)"
-    echo "  $0 image build <board> [name] [target] - Full pipeline (setup+deps+checkout+build+assemble+pack)"
+    echo "  $0 image build <board> [name] [target] - Full pipeline (order from BUILD_STEPS in board.conf)"
+    echo "  $0 --dry-run image build <board>      - Show board config and build steps without building"
     echo ""
     echo "Maintenance:"
     echo "  $0 prune [board]               - Remove incomplete builds (keep packed ones)"
@@ -1134,12 +1136,14 @@ main() {
     local opt_sandbox=""
     local opt_mirror=""
     local opt_compress="xz"
+    local opt_dry_run=0
     local filtered_args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --sandbox|-s) opt_sandbox="$2"; shift 2 ;;
             --mirror|-m) opt_mirror="$2"; shift 2 ;;
             --no-compress) opt_compress="none"; shift ;;
+            --dry-run) opt_dry_run=1; shift ;;
             *) filtered_args+=("$1"); shift ;;
         esac
     done
@@ -1432,6 +1436,16 @@ main() {
             shift
 
             case $subcmd in
+                boards)
+                    for conf in "$BASE_DIR"/boards/*/board.conf; do
+                        [[ -f "$conf" ]] || continue
+                        local bdir bname barch
+                        bdir=$(dirname "$conf")
+                        bname=$(basename "$bdir")
+                        barch=$(. "$conf" && echo "$BOARD_ARCH")
+                        printf "%-15s %s\n" "$bname" "$barch"
+                    done
+                    ;;
                 list)
                     if [[ -d "$BUILDS_DIR" ]]; then
                         for d in "$BUILDS_DIR"/*/; do
@@ -1577,23 +1591,6 @@ main() {
                 build)
                     require_args 1 "image build requires a board name" "$@"
                     local board="$1"; shift
-                    local timestamp
-                    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
-                    local build_name="${1:-${board}-${timestamp}}"
-                    [[ $# -gt 0 ]] && shift
-
-                    ensure_cache_dirs
-                    local build_dir="$BUILDS_DIR/$build_name"
-                    mkdir -p "$build_dir"
-                    echo "$board" > "$build_dir/.board"
-
-                    local target_dir
-                    resolve_target target_dir "${1-}"
-                    [[ $# -gt 0 ]] && shift
-
-                    local sandbox_dir
-                    sandbox_dir=$(resolve_sandbox)
-                    [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
 
                     load_board_config "$board"
                     if [[ -z "${BUILD_STEPS+x}" ]]; then
@@ -1601,37 +1598,70 @@ main() {
                     fi
                     local steps=("${BUILD_STEPS[@]}")
                     local total=${#steps[@]}
-                    local step_num=0
 
-                    for step in "${steps[@]}"; do
-                        step_num=$((step_num + 1))
-                        echo "==> [$step_num/$total] ${step}..."
-                        case "$step" in
-                            deps)
-                                image_install_deps "$sandbox_dir" "$target_dir" "$board"
-                                echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.deps"
-                                ;;
-                            checkout)
-                                image_checkout "$sandbox_dir" "$build_dir" "$board"
-                                ;;
-                            bootloader)
-                                image_build_bootloader "$sandbox_dir" "$build_dir" "$board"
-                                ;;
-                            kernel)
-                                image_build_kernel "$sandbox_dir" "$build_dir" "$board"
-                                ;;
-                            assemble)
-                                image_assemble "$sandbox_dir" "$build_dir" "$target_dir" "$board"
-                                ;;
-                            pack)
-                                image_pack "$sandbox_dir" "$build_dir" "$board" "$opt_compress"
-                                ;;
-                            *)
-                                echo "Error: Unknown build step: $step" >&2
-                                exit 1
-                                ;;
-                        esac
-                    done
+                    if [[ $opt_dry_run -eq 1 ]]; then
+                        echo "Board:      $BOARD_NAME"
+                        echo "Arch:       $BOARD_ARCH"
+                        echo "CFLAGS:     ${BOARD_CFLAGS:-$(target_cflags "$BOARD_ARCH")}"
+                        echo "Steps:      ${steps[*]}"
+                        echo "Image:      ${IMAGE_NAME:-gentoo-linux-${BOARD_NAME}_dev-sdcard.img}"
+                        for step in "${steps[@]}"; do
+                            if type -t "board_build_${step}" &>/dev/null || type -t "board_${step}" &>/dev/null; then
+                                echo "  $step: board override"
+                            else
+                                echo "  $step: default"
+                            fi
+                        done
+                    else
+                        local timestamp
+                        timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+                        local build_name="${1:-${board}-${timestamp}}"
+                        [[ $# -gt 0 ]] && shift
+
+                        ensure_cache_dirs
+                        local build_dir="$BUILDS_DIR/$build_name"
+                        mkdir -p "$build_dir"
+                        echo "$board" > "$build_dir/.board"
+
+                        local target_dir
+                        resolve_target target_dir "${1-}"
+                        [[ $# -gt 0 ]] && shift
+
+                        local sandbox_dir
+                        sandbox_dir=$(resolve_sandbox)
+                        [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+
+                        local step_num=0
+                        for step in "${steps[@]}"; do
+                            step_num=$((step_num + 1))
+                            echo "==> [$step_num/$total] ${step}..."
+                            case "$step" in
+                                deps)
+                                    image_install_deps "$sandbox_dir" "$target_dir" "$board"
+                                    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.deps"
+                                    ;;
+                                checkout)
+                                    image_checkout "$sandbox_dir" "$build_dir" "$board"
+                                    ;;
+                                bootloader)
+                                    image_build_bootloader "$sandbox_dir" "$build_dir" "$board"
+                                    ;;
+                                kernel)
+                                    image_build_kernel "$sandbox_dir" "$build_dir" "$board"
+                                    ;;
+                                assemble)
+                                    image_assemble "$sandbox_dir" "$build_dir" "$target_dir" "$board"
+                                    ;;
+                                pack)
+                                    image_pack "$sandbox_dir" "$build_dir" "$board" "$opt_compress"
+                                    ;;
+                                *)
+                                    echo "Error: Unknown build step: $step" >&2
+                                    exit 1
+                                    ;;
+                            esac
+                        done
+                    fi
                     ;;
                 *)
                     usage
