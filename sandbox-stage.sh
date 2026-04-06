@@ -85,7 +85,10 @@ set_make_conf_var() {
     local var_value="$3"
 
     if grep -q "^${var_name}=" "$file"; then
-        sed -i "s|^${var_name}=.*|${var_name}=\"${var_value}\"|" "$file"
+        local tmpf="${file}.tmp"
+        awk -v name="$var_name" -v val="$var_value" \
+            '$0 ~ "^"name"=" { print name"=\""val"\""; next } { print }' \
+            "$file" > "$tmpf" && mv -f "$tmpf" "$file"
     else
         echo "${var_name}=\"${var_value}\"" >> "$file"
     fi
@@ -318,7 +321,7 @@ gentoo_arch() {
         x86_64) ARCH=amd64 FLAVOR=amd64-openrc;;
         aarch64) ARCH=arm64 FLAVOR=arm64-openrc;;
         riscv*) ARCH=riscv FLAVOR=rv64_lp64d-openrc;;
-        *) ARCH=$os_arch FLAVOR=$ARCH-openrc;;
+        *) echo "Error: Unknown architecture: $os_arch" >&2; return 1;;
     esac
 # echo "$os_arch => $ARCH"
 }
@@ -1148,6 +1151,7 @@ main() {
         esac
     done
     set -- "${filtered_args[@]}"
+    [[ $# -gt 0 ]] || usage
 
     # Resolve sandbox dir: from flag, or latest
     resolve_sandbox() {

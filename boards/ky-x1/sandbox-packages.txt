@@ -1,0 +1,4 @@
+# Additional packages needed in the sandbox for KY-X1 image builds
+
+# OpenSBI is built with LLVM=1
+llvm-core/clang
