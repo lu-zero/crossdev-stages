@@ -771,13 +771,6 @@ load_board_config() {
     # shellcheck source=/dev/null
     source "$cfg"
     BOARD_CFG_DIR="$BASE_DIR/boards/$board"
-
-    # Source optional board.sh for function overrides
-    local board_script="$BASE_DIR/boards/$board/board.sh"
-    if [[ -f "$board_script" ]]; then
-        # shellcheck source=/dev/null
-        source "$board_script"
-    fi
 }
 
 image_install_deps() {
@@ -837,15 +830,11 @@ image_build_bootloader() {
     load_board_config "$board"
 
     echo "Building bootloader for $board..."
-    if type -t board_build_bootloader &>/dev/null; then
-        board_build_bootloader "$sandbox_dir" "$build_dir"
-    else
-        run_with_build "$sandbox_dir" "$build_dir" "
-            make -C /build/opensbi PLATFORM=${OPENSBI_PLATFORM} PLATFORM_DEFCONFIG=defconfig CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc) LLVM=1
-            make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${U_BOOT_DEFCONFIG}
-            make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
-        "
-    fi
+    run_with_build "$sandbox_dir" "$build_dir" "
+        make -C /build/opensbi PLATFORM=${OPENSBI_PLATFORM} PLATFORM_DEFCONFIG=defconfig CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc) LLVM=1
+        make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${U_BOOT_DEFCONFIG}
+        make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
+    "
     echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.bootloader"
 }
 
@@ -856,15 +845,11 @@ image_build_kernel() {
     load_board_config "$board"
 
     echo "Building kernel for $board..."
-    if type -t board_build_kernel &>/dev/null; then
-        board_build_kernel "$sandbox_dir" "$build_dir"
-    else
-        run_with_build "$sandbox_dir" "$build_dir" "
-            make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${KERNEL_DEFCONFIG}
-            make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
-            make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules -j\$(nproc)
-        "
-    fi
+    run_with_build "$sandbox_dir" "$build_dir" "
+        make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${KERNEL_DEFCONFIG}
+        make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
+        make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules -j\$(nproc)
+    "
     echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.kernel"
 }
 
@@ -906,6 +891,20 @@ image_assemble() {
         # Install kernel modules into root
         INSTALL_MOD_PATH=/build/gen/root make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules_install
 
+        # Copy DTBs to boot
+        cp /build/linux/${BOARD_DTB_GLOB} /build/gen/boot/
+
+        # Copy board firmware overlay
+        mkdir -p /build/gen/root/lib/firmware
+        cp -a /build/firmware/${BOARD_FIRMWARE_OVERLAY}/. /build/gen/root/lib/firmware/
+
+        # Copy host firmware (wifi, etc.)
+        ${fw_cmds}
+
+        # Configure dracut firmware hint
+        mkdir -p /build/gen/root/etc/dracut.conf.d
+        echo 'install_items+=\" /lib/firmware/esos.elf \"' > /build/gen/root/etc/dracut.conf.d/firmware.conf
+
         # Enable services
         mkdir -p /build/gen/root/etc/runlevels/{boot,default,nonetwork,shutdown,sysinit}
         ${svc_cmds}
@@ -920,24 +919,26 @@ image_assemble() {
 
         # Update ldconfig in assembled root
         ${LDCONFIG} -v -r /build/gen/root
+
+        # Copy kernel image to boot
+        cp /build/linux/arch/${KERNEL_ARCH}/boot/${BOOT_KERNEL_NAME} /build/gen/boot/
+
+        # Write u-boot environment file
+        printf 'console=${BOOT_CONSOLE}\ninit=/init\nbootdelay=0\nloglevel=${BOOT_LOGLEVEL}\nknl_name=${BOOT_KERNEL_NAME}\nramdisk_name=${BOOT_RAMDISK_NAME}\nset_root_arg=setenv bootargs root=${BOOT_ROOT_DEV}\n' \
+            > /build/gen/boot/env_${BOARD_NAME}-x.txt
+
+        # Build initramfs
+        # dracutbasedir tells dracut where its modules live on the host,
+        # avoiding the need to install dracut into the target sysroot
+        kver=\$(ls /build/gen/root/lib/modules/ | head -1)
+        dracutbasedir=/usr/lib/dracut \
+        DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
+          dracut -f --no-early-microcode --no-kernel \
+            -m '${DRACUT_MODULES}' --gzip \
+            --sysroot /build/gen/root \
+            --tmpdir /tmp \
+            /build/gen/boot/initramfs.img \"\$kver\"
     "
-
-    # Board-specific assembly (firmware, boot image, initramfs)
-    if type -t board_assemble &>/dev/null; then
-        board_assemble "$sandbox_dir" "$build_dir" "$source_dir"
-    else
-        # Default: copy DTBs, kernel, firmware overlay, host firmware
-        run_with_build_and_source "$sandbox_dir" "$build_dir" "$source_dir" \
-          "${extra_args[@]}" -- "
-            set -e
-            cp /build/linux/${BOARD_DTB_GLOB} /build/gen/boot/
-            mkdir -p /build/gen/root/lib/firmware
-            cp -a /build/firmware/${BOARD_FIRMWARE_OVERLAY}/. /build/gen/root/lib/firmware/
-            ${fw_cmds}
-            cp /build/linux/arch/${KERNEL_ARCH}/boot/${BOOT_KERNEL_NAME} /build/gen/boot/
-        "
-    fi
-
     echo "$(date -u +%Y%m%dT%H%M%SZ)" >> "$build_dir/.assembled"
 }
 
