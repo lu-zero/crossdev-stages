@@ -271,6 +271,8 @@ install_dependencies() {
         "sys-kernel/dracut"
         "sys-apps/busybox"
         "sys-fs/genimage"
+        "sys-fs/dosfstools"
+        "sys-fs/mtools"
         "app-eselect/eselect-repository"
         "dev-lang/rust"
         "sys-kernel/gentoo-sources"
@@ -322,8 +324,13 @@ gentoo_arch() {
 }
 
 # Map OS architecture to default CFLAGS for cross-compilation
+# Board-specific BOARD_CFLAGS (from board.conf) takes precedence
 target_cflags() {
     local arch=$1
+    if [[ -n "${BOARD_CFLAGS:-}" ]]; then
+        echo "$BOARD_CFLAGS"
+        return
+    fi
     case $arch in
         x86_64)  echo "-O3 -march=x86-64 -pipe" ;;
         aarch64) echo "-O3 -pipe" ;;
@@ -755,7 +762,10 @@ resolve_dir() {
 
     if [[ -z "$arg" || "$arg" == "latest" ]]; then
         _rd_out=$("$fn")
-        [[ -z "$_rd_out" ]] && { echo "Error: No $label found." >&2; exit 1; }
+        if [[ -z "$_rd_out" ]]; then
+            echo "Error: No $label found." >&2
+            exit 1
+        fi
     else
         _rd_out="$base/$arg"
     fi
@@ -771,6 +781,43 @@ load_board_config() {
     # shellcheck source=/dev/null
     source "$cfg"
     BOARD_CFG_DIR="$BASE_DIR/boards/$board"
+
+    # Source optional board.sh for function overrides
+    local board_script="$BASE_DIR/boards/$board/board.sh"
+    if [[ -f "$board_script" ]]; then
+        # shellcheck source=/dev/null
+        source "$board_script"
+    fi
+}
+
+# Apply per-package CFLAGS workarounds to a crossdev sysroot
+# Reads WORKAROUND_PKGS and WORKAROUND_CFLAGS arrays from board.conf
+apply_workarounds() {
+    local sandbox_dir="$1"
+    local target_arch="$2"
+    local chost="${target_arch}-unknown-linux-gnu"
+    local crossdev_root="/usr/${chost}"
+    local host_crossdev_root="$sandbox_dir${crossdev_root}"
+
+    [[ -z "${WORKAROUND_PKGS+x}" ]] && return 0
+    [[ ${#WORKAROUND_PKGS[@]} -eq 0 ]] && return 0
+
+    mkdir -p "$host_crossdev_root/etc/portage/env"
+    mkdir -p "$host_crossdev_root/etc/portage/package.env"
+
+    local i pkg cflags env_name
+    for ((i = 0; i < ${#WORKAROUND_PKGS[@]}; i++)); do
+        pkg="${WORKAROUND_PKGS[$i]}"
+        cflags="${WORKAROUND_CFLAGS[$i]}"
+        env_name="${pkg##*/}"
+
+        cat > "$host_crossdev_root/etc/portage/env/${env_name}.conf" << EOF
+CFLAGS="${cflags}"
+CXXFLAGS="${cflags}"
+EOF
+        echo "$pkg ${env_name}.conf" >> "$host_crossdev_root/etc/portage/package.env/workarounds"
+    done
+    echo "Applied ${#WORKAROUND_PKGS[@]} CFLAGS workaround(s) for $BOARD_NAME"
 }
 
 image_install_deps() {
@@ -783,6 +830,9 @@ image_install_deps() {
     local target_pkgs="$BOARD_CFG_DIR/target-packages.txt"
     local target_arch="$BOARD_ARCH"
     local chost="${target_arch}-unknown-linux-gnu"
+
+    # Apply per-package CFLAGS workarounds before emerging
+    apply_workarounds "$sandbox_dir" "$target_arch"
 
     if [[ -f "$sandbox_pkgs" ]]; then
         echo "Installing sandbox packages for $board..."
@@ -806,20 +856,24 @@ image_checkout() {
     load_board_config "$board"
 
     echo "Checking out sources for $board into $build_dir..."
-    run_with_build "$sandbox_dir" "$build_dir" "
-        checkout() {
-            local repo=\$1 tag=\$2 src=/build/\$3
-            if [[ -d \"\$src\" ]]; then
-                (cd \"\$src\" && git fetch && git checkout \"\$tag\")
-            else
-                git clone --depth 1 --branch \"\$tag\" \"\$repo\" \"\$src\"
-            fi
-        }
-        checkout '${OPENSBI_REPO}' '${OPENSBI_TAG}' opensbi
-        checkout '${U_BOOT_REPO}' '${TAG}' u-boot
-        checkout '${KERNEL_REPO}' '${TAG}' linux
-        checkout '${FIRMWARE_REPO}' '${TAG}' firmware
-    "
+    if type -t board_checkout &>/dev/null; then
+        board_checkout "$sandbox_dir" "$build_dir"
+    else
+        run_with_build "$sandbox_dir" "$build_dir" "
+            checkout() {
+                local repo=\$1 tag=\$2 src=/build/\$3
+                if [[ -d \"\$src\" ]]; then
+                    (cd \"\$src\" && git fetch && git checkout \"\$tag\")
+                else
+                    git clone --depth 1 --branch \"\$tag\" \"\$repo\" \"\$src\"
+                fi
+            }
+            checkout '${OPENSBI_REPO}' '${OPENSBI_TAG}' opensbi
+            checkout '${U_BOOT_REPO}' '${TAG}' u-boot
+            checkout '${KERNEL_REPO}' '${TAG}' linux
+            checkout '${FIRMWARE_REPO}' '${TAG}' firmware
+        "
+    fi
     echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.sources"
 }
 
@@ -830,11 +884,15 @@ image_build_bootloader() {
     load_board_config "$board"
 
     echo "Building bootloader for $board..."
-    run_with_build "$sandbox_dir" "$build_dir" "
-        make -C /build/opensbi PLATFORM=${OPENSBI_PLATFORM} PLATFORM_DEFCONFIG=defconfig CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc) LLVM=1
-        make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${U_BOOT_DEFCONFIG}
-        make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
-    "
+    if type -t board_build_bootloader &>/dev/null; then
+        board_build_bootloader "$sandbox_dir" "$build_dir"
+    else
+        run_with_build "$sandbox_dir" "$build_dir" "
+            make -C /build/opensbi PLATFORM=${OPENSBI_PLATFORM} PLATFORM_DEFCONFIG=defconfig CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
+            make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${U_BOOT_DEFCONFIG}
+            make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
+        "
+    fi
     echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.bootloader"
 }
 
@@ -845,11 +903,15 @@ image_build_kernel() {
     load_board_config "$board"
 
     echo "Building kernel for $board..."
-    run_with_build "$sandbox_dir" "$build_dir" "
-        make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${KERNEL_DEFCONFIG}
-        make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
-        make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules -j\$(nproc)
-    "
+    if type -t board_build_kernel &>/dev/null; then
+        board_build_kernel "$sandbox_dir" "$build_dir"
+    else
+        run_with_build "$sandbox_dir" "$build_dir" "
+            make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${KERNEL_DEFCONFIG}
+            make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
+            make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules -j\$(nproc)
+        "
+    fi
     echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.kernel"
 }
 
@@ -880,8 +942,7 @@ image_assemble() {
     done
 
     echo "Assembling image for $board from $source_dir..."
-    run_with_build_and_source "$sandbox_dir" "$build_dir" "$source_dir" \
-      "${extra_args[@]}" -- "
+    run_with_build_and_source "$sandbox_dir" "$build_dir" "$source_dir" -- "
         set -e
         mkdir -p /build/gen/root /build/gen/boot
 
@@ -890,20 +951,6 @@ image_assemble() {
 
         # Install kernel modules into root
         INSTALL_MOD_PATH=/build/gen/root make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules_install
-
-        # Copy DTBs to boot
-        cp /build/linux/${BOARD_DTB_GLOB} /build/gen/boot/
-
-        # Copy board firmware overlay
-        mkdir -p /build/gen/root/lib/firmware
-        cp -a /build/firmware/${BOARD_FIRMWARE_OVERLAY}/. /build/gen/root/lib/firmware/
-
-        # Copy host firmware (wifi, etc.)
-        ${fw_cmds}
-
-        # Configure dracut firmware hint
-        mkdir -p /build/gen/root/etc/dracut.conf.d
-        echo 'install_items+=\" /lib/firmware/esos.elf \"' > /build/gen/root/etc/dracut.conf.d/firmware.conf
 
         # Enable services
         mkdir -p /build/gen/root/etc/runlevels/{boot,default,nonetwork,shutdown,sysinit}
@@ -919,26 +966,24 @@ image_assemble() {
 
         # Update ldconfig in assembled root
         ${LDCONFIG} -v -r /build/gen/root
-
-        # Copy kernel image to boot
-        cp /build/linux/arch/${KERNEL_ARCH}/boot/${BOOT_KERNEL_NAME} /build/gen/boot/
-
-        # Write u-boot environment file
-        printf 'console=${BOOT_CONSOLE}\ninit=/init\nbootdelay=0\nloglevel=${BOOT_LOGLEVEL}\nknl_name=${BOOT_KERNEL_NAME}\nramdisk_name=${BOOT_RAMDISK_NAME}\nset_root_arg=setenv bootargs root=${BOOT_ROOT_DEV}\n' \
-            > /build/gen/boot/env_${BOARD_NAME}-x.txt
-
-        # Build initramfs
-        # dracutbasedir tells dracut where its modules live on the host,
-        # avoiding the need to install dracut into the target sysroot
-        kver=\$(ls /build/gen/root/lib/modules/ | head -1)
-        dracutbasedir=/usr/lib/dracut \
-        DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
-          dracut -f --no-early-microcode --no-kernel \
-            -m '${DRACUT_MODULES}' --gzip \
-            --sysroot /build/gen/root \
-            --tmpdir /tmp \
-            /build/gen/boot/initramfs.img \"\$kver\"
     "
+
+    # Board-specific assembly (firmware, boot image, initramfs)
+    if type -t board_assemble &>/dev/null; then
+        board_assemble "$sandbox_dir" "$build_dir" "$source_dir"
+    else
+        # Default: copy DTBs, kernel, firmware overlay, host firmware
+        run_with_build_and_source "$sandbox_dir" "$build_dir" "$source_dir" \
+          ${extra_args[@]+"${extra_args[@]}"} -- "
+            set -e
+            cp /build/linux/${BOARD_DTB_GLOB} /build/gen/boot/
+            mkdir -p /build/gen/root/lib/firmware
+            cp -a /build/firmware/${BOARD_FIRMWARE_OVERLAY}/. /build/gen/root/lib/firmware/
+            ${fw_cmds}
+            cp /build/linux/arch/${KERNEL_ARCH}/boot/${BOOT_KERNEL_NAME} /build/gen/boot/
+        "
+    fi
+
     echo "$(date -u +%Y%m%dT%H%M%SZ)" >> "$build_dir/.assembled"
 }
 
@@ -949,7 +994,7 @@ image_pack() {
     local compress="${4:-xz}"
     load_board_config "$board"
 
-    local img_name="gentoo-linux-${BOARD_NAME}_dev-sdcard.img"
+    local img_name="${IMAGE_NAME:-gentoo-linux-${BOARD_NAME}_dev-sdcard.img}"
 
     echo "Packing image for $board..."
     run_with_build "$sandbox_dir" "$build_dir" "
@@ -1063,6 +1108,7 @@ usage() {
     echo "  $0 update-ldconfig [target]    - Regenerate ld.so.cache in target"
     echo ""
     echo "Image build commands:"
+    echo "  $0 image boards                - List available boards"
     echo "  $0 image list                  - List builds (name, board, state)"
     echo "  $0 image destroy <name>        - Remove a build"
     echo "  $0 image setup <board> [name]  - Create named build dir for board"
@@ -1072,7 +1118,12 @@ usage() {
     echo "  $0 image build-kernel [build]  - Build Linux kernel + modules"
     echo "  $0 image assemble [build] [target] - Copy rootfs, install modules+firmware, create initramfs"
     echo "  $0 image pack [build]          - Run genimage + xz compress (--no-compress to skip xz)"
-    echo "  $0 image build <board> [name] [target] - Full pipeline (setup+deps+checkout+build+assemble+pack)"
+    echo "  $0 image build <board> [name] [target] - Full pipeline (order from BUILD_STEPS in board.conf)"
+    echo "  $0 --dry-run image build <board>      - Show board config and build steps without building"
+    echo ""
+    echo "Maintenance:"
+    echo "  $0 prune [board]               - Remove incomplete builds (keep packed ones)"
+    echo "  $0 prune [board] --all         - Remove all builds (for board if specified)"
     echo ""
     echo "Cache directory: $CACHE_DIR"
     exit 1
@@ -1085,12 +1136,14 @@ main() {
     local opt_sandbox=""
     local opt_mirror=""
     local opt_compress="xz"
+    local opt_dry_run=0
     local filtered_args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --sandbox|-s) opt_sandbox="$2"; shift 2 ;;
             --mirror|-m) opt_mirror="$2"; shift 2 ;;
             --no-compress) opt_compress="none"; shift ;;
+            --dry-run) opt_dry_run=1; shift ;;
             *) filtered_args+=("$1"); shift ;;
         esac
     done
@@ -1383,6 +1436,16 @@ main() {
             shift
 
             case $subcmd in
+                boards)
+                    for conf in "$BASE_DIR"/boards/*/board.conf; do
+                        [[ -f "$conf" ]] || continue
+                        local bdir bname barch
+                        bdir=$(dirname "$conf")
+                        bname=$(basename "$bdir")
+                        barch=$(. "$conf" && echo "$BOARD_ARCH")
+                        printf "%-15s %s\n" "$bname" "$barch"
+                    done
+                    ;;
                 list)
                     if [[ -d "$BUILDS_DIR" ]]; then
                         for d in "$BUILDS_DIR"/*/; do
@@ -1528,36 +1591,115 @@ main() {
                 build)
                     require_args 1 "image build requires a board name" "$@"
                     local board="$1"; shift
-                    local timestamp
-                    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
-                    local build_name="${1:-${board}-${timestamp}}"
-                    [[ $# -gt 0 ]] && shift
 
-                    ensure_cache_dirs
-                    local build_dir="$BUILDS_DIR/$build_name"
-                    mkdir -p "$build_dir"
-                    echo "$board" > "$build_dir/.board"
+                    load_board_config "$board"
+                    if [[ -z "${BUILD_STEPS+x}" ]]; then
+                        BUILD_STEPS=(deps checkout bootloader kernel assemble pack)
+                    fi
+                    local steps=("${BUILD_STEPS[@]}")
+                    local total=${#steps[@]}
 
-                    local target_dir
-                    resolve_target target_dir "${1-}"
-                    [[ $# -gt 0 ]] && shift
+                    if [[ $opt_dry_run -eq 1 ]]; then
+                        echo "Board:      $BOARD_NAME"
+                        echo "Arch:       $BOARD_ARCH"
+                        echo "CFLAGS:     ${BOARD_CFLAGS:-$(target_cflags "$BOARD_ARCH")}"
+                        echo "Steps:      ${steps[*]}"
+                        echo "Image:      ${IMAGE_NAME:-gentoo-linux-${BOARD_NAME}_dev-sdcard.img}"
+                        for step in "${steps[@]}"; do
+                            if type -t "board_build_${step}" &>/dev/null || type -t "board_${step}" &>/dev/null; then
+                                echo "  $step: board override"
+                            else
+                                echo "  $step: default"
+                            fi
+                        done
+                    else
+                        local timestamp
+                        timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+                        local build_name="${1:-${board}-${timestamp}}"
+                        [[ $# -gt 0 ]] && shift
 
-                    local sandbox_dir
-                    sandbox_dir=$(resolve_sandbox)
-                    [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+                        ensure_cache_dirs
+                        local build_dir="$BUILDS_DIR/$build_name"
+                        mkdir -p "$build_dir"
+                        echo "$board" > "$build_dir/.board"
 
-                    image_install_deps "$sandbox_dir" "$target_dir" "$board"
-                    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.deps"
-                    image_checkout "$sandbox_dir" "$build_dir" "$board"
-                    image_build_bootloader "$sandbox_dir" "$build_dir" "$board"
-                    image_build_kernel "$sandbox_dir" "$build_dir" "$board"
-                    image_assemble "$sandbox_dir" "$build_dir" "$target_dir" "$board"
-                    image_pack "$sandbox_dir" "$build_dir" "$board" "$opt_compress"
+                        local target_dir
+                        resolve_target target_dir "${1-}"
+                        [[ $# -gt 0 ]] && shift
+
+                        local sandbox_dir
+                        sandbox_dir=$(resolve_sandbox)
+                        [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+
+                        local step_num=0
+                        for step in "${steps[@]}"; do
+                            step_num=$((step_num + 1))
+                            echo "==> [$step_num/$total] ${step}..."
+                            case "$step" in
+                                deps)
+                                    image_install_deps "$sandbox_dir" "$target_dir" "$board"
+                                    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.deps"
+                                    ;;
+                                checkout)
+                                    image_checkout "$sandbox_dir" "$build_dir" "$board"
+                                    ;;
+                                bootloader)
+                                    image_build_bootloader "$sandbox_dir" "$build_dir" "$board"
+                                    ;;
+                                kernel)
+                                    image_build_kernel "$sandbox_dir" "$build_dir" "$board"
+                                    ;;
+                                assemble)
+                                    image_assemble "$sandbox_dir" "$build_dir" "$target_dir" "$board"
+                                    ;;
+                                pack)
+                                    image_pack "$sandbox_dir" "$build_dir" "$board" "$opt_compress"
+                                    ;;
+                                *)
+                                    echo "Error: Unknown build step: $step" >&2
+                                    exit 1
+                                    ;;
+                            esac
+                        done
+                    fi
                     ;;
                 *)
                     usage
                     ;;
             esac
+            ;;
+        prune)
+            local prune_all=0
+            local prune_board=""
+            while [[ $# -gt 0 ]]; do
+                case "$1" in
+                    --all) prune_all=1; shift ;;
+                    *) prune_board="$1"; shift ;;
+                esac
+            done
+
+            if [[ ! -d "$BUILDS_DIR" ]]; then
+                echo "No builds to prune."
+            else
+                local count=0
+                for d in "$BUILDS_DIR"/*/; do
+                    [[ -d "$d" ]] || continue
+                    local name=$(basename "$d")
+                    local board=$(get_build_board "$d")
+
+                    # Filter by board if specified
+                    if [[ -n "$prune_board" && "$board" != "$prune_board" ]]; then
+                        continue
+                    fi
+
+                    if [[ $prune_all -eq 1 ]] || [[ ! -f "$d/.packed" ]]; then
+                        echo "Removing: $name ($board)"
+                        remove_dir "$d"
+                        count=$((count + 1))
+                    fi
+                done
+                echo "Pruned $count build(s)."
+            fi
             ;;
         *)
             usage
