@@ -37,20 +37,15 @@ board_assemble() {
     local build_dir="$2"
     local source_dir="$3"
 
+    # modules_install and ldconfig already done by image_assemble
     run_with_build_and_source "$sandbox_dir" "$build_dir" "$source_dir" -- "
         set -e
 
-        # Install kernel modules
-        INSTALL_MOD_PATH=/build/gen/root make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules_install
-
-        # Copy kernel Image and DTB to build dir (for host tool)
+        # Copy kernel Image and DTB to build dir (for host tool to load via PCIe)
         cp /build/linux/arch/${KERNEL_ARCH}/boot/Image /build/
         cp /build/linux/arch/${KERNEL_ARCH}/boot/dts/tenstorrent/*.dtb /build/ 2>/dev/null || true
 
         # Copy opensbi fw_jump
         cp /build/opensbi/build/platform/${OPENSBI_PLATFORM}/firmware/fw_jump.bin /build/
-
-        # Update ldconfig
-        ${LDCONFIG} -v -r /build/gen/root
     "
 }
