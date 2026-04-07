@@ -1,9 +1,10 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use crate::error::{Error, Result};
 
 /// Board configuration loaded from `boards/<name>/board.conf`.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct BoardConfig {
     pub name: String,
     pub arch: String,           // e.g. "riscv64"
@@ -68,15 +69,6 @@ impl BoardConfig {
             .unwrap_or_else(|| crate::stage::default_cflags(&self.arch).to_string())
     }
 
-    /// Path to the board directory relative to the project root.
-    pub fn board_dir<'a>(&self, boards_root: &'a Path) -> PathBuf {
-        boards_root.join(&self.name)
-    }
-
-    /// Does this board have a `board.sh` with override functions?
-    pub fn has_board_sh(&self, boards_root: &Path) -> bool {
-        boards_root.join(&self.name).join("board.sh").exists()
-    }
 }
 
 /// Load a board configuration from `<boards_root>/<name>/board.conf`.

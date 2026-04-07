@@ -36,6 +36,7 @@ pub fn gentoo_profile(arch: &str) -> Result<&'static str> {
 }
 
 /// Map an OS architecture string to the Linux kernel `ARCH` value (passed to `make ARCH=…`).
+#[allow(dead_code)]
 pub fn kernel_arch(arch: &str) -> Result<&'static str> {
     Ok(match arch {
         "x86_64" => "x86",

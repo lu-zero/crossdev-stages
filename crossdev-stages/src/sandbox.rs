@@ -208,10 +208,12 @@ impl Sandbox {
         SandboxRunner::new(&self.dir)
     }
 
+    #[allow(dead_code)]
     pub fn is_prepared(&self) -> bool {
         self.dir.join(".prepared").exists()
     }
 
+    #[allow(dead_code)]
     pub fn has_crossdev(&self, target_arch: &str) -> bool {
         self.dir.join(format!(".crossdev-{target_arch}")).exists()
     }
@@ -300,14 +302,13 @@ pub fn list(ws: &Workspace) -> Result<Vec<SandboxInfo>> {
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
-            SandboxInfo { name, dir, arch, prepared }
+            SandboxInfo { name, arch, prepared }
         })
         .collect())
 }
 
 pub struct SandboxInfo {
     pub name: String,
-    pub dir: PathBuf,
     pub arch: String,
     pub prepared: bool,
 }

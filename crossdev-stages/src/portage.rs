@@ -123,6 +123,7 @@ impl<'a> Portage<'a> {
     }
 
     /// Rebuild the world set.
+    #[allow(dead_code)]
     pub fn emerge_world(&self) -> Result<()> {
         self.runner.run("emerge -b -k -e @world")
     }

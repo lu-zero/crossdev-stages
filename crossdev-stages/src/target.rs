@@ -100,17 +100,6 @@ impl Target {
         portage.cross_emerge(&chost, packages)
     }
 
-    /// Install packages from a file (one per line).
-    pub fn install_from_file(&self, sandbox: &Sandbox, pkg_file: &Path) -> Result<()> {
-        let content = std::fs::read_to_string(pkg_file)?;
-        let packages: Vec<&str> = content
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect();
-        self.install(sandbox, &packages)
-    }
-
     /// Run `ldconfig` inside the target sysroot.
     pub fn update_ldconfig(&self, sandbox: &Sandbox) -> Result<()> {
         log::info!("Updating ldconfig in target…");
@@ -135,14 +124,13 @@ pub fn list(ws: &Workspace) -> Result<Vec<TargetInfo>> {
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
-            TargetInfo { name, dir, arch, stage1, updated }
+            TargetInfo { name, arch, stage1, updated }
         })
         .collect())
 }
 
 pub struct TargetInfo {
     pub name: String,
-    pub dir: PathBuf,
     pub arch: String,
     pub stage1: bool,
     pub updated: Option<String>,

@@ -114,10 +114,6 @@ impl SandboxRunner {
         check_status(command.status()?)
     }
 
-    pub fn sandbox_dir(&self) -> &Path {
-        &self.sandbox_dir
-    }
-
     fn build_container(&self) -> Container {
         let mut c = Container::new();
         // Container::new() already unshares Mount, User, Pid.

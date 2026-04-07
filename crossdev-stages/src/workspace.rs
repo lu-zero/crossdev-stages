@@ -22,11 +22,6 @@ impl Workspace {
         Ok(Self { base })
     }
 
-    /// Open the workspace at an explicit path.
-    pub fn at(path: impl Into<PathBuf>) -> Self {
-        Self { base: path.into() }
-    }
-
     pub fn base(&self) -> &Path {
         &self.base
     }

@@ -16,7 +16,6 @@ use crate::workspace::Workspace;
 /// Boards with the same SYSROOT name share a sysroot and its PKGDIR cache.
 pub struct Sysroot {
     pub dir: PathBuf,
-    pub name: String,
 }
 
 #[derive(Debug)]
@@ -31,10 +30,7 @@ impl Sysroot {
     pub fn resolve(ws: &Workspace, name: &str) -> Result<Self> {
         let dir = ws.sysroot(name);
         if dir.is_dir() && dir.join(".cflags").exists() {
-            Ok(Self {
-                dir,
-                name: name.to_string(),
-            })
+            Ok(Self { dir })
         } else {
             Err(Error::SysrootNotFound(format!(
                 "'{name}' not found. Create with: sysroot create {name} <board>"
@@ -57,7 +53,7 @@ impl Sysroot {
         let dir = ws.sysroot(name);
         if dir.is_dir() && dir.join(".cflags").exists() {
             println!("Sysroot '{name}' already exists at {}", dir.display());
-            return Ok(Self { dir, name: name.to_string() });
+            return Ok(Self { dir });
         }
 
         let chost = board.chost();
@@ -98,13 +94,9 @@ impl Sysroot {
         )?;
 
         println!("Sysroot '{name}' created at {}", dir.display());
-        Ok(Self { dir, name: name.to_string() })
+        Ok(Self { dir })
     }
 
-    /// Return a SandboxRunner with the sysroot bind-mounted.
-    pub fn runner(&self, sb: &Sandbox, chost: &str) -> SandboxRunner {
-        SandboxRunner::new(&sb.dir).with_sysroot(&self.dir, chost)
-    }
 }
 
 /// List all sysroots with their metadata.
