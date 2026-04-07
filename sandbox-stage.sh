@@ -1,95 +1,14 @@
 #! /bin/bash
 set -euo pipefail
-# More structured sandbox prototype
+# crossdev-stages: Gentoo cross-compilation in hakoniwa sandboxes
 #
-# - cache the stage3 in a .cache path
-# - unpack either in a known place in $CACHE_DIR/sandboxes/ or as needed
-# - provide an enter/run command that by default uses the latest sandbox
+# Manages sandboxes, sysroots, targets, and board image builds.
+# See lib/ for reusable functions.
 
-CACHE_DIR="${HOME}/.cache/crossdev-stages"
-STAGES_DIR="${CACHE_DIR}/stages"
-SANDBOXES_DIR="${CACHE_DIR}/sandboxes"
-TARGETS_DIR="${CACHE_DIR}/targets"
-BUILDS_DIR="${CACHE_DIR}/builds"
-LDCONFIG="/usr/local/bin/ldconfig"
 BASE_DIR=$(dirname "$(readlink -f "$0")")
-
-ensure_cache_dirs() {
-    mkdir -p "$STAGES_DIR"
-    mkdir -p "$SANDBOXES_DIR"
-    mkdir -p "$TARGETS_DIR"
-    mkdir -p "$BUILDS_DIR"
-}
-
-get_arch() {
-    local dir="$1"
-    if [[ -f "$dir/.arch" ]]; then
-        cat "$dir/.arch"
-    else
-        echo ""
-    fi
-}
-
-get_latest_sandbox() {
-    local latest_sandbox=""
-    if [[ -d "$SANDBOXES_DIR" ]]; then
-        latest_sandbox=$(ls -t "$SANDBOXES_DIR" | head -n 1)
-        if [[ -n "$latest_sandbox" ]]; then
-            echo "$SANDBOXES_DIR/$latest_sandbox"
-            return 0
-        fi
-    fi
-    echo "" >&2
-    return 1
-}
-
-get_latest_target() {
-    local latest_target=""
-    if [[ -d "$TARGETS_DIR" ]]; then
-        latest_target=$(ls -t "$TARGETS_DIR" | head -n 1)
-        if [[ -n "$latest_target" ]]; then
-            echo "$TARGETS_DIR/$latest_target"
-            return 0
-        fi
-    fi
-    echo "" >&2
-    return 1
-}
-
-get_build_board() {
-    local dir="$1"
-    if [[ -f "$dir/.board" ]]; then
-        cat "$dir/.board"
-    else
-        echo ""
-    fi
-}
-
-get_latest_build() {
-    if [[ -d "$BUILDS_DIR" ]]; then
-        local latest
-        latest=$(ls -t "$BUILDS_DIR" | head -n 1)
-        if [[ -n "$latest" ]]; then
-            echo "$BUILDS_DIR/$latest"
-            return 0
-        fi
-    fi
-    echo "" >&2
-    return 1
-}
-
-# Helper function to set or replace a variable in make.conf
-set_make_conf_var() {
-    local file="$1"
-    local var_name="$2"
-    local var_value="$3"
-
-    if grep -q "^${var_name}=" "$file"; then
-        sed -i "s|^${var_name}=.*|${var_name}=\"${var_value}\"|" "$file"
-    else
-        echo "${var_name}=\"${var_value}\"" >> "$file"
-    fi
-}
+source "$BASE_DIR/lib/common.sh"
+source "$BASE_DIR/lib/board.sh"
+source "$BASE_DIR/lib/sysroot.sh"
 
 configure_portage() {
     local sandbox_dir="$1"
@@ -128,64 +47,68 @@ EOF
         set_make_conf_var "$make_conf" "GENTOO_MIRRORS" "${opt_mirror}"
     fi
 
-    # Set LLVM_TARGETS for cross-compilation
-#    local llvm_target=$(llvm_arch "$arch")
-#    if [[ -n "$llvm_target" ]]; then
-#        set_make_conf_var "$make_conf" "LLVM_TARGETS" "$llvm_target"
-#    fi
-
     echo "Portage configured for ${ARCH} in $sandbox_dir"
 }
 
-# Setup cross-compilation environment within sandbox
-setup_crossdev_sandbox() {
+# Prepare host sandbox for cross-compilation (gcc-16, crossdev overlay, keywords)
+# This only touches the host sandbox, not any sysroot.
+prepare_crossdev_host() {
     local sandbox_dir="$1"
     local target_arch="$2"
-
-    # Map target architecture to Gentoo variables
-    gentoo_arch "$target_arch"
     local chost="${target_arch}-unknown-linux-gnu"
 
-    local profile
-    profile=$(gentoo_profile "$target_arch")
-
-    local crossdev_root="/usr/${chost}"
-    local crossdev_make_conf="${crossdev_root}/etc/portage/make.conf"
-    local cflags
-    cflags=$(target_cflags "$target_arch")
-
-    echo "Setting up crossdev environment for ${chost} in sandbox..."
+    echo "Preparing host sandbox for cross-compilation (${chost})..."
 
     # Create the crossdev overlay
     run "$sandbox_dir" "eselect repository list -i | grep -q crossdev || eselect repository create crossdev"
 
-    # Initialize crossdev for target architecture
-    run "$sandbox_dir" crossdev "${chost}" --init-target
-
-    # Add rust-std workaround
+    # Host accept_keywords workarounds
     run "$sandbox_dir" "echo \"cross-${target_arch}-unknown-linux-gnu/rust-std **\" > /etc/portage/package.accept_keywords/rust-std"
-
-    # Enable gcc-16 prerelease
     run "$sandbox_dir" "echo \"<sys-devel/gcc-16.0.9999:16 **\" > /etc/portage/package.accept_keywords/gcc"
+    run "$sandbox_dir" mkdir -p "/etc/portage/package.{accept_keywords,mask}"
 
-    # Ensure consistent gcc versions for host and cross compilers
-    # Use the latest gcc-16 snapshot for both to avoid version mismatches
+    # Ensure host gcc-16
     run "$sandbox_dir" "emerge -b -k sys-devel/gcc:16"
-
-    # Get the latest gcc-16 version and set it for both host and cross
-    local gcc_16_version
-    gcc_16_version=$(run "$sandbox_dir" "qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'")
-
-    # Set the host compiler to use gcc-16
-    local gcc_16_profile=$(run "$sandbox_dir" "gcc-config -l | grep '16' | head -n1 | awk '{print \$2}'")
+    local gcc_16_profile
+    gcc_16_profile=$(run "$sandbox_dir" "gcc-config -l | grep '16' | head -n1 | awk '{print \$2}'")
     run "$sandbox_dir" "gcc-config ${gcc_16_profile}"
     run "$sandbox_dir" "source /etc/profile && env-update"
 
-    # Set up portage profile (crossdev links a wrong default)
+    # Install crossdev cross-compiler toolchain
+    local gcc_ver
+    gcc_ver=$(run "$sandbox_dir" "qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'")
+    [[ -z "$gcc_ver" ]] && { echo "Error: Could not determine gcc-16 version" >&2; return 1; }
+    run "$sandbox_dir" crossdev "${chost}" --gcc "${gcc_ver}" --ex-pkg sys-devel/clang-crossdev-wrappers --ex-pkg sys-devel/rust-std
+    run "$sandbox_dir" "gcc-config ${chost}-16 && source /etc/profile"
+
+    touch "$sandbox_dir/.crossdev-host-${target_arch}"
+    echo "Host sandbox prepared for ${chost}"
+}
+
+# Legacy: setup crossdev directly in sandbox (without sysroot isolation)
+# Kept for backward compatibility with existing workflows.
+setup_crossdev_sandbox() {
+    local sandbox_dir="$1"
+    local target_arch="$2"
+    local chost="${target_arch}-unknown-linux-gnu"
+    local crossdev_root="/usr/${chost}"
+
+    # Prepare host first
+    if [[ ! -f "$sandbox_dir/.crossdev-host-${target_arch}" ]]; then
+        prepare_crossdev_host "$sandbox_dir" "$target_arch"
+    fi
+
+    local profile
+    profile=$(gentoo_profile "$target_arch")
+    local cflags
+    cflags=$(target_cflags "$target_arch")
+
+    # Initialize crossdev in sandbox's own /usr/$chost
+    run "$sandbox_dir" crossdev "${chost}" --init-target
     run "$sandbox_dir" "export PORTAGE_CONFIGROOT=${crossdev_root}; eselect profile set ${profile}"
 
-    # Configure make.conf for cross environment
-    local host_make_conf="$sandbox_dir${crossdev_make_conf}"
+    # Configure make.conf
+    local host_make_conf="$sandbox_dir${crossdev_root}/etc/portage/make.conf"
     local cpu_count=$(nproc 2>/dev/null || echo 4)
     local p=$((cpu_count / 2 + 1))
     local q="$cpu_count"
@@ -204,23 +127,18 @@ setup_crossdev_sandbox() {
         set_make_conf_var "$host_make_conf" "GENTOO_MIRRORS" "${opt_mirror}"
     fi
 
-    # Write crossdev portage config directly on the host filesystem
+    # Write portage config
     local host_crossdev_root="$sandbox_dir${crossdev_root}"
     mkdir -p "$host_crossdev_root/etc/portage/env"
     mkdir -p "$host_crossdev_root/etc/portage/package.env"
     mkdir -p "$host_crossdev_root/etc/portage/package.use"
     mkdir -p "$host_crossdev_root/etc/portage/package.accept_keywords"
 
-    # env/plain.conf: strip arch-specific flags (used for packages like rust)
     cat > "$host_crossdev_root/etc/portage/env/plain.conf" << 'EOF'
 CFLAGS="-O3 -pipe"
 CXXFLAGS="-O3 -pipe"
 EOF
-
-    # package.env
     echo "dev-lang/rust plain.conf" > "$host_crossdev_root/etc/portage/package.env/rust"
-
-    # package.use
     cat > "$host_crossdev_root/etc/portage/package.use/busybox" << 'EOF'
 >=virtual/libcrypt-2-r1 static-libs
 >=sys-libs/libxcrypt-4.4.36-r3 static-libs
@@ -229,21 +147,14 @@ EOF
     echo "llvm-core/clang -extra" > "$host_crossdev_root/etc/portage/package.use/clang"
     echo "dev-lang/rust rustfmt -system-llvm" > "$host_crossdev_root/etc/portage/package.use/rust"
     echo "dev-vcs/git -iconv" > "$host_crossdev_root/etc/portage/package.use/git"
-
-    # package.accept_keywords
     echo "<sys-devel/gcc-16.0.9999:16 **" > "$host_crossdev_root/etc/portage/package.accept_keywords/gcc"
 
-    # Apply host sandbox workarounds
-    run "$sandbox_dir" mkdir -p "/etc/portage/package.{accept_keywords,mask}"
-
-    # Fix split-usr layout created by crossdev before emerging into the sysroot
-    run "$sandbox_dir" mkdir "${crossdev_root}/bin"
-    run "$sandbox_dir" merge-usr --root "${crossdev_root}"
-
-    # Install crossdev toolchain with the same gcc version as host
-    run "$sandbox_dir" crossdev "${chost}" --gcc "${gcc_16_version}" --ex-pkg sys-devel/clang-crossdev-wrappers --ex-pkg sys-devel/rust-std
-
-    # Switch cross compiler to gcc-16 (crossdev may leave gcc-15 as default)
+    # Fix split-usr layout and install toolchain
+    run "$sandbox_dir" "mkdir -p ${crossdev_root}/bin && merge-usr --root ${crossdev_root}"
+    local gcc_ver
+    gcc_ver=$(run "$sandbox_dir" "qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'")
+    [[ -z "$gcc_ver" ]] && { echo "Error: Could not determine gcc-16 version" >&2; return 1; }
+    run "$sandbox_dir" crossdev "${chost}" --gcc "${gcc_ver}" --ex-pkg sys-devel/clang-crossdev-wrappers --ex-pkg sys-devel/rust-std
     run "$sandbox_dir" "gcc-config ${chost}-16 && source /etc/profile"
 
     touch "$sandbox_dir/.crossdev-${target_arch}"
@@ -312,62 +223,6 @@ prepare_sandbox() {
     echo "Sandbox preparation complete for $arch"
 }
 
-gentoo_arch() {
-    local os_arch=$1
-    case $os_arch in
-        x86_64) ARCH=amd64 FLAVOR=amd64-openrc;;
-        aarch64) ARCH=arm64 FLAVOR=arm64-openrc;;
-        riscv*) ARCH=riscv FLAVOR=rv64_lp64d-openrc;;
-        *) ARCH=$os_arch FLAVOR=$ARCH-openrc;;
-    esac
-# echo "$os_arch => $ARCH"
-}
-
-# Map OS architecture to default CFLAGS for cross-compilation
-# Board-specific BOARD_CFLAGS (from board.conf) takes precedence
-target_cflags() {
-    local arch=$1
-    if [[ -n "${BOARD_CFLAGS:-}" ]]; then
-        echo "$BOARD_CFLAGS"
-        return
-    fi
-    case $arch in
-        x86_64)  echo "-O3 -march=x86-64 -pipe" ;;
-        aarch64) echo "-O3 -pipe" ;;
-        riscv64) echo "-O3 -march=rv64gc -pipe" ;;
-        *)       echo "-O3 -pipe" ;;
-    esac
-}
-
-# Map OS architecture to Gentoo profile path
-gentoo_profile() {
-    local arch=$1
-    gentoo_arch "$arch"
-    case "$ARCH" in
-        riscv) echo "default/linux/riscv/23.0/rv64/lp64d" ;;
-        *)     echo "default/linux/${ARCH}/23.0" ;;
-    esac
-}
-
-# Map OS architecture to LLVM target for LLVM_TARGETS variable
-llvm_arch() {
-    local os_arch=$1
-    local llvm_target=""
-
-    case $os_arch in
-        x86*) llvm_target="X86" ;;
-        arm*) llvm_target="ARM" ;;
-        aarch64*) llvm_target="AArch64" ;;
-        riscv*) llvm_target="RISCV" ;;
-        mips*) llvm_target="Mips" ;;
-        loongarch*) llvm_target="LoongArch" ;;
-        powerpc*) llvm_target="PowerPC" ;;
-        sparc*) llvm_target="Sparc" ;;
-    esac
-
-    echo "$llvm_target"
-}
-
 verify_stage() {
     local stage_file="$1"
     local digest_file="$2"
@@ -377,8 +232,8 @@ verify_stage() {
     expected=$(awk '/# SHA512 HASH/{found=1; next} found && /'"$filename"'$/ && !/CONTENTS/{print $1; exit}' "$digest_file")
 
     if [[ -z "$expected" ]]; then
-        echo "Warning: SHA512 hash not found in digests for $filename" >&2
-        return 0
+        echo "Error: SHA512 hash not found in digests for $filename" >&2
+        return 1
     fi
 
     local actual
@@ -440,24 +295,6 @@ fetch_stage() {
 
 
 
-# We use hakoniwa even here to preserve the owners, same for removal
-remove_dir() {
-    local dir="$1"
-    local parent
-    parent=$(dirname "$dir")
-    local name
-    name=$(basename "$dir")
-
-    hakoniwa run \
-      --rootfs / --devfs /dev \
-      --allow-new-privs \
-      --userns=auto \
-      --tmpfs /dev/shm \
-      --tmpfs /tmp \
-      -B "$parent":/target \
-      -- /bin/sh -c "rm -rf \"/target/$name\""
-}
-
 unpack_stage() {
     local stage_file="$1"
     local sandbox_name="$2"
@@ -493,122 +330,6 @@ unpack_stage() {
       "
 }
 
-run() {
-    local sandbox_dir="$1"
-    shift
-    local args="$*"
-
-    hakoniwa run \
-      --rootdir "$sandbox_dir":rw \
-      --devfs /dev \
-      -b /etc/resolv.conf \
-      --unshare-all \
-      --allow-new-privs \
-      --userns=auto \
-      --network=host \
-      --tmpfs /tmp \
-      --tmpfs /dev/shm \
-      -e TERM="$TERM" \
-      -e COLORTERM="${COLORTERM:-}" \
-      -e NO_COLOR="${NO_COLOR:-}" \
-      -e HOME=/root \
-      -e CONFIG_CHECK="" \
-      -- bash --login -c "
-         $args
-      "
-}
-
-run_with_stage() {
-    local sandbox_dir="$1"
-    local stage_dir="$2"
-    shift 2
-    local args="$*"
-
-    hakoniwa run \
-      --rootdir "$sandbox_dir":rw \
-      --devfs /dev \
-      -b /etc/resolv.conf \
-      --unshare-all \
-      --allow-new-privs \
-      --userns=auto \
-      --network=host \
-      --tmpfs /tmp \
-      --tmpfs /dev/shm \
-      -B "$stage_dir":/target \
-      -e TERM="$TERM" \
-      -e COLORTERM="${COLORTERM:-}" \
-      -e NO_COLOR="${NO_COLOR:-}" \
-      -e HOME=/root \
-      -e CONFIG_CHECK="" \
-      -- bash --login -c "
-         $args
-      "
-}
-
-run_with_build() {
-    local sandbox_dir="$1"
-    local build_dir="$2"
-    shift 2
-    local args="$*"
-
-    hakoniwa run \
-      --rootdir "$sandbox_dir":rw \
-      --devfs /dev \
-      -b /etc/resolv.conf \
-      --unshare-all \
-      --allow-new-privs \
-      --userns=auto \
-      --network=host \
-      --tmpfs /tmp \
-      --tmpfs /dev/shm \
-      -B "$build_dir":/build \
-      -b "$BASE_DIR":/scripts \
-      -e TERM="$TERM" \
-      -e COLORTERM="${COLORTERM:-}" \
-      -e NO_COLOR="${NO_COLOR:-}" \
-      -e HOME=/root \
-      -e CONFIG_CHECK="" \
-      -- bash --login -c "
-         $args
-      "
-}
-
-run_with_build_and_source() {
-    local sandbox_dir="$1"
-    local build_dir="$2"
-    local source_dir="$3"
-    shift 3
-    # collect extra hakoniwa args until "--" sentinel
-    local extra_args=()
-    while [[ $# -gt 0 && "$1" != "--" ]]; do
-        extra_args+=("$1"); shift
-    done
-    [[ $# -gt 0 && "$1" == "--" ]] && shift
-    local args="$*"
-
-    hakoniwa run \
-      --rootdir "$sandbox_dir":rw \
-      --devfs /dev \
-      -b /etc/resolv.conf \
-      --unshare-all \
-      --allow-new-privs \
-      --userns=auto \
-      --network=host \
-      --tmpfs /tmp \
-      --tmpfs /dev/shm \
-      -B "$build_dir":/build \
-      -b "$source_dir":/target_src \
-      -b "$BASE_DIR":/scripts \
-      "${extra_args[@]}" \
-      -e TERM="$TERM" \
-      -e COLORTERM="${COLORTERM:-}" \
-      -e NO_COLOR="${NO_COLOR:-}" \
-      -e HOME=/root \
-      -e CONFIG_CHECK="" \
-      -- bash --login -c "
-         $args
-      "
-}
 
 unpack_target() {
     local stage_file="$1"
@@ -704,6 +425,7 @@ build_stage1() {
     local packages
     packages=$(run "$sandbox_dir" \
         "grep -v '^#' /var/db/repos/gentoo/profiles/default/linux/packages.build | grep -v '^\$' | tr '\n' ' '")
+    [[ -z "$packages" ]] && { echo "Error: packages.build is empty or missing" >&2; return 1; }
     run_with_stage "$sandbox_dir" "$target_dir" \
         "ROOT=/target ${chost}-emerge -b -k ${packages}"
 
@@ -745,81 +467,6 @@ install_packages() {
     echo "$(date -u +%Y%m%dT%H%M%SZ) $*" >> "$stage_dir/.packages"
 }
 
-packages_from_file() {
-    local file="$1"
-    grep -v '#' "$file" | grep -v '^[[:space:]]*$'
-}
-
-# resolve_dir <nameref> <base_dir> <get_latest_fn> <label> [arg]
-# Sets <nameref> to base_dir/arg, or to the latest entry if arg is absent or "latest".
-# Caller should follow with: [[ $# -gt 0 ]] && shift
-resolve_dir() {
-    local -n _rd_out=$1
-    local base=$2
-    local fn=$3
-    local label=$4
-    local arg="${5-}"
-
-    if [[ -z "$arg" || "$arg" == "latest" ]]; then
-        _rd_out=$("$fn")
-        if [[ -z "$_rd_out" ]]; then
-            echo "Error: No $label found." >&2
-            exit 1
-        fi
-    else
-        _rd_out="$base/$arg"
-    fi
-}
-
-resolve_build()  { resolve_dir "$1" "$BUILDS_DIR"  get_latest_build  "build"  "${2-}"; }
-resolve_target() { resolve_dir "$1" "$TARGETS_DIR" get_latest_target "target" "${2-}"; }
-
-load_board_config() {
-    local board="$1"
-    local cfg="$BASE_DIR/boards/$board/board.conf"
-    [[ -f "$cfg" ]] || { echo "Board config not found: $cfg" >&2; return 1; }
-    # shellcheck source=/dev/null
-    source "$cfg"
-    BOARD_CFG_DIR="$BASE_DIR/boards/$board"
-
-    # Source optional board.sh for function overrides
-    local board_script="$BASE_DIR/boards/$board/board.sh"
-    if [[ -f "$board_script" ]]; then
-        # shellcheck source=/dev/null
-        source "$board_script"
-    fi
-}
-
-# Apply per-package CFLAGS workarounds to a crossdev sysroot
-# Reads WORKAROUND_PKGS and WORKAROUND_CFLAGS arrays from board.conf
-apply_workarounds() {
-    local sandbox_dir="$1"
-    local target_arch="$2"
-    local chost="${target_arch}-unknown-linux-gnu"
-    local crossdev_root="/usr/${chost}"
-    local host_crossdev_root="$sandbox_dir${crossdev_root}"
-
-    [[ -z "${WORKAROUND_PKGS+x}" ]] && return 0
-    [[ ${#WORKAROUND_PKGS[@]} -eq 0 ]] && return 0
-
-    mkdir -p "$host_crossdev_root/etc/portage/env"
-    mkdir -p "$host_crossdev_root/etc/portage/package.env"
-
-    local i pkg cflags env_name
-    for ((i = 0; i < ${#WORKAROUND_PKGS[@]}; i++)); do
-        pkg="${WORKAROUND_PKGS[$i]}"
-        cflags="${WORKAROUND_CFLAGS[$i]}"
-        env_name="${pkg##*/}"
-
-        cat > "$host_crossdev_root/etc/portage/env/${env_name}.conf" << EOF
-CFLAGS="${cflags}"
-CXXFLAGS="${cflags}"
-EOF
-        echo "$pkg ${env_name}.conf" >> "$host_crossdev_root/etc/portage/package.env/workarounds"
-    done
-    echo "Applied ${#WORKAROUND_PKGS[@]} CFLAGS workaround(s) for $BOARD_NAME"
-}
-
 image_install_deps() {
     local sandbox_dir="$1"
     local target_dir="$2"
@@ -832,18 +479,33 @@ image_install_deps() {
     local chost="${target_arch}-unknown-linux-gnu"
 
     # Apply per-package CFLAGS workarounds before emerging
-    apply_workarounds "$sandbox_dir" "$target_arch"
+    local sysroot_dir
+    if [[ -n "$CURRENT_SYSROOT" ]]; then
+        sysroot_dir="$CURRENT_SYSROOT"
+    elif [[ -n "${SYSROOT:-}" ]]; then
+        sysroot_dir="$SYSROOTS_DIR/$SYSROOT"
+    else
+        sysroot_dir="$sandbox_dir/usr/${chost}"
+    fi
+    apply_workarounds "$sysroot_dir"
 
+    local pkgs
     if [[ -f "$sandbox_pkgs" ]]; then
-        echo "Installing sandbox packages for $board..."
         # shellcheck disable=SC2046
-        run "$sandbox_dir" emerge -b -k $(packages_from_file "$sandbox_pkgs")
+        pkgs=$(packages_from_file "$sandbox_pkgs")
+        if [[ -n "$pkgs" ]]; then
+            echo "Installing sandbox packages for $board..."
+            run "$sandbox_dir" emerge -b -k $pkgs
+        fi
     fi
 
     if [[ -f "$target_pkgs" && -n "$target_dir" ]]; then
-        echo "Cross-installing target packages for $board..."
-        install_packages "$sandbox_dir" "$target_dir" "$target_arch" \
-            $(packages_from_file "$target_pkgs")
+        # shellcheck disable=SC2046
+        pkgs=$(packages_from_file "$target_pkgs")
+        if [[ -n "$pkgs" ]]; then
+            echo "Cross-installing target packages for $board..."
+            install_packages "$sandbox_dir" "$target_dir" "$target_arch" $pkgs
+        fi
     elif [[ -f "$target_pkgs" ]]; then
         echo "Skipping target packages (no target sysroot available)"
     fi
@@ -860,6 +522,7 @@ image_checkout() {
         board_checkout "$sandbox_dir" "$build_dir"
     else
         run_with_build "$sandbox_dir" "$build_dir" "
+            set -e
             checkout() {
                 local repo=\$1 tag=\$2 src=/build/\$3
                 if [[ -d \"\$src\" ]]; then
@@ -888,6 +551,7 @@ image_build_bootloader() {
         board_build_bootloader "$sandbox_dir" "$build_dir"
     else
         run_with_build "$sandbox_dir" "$build_dir" "
+            set -e
             make -C /build/opensbi PLATFORM=${OPENSBI_PLATFORM} PLATFORM_DEFCONFIG=defconfig CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
             make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${U_BOOT_DEFCONFIG}
             make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
@@ -907,6 +571,7 @@ image_build_kernel() {
         board_build_kernel "$sandbox_dir" "$build_dir"
     else
         run_with_build "$sandbox_dir" "$build_dir" "
+            set -e
             make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} ${KERNEL_DEFCONFIG}
             make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
             make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules -j\$(nproc)
@@ -984,7 +649,7 @@ image_assemble() {
         "
     fi
 
-    echo "$(date -u +%Y%m%dT%H%M%SZ)" >> "$build_dir/.assembled"
+    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.assembled"
 }
 
 image_pack() {
@@ -1084,6 +749,7 @@ usage() {
     echo "Global options:"
     echo "  -s, --sandbox <name>           - Use named sandbox (default: latest)"
     echo "  -m, --mirror <url>             - Set Gentoo mirror (e.g. https://ftp.kaist.ac.kr/gentoo/)"
+    echo "  --sysroot <name>               - Override board's SYSROOT (for testing/debug)"
     echo ""
     echo "Sandbox commands:"
     echo "  $0 setup [arch] [name]         - Setup sandbox for arch (default: host arch, name: arch)"
@@ -1106,6 +772,11 @@ usage() {
     echo "  $0 install [target] [arch] pkg... - Install packages into target"
     echo "  $0 install-from [target] [arch] file - Install packages from file"
     echo "  $0 update-ldconfig [target]    - Regenerate ld.so.cache in target"
+    echo ""
+    echo "Sysroot commands:"
+    echo "  $0 sysroot list                - List sysroots (name, arch, CFLAGS)"
+    echo "  $0 sysroot create <name> <board> - Create sysroot with board's CFLAGS (full crossdev)"
+    echo "  $0 sysroot destroy <name>      - Remove a sysroot"
     echo ""
     echo "Image build commands:"
     echo "  $0 image boards                - List available boards"
@@ -1137,17 +808,20 @@ main() {
     local opt_mirror=""
     local opt_compress="xz"
     local opt_dry_run=0
+    local opt_sysroot=""
     local filtered_args=()
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --sandbox|-s) opt_sandbox="$2"; shift 2 ;;
             --mirror|-m) opt_mirror="$2"; shift 2 ;;
+            --sysroot) opt_sysroot="$2"; shift 2 ;;
             --no-compress) opt_compress="none"; shift ;;
             --dry-run) opt_dry_run=1; shift ;;
             *) filtered_args+=("$1"); shift ;;
         esac
     done
     set -- "${filtered_args[@]}"
+    [[ $# -gt 0 ]] || usage
 
     # Resolve sandbox dir: from flag, or latest
     resolve_sandbox() {
@@ -1211,7 +885,7 @@ main() {
             ;;
         prepare)
             local manual=0
-            [[ "$1" == "--manual" ]] && { manual=1; shift; }
+            [[ "${1:-}" == "--manual" ]] && { manual=1; shift; }
 
             local sandbox_dir
             sandbox_dir=$(resolve_sandbox)
@@ -1350,7 +1024,7 @@ main() {
                     gentoo_arch "$target_arch"
 
                     local timestamp
-                    timestamp=$(date +%Y%m%dT%H%M%SZ)
+                    timestamp=$(date -u +%Y%m%dT%H%M%SZ)
                     local out_file="$STAGES_DIR/stage3-${FLAVOR}-${timestamp}.tar.xz"
 
                     echo "Packing $target_dir -> $out_file"
@@ -1430,6 +1104,44 @@ main() {
             [[ ! -d "$target_dir" ]] && { echo "Error: Target not found: $target_dir" >&2; exit 1; }
 
             update_ldconfig_sandbox "$sandbox_dir" "$target_dir"
+            ;;
+        sysroot)
+            local subcmd="${1:-list}"
+            shift
+
+            case $subcmd in
+                list)
+                    list_sysroots
+                    ;;
+                create)
+                    require_args 2 "sysroot create requires <name> <board>" "$@"
+                    local name="$1"; shift
+                    local board="$1"; shift
+
+                    load_board_config "$board"
+
+                    local sandbox_dir
+                    sandbox_dir=$(resolve_sandbox)
+                    [[ -z "$sandbox_dir" || ! -d "$sandbox_dir" ]] && { echo "Error: No sandbox found." >&2; exit 1; }
+
+                    create_sysroot "$sandbox_dir" "$name" "$BOARD_ARCH" "$BOARD_CFLAGS" "$opt_mirror"
+                    apply_workarounds "$SYSROOTS_DIR/$name"
+                    ;;
+                destroy)
+                    require_args 1 "sysroot destroy requires a name" "$@"
+                    local target="$SYSROOTS_DIR/$1"
+                    if [[ ! -d "$target" ]]; then
+                        echo "Error: Sysroot not found: $1" >&2
+                        exit 1
+                    fi
+                    echo "Removing sysroot: $1"
+                    remove_dir "$target"
+                    echo "Sysroot $1 removed."
+                    ;;
+                *)
+                    usage
+                    ;;
+            esac
             ;;
         image)
             local subcmd="${1:-list}"
@@ -1593,6 +1305,10 @@ main() {
                     local board="$1"; shift
 
                     load_board_config "$board"
+                    # CLI flag overrides board.conf; env CROSSDEV_SYSROOT also overrides
+                    [[ -n "${CROSSDEV_SYSROOT:-}" ]] && SYSROOT="$CROSSDEV_SYSROOT"
+                    [[ -n "$opt_sysroot" ]] && SYSROOT="$opt_sysroot"
+
                     if [[ -z "${BUILD_STEPS+x}" ]]; then
                         BUILD_STEPS=(deps checkout bootloader kernel assemble pack)
                     fi
@@ -1603,6 +1319,7 @@ main() {
                         echo "Board:      $BOARD_NAME"
                         echo "Arch:       $BOARD_ARCH"
                         echo "CFLAGS:     ${BOARD_CFLAGS:-$(target_cflags "$BOARD_ARCH")}"
+                        echo "Sysroot:    ${SYSROOT:-<not set>} ($SYSROOTS_DIR/${SYSROOT:-})"
                         echo "Steps:      ${steps[*]}"
                         echo "Image:      ${IMAGE_NAME:-gentoo-linux-${BOARD_NAME}_dev-sdcard.img}"
                         for step in "${steps[@]}"; do
@@ -1613,6 +1330,11 @@ main() {
                             fi
                         done
                     else
+                        # Activate sysroot bind mount for all run() calls
+                        if [[ -n "${SYSROOT:-}" ]]; then
+                            CURRENT_SYSROOT=$(resolve_sysroot "$SYSROOT")
+                            CURRENT_CHOST="${BOARD_ARCH}-unknown-linux-gnu"
+                        fi
                         local timestamp
                         timestamp=$(date -u +%Y%m%dT%H%M%SZ)
                         local build_name="${1:-${board}-${timestamp}}"
