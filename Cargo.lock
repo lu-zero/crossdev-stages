@@ -662,26 +662,18 @@ dependencies = [
 
 [[package]]
 name = "gentoo-core"
-version = "0.4.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "682c2890e9701c8f677d1f4a3b70766faaf86d91b1a875d1509aba125653d948"
-dependencies = [
- "gentoo-interner",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "gentoo-interner"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5f5b129d74ee6ab777ffa9052a2e80a39891f31e5173e6d92e99e78db23ca114"
+checksum = "121fdee69b879f58ae3ba739a0150c005074c1c611d5f03f298f9e8464a1e79d"
 dependencies = [
  "lasso",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
 name = "gentoo-stages"
 version = "0.3.0"
+source = "git+https://github.com/lu-zero/gentoo-stages#b7b1eeffa2808a07f1db14cf221490047146212f"
 dependencies = [
  "bon",
  "futures",
@@ -755,6 +747,7 @@ dependencies = [
 [[package]]
 name = "hakoniwa"
 version = "1.4.0"
+source = "git+https://github.com/souk4711/hakoniwa#5f684d8723c990b0c849bf7282f9c522bcd1d3d9"
 dependencies = [
  "bitflags",
  "caps",
