@@ -398,6 +398,12 @@ async fn main() -> anyhow::Result<()> {
                 println!("Board:      {}", board_cfg.name);
                 println!("Arch:       {}", board_cfg.arch);
                 println!("CFLAGS:     {}", board_cfg.effective_cflags());
+                if let Some(ldflags) = &board_cfg.ldflags {
+                    println!("LDFLAGS:    {ldflags}");
+                }
+                if let Some(rustflags) = &board_cfg.rustflags {
+                    println!("RUSTFLAGS:  {rustflags}");
+                }
                 println!("Sysroot:    {} ({})", sysroot_name, ws.sysroot(&sysroot_name).display());
                 println!("Steps:      {}", steps_to_show.iter().map(String::as_str).collect::<Vec<_>>().join(" "));
                 return Ok(());
@@ -442,6 +448,8 @@ fn default_board_config(arch: &str) -> board::BoardConfig {
         arch: arch.to_string(),
         sysroot: String::new(),
         cflags: None,
+        ldflags: None,
+        rustflags: None,
         cross_compile: format!("{arch}-unknown-linux-gnu-"),
         kernel_arch: None,
         opensbi_repo: None,
