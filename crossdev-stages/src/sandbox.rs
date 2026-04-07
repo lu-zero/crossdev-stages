@@ -98,12 +98,10 @@ impl Sandbox {
         runner.run("emerge -b -k sys-devel/gcc:16")?;
 
         // Query the installed gcc-16 version and make it the default.
-        let gcc_ver = runner_output(
-            &runner,
+        let gcc_ver = runner.run_output(
             "qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'",
         )?;
-        let gcc_profile = runner_output(
-            &runner,
+        let gcc_profile = runner.run_output(
             "gcc-config -l | grep '16' | head -n1 | awk '{print $2}'",
         )?;
         runner.run(&format!("gcc-config {gcc_profile}"))?;
@@ -246,42 +244,3 @@ pub struct SandboxInfo {
     pub prepared: bool,
 }
 
-/// Run a command inside the sandbox and capture its trimmed stdout.
-fn runner_output(runner: &SandboxRunner, cmd: &str) -> Result<String> {
-    // We need to capture stdout; use hakoniwa directly.
-    use hakoniwa::{Container, Namespace, Runctl};
-
-    let mut container = Container::new();
-    // Replicate the same container flags as SandboxRunner.
-    container
-        .unshare(Namespace::Ipc)
-        .unshare(Namespace::Uts)
-        .unshare(Namespace::Cgroup)
-        .share(Namespace::Network)
-        .rootdir(runner.sandbox_dir())
-        .runctl(Runctl::RootdirRW)
-        .runctl(Runctl::AllowNewPrivs)
-        .devfsmount("/dev")
-        .bindmount_ro("/etc/resolv.conf", "/etc/resolv.conf")
-        .tmpfsmount("/tmp")
-        .tmpfsmount("/dev/shm")
-        .uidmap(0)
-        .gidmap(0);
-
-    let mut command = container.command("/bin/bash");
-    command
-        .arg("--login")
-        .arg("-c")
-        .arg(cmd)
-        .env("HOME", "/root")
-        .env("CONFIG_CHECK", "");
-
-    let output = command.output()?;
-    if !output.status.success() {
-        return Err(Error::CommandFailed {
-            code: output.status.code,
-            reason: output.status.reason,
-        });
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-}

@@ -51,7 +51,6 @@ impl SandboxRunner {
             .arg("-c")
             .arg(cmd)
             .env("HOME", "/root")
-            .env("CONFIG_CHECK", "")
             .env(
                 "TERM",
                 &std::env::var("TERM").unwrap_or_else(|_| "xterm".into()),
@@ -62,6 +61,26 @@ impl SandboxRunner {
             )
             .env("NO_COLOR", &std::env::var("NO_COLOR").unwrap_or_default());
         check_status(command.status()?)
+    }
+
+    /// Run a shell command and capture its trimmed stdout.
+    pub fn run_output(&self, cmd: &str) -> Result<String> {
+        let container = self.build_container();
+        let mut command = container.command("/bin/bash");
+        command
+            .arg("--login")
+            .arg("-c")
+            .arg(cmd)
+            .env("HOME", "/root")
+            .stdout(hakoniwa::Stdio::piped());
+        let output = command.output()?;
+        if !output.status.success() {
+            return Err(crate::error::Error::CommandFailed {
+                code: output.status.code,
+                reason: output.status.reason,
+            });
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
     /// Spawn an interactive `bash --login` shell in the sandbox.

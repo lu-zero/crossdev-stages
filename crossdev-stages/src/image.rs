@@ -236,14 +236,16 @@ pub fn assemble(
     }
     log::info!("[{}] Assembling root filesystem…", board.name);
 
-    let rootfs = build.dir.join("rootfs");
     let runner = sandbox
         .runner()
         .with_target(&target.dir)
         .with_build(&build.dir, boards_root);
 
+    // Create build directories.
+    runner.run("mkdir -p /build/gen/root /build/gen/boot")?;
+
     // Copy target sysroot.
-    runner.run("cp -a /target/. /build/rootfs/")?;
+    runner.run("cp -a /target/. /build/gen/root/")?;
 
     // Install kernel modules.
     let karch = board.kernel_arch.as_deref().ok_or_else(|| {
@@ -254,55 +256,74 @@ pub fn assemble(
     })?;
     runner.run(&format!(
         "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} \
-         INSTALL_MOD_PATH=/build/rootfs modules_install",
+         INSTALL_MOD_PATH=/build/gen/root modules_install",
         cc = board.cross_compile,
     ))?;
 
     // Enable services.
+    runner.run("mkdir -p /build/gen/root/etc/runlevels/{boot,default,nonetwork,shutdown,sysinit}")?;
     for svc in &board.services {
         if let Some((name, runlevel)) = svc.split_once(':') {
             runner.run(&format!(
-                "ln -sf /etc/init.d/{name} /build/rootfs/etc/runlevels/{runlevel}/{name}"
+                "ln -sf /etc/init.d/{name} /build/gen/root/etc/runlevels/{runlevel}/{name}"
             ))?;
         }
     }
 
-    // Set hostname.
-    std::fs::write(rootfs.join("etc/hostname"), &board.hostname)?;
+    // Set hostname via /etc/conf.d/hostname (OpenRC style).
+    runner.run(&format!(
+        "mkdir -p /build/gen/root/etc/conf.d && \
+         printf 'hostname=\"{}\"\n' > /build/gen/root/etc/conf.d/hostname",
+        board.hostname
+    ))?;
 
-    // Configure serial console.
-    if let (Some(tty), Some(_baud)) = (&board.serial_tty, &board.serial_baud) {
+    // Configure serial console via inittab.
+    if let (Some(tty), Some(baud)) = (&board.serial_tty, &board.serial_baud) {
         runner.run(&format!(
-            "ln -sf /etc/init.d/agetty /build/rootfs/etc/runlevels/default/agetty.{tty}"
+            "echo 'x1:12345:respawn:/sbin/agetty {baud} {tty} linux' \
+             >> /build/gen/root/etc/inittab"
         ))?;
     }
 
-    // Copy firmware overlay if present.
-    if let (Some(overlay), Some(_fw_repo)) =
-        (&board.firmware_overlay, &board.firmware_repo)
-    {
-        runner.run(&format!(
-            "cp -a /build/firmware/{overlay}/. /build/rootfs/lib/firmware/"
-        ))?;
-    }
+    // Clear root password and configure SSH.
+    runner.run("sed -i -e 's/root:x:/root::/' /build/gen/root/etc/passwd")?;
+    runner.run(
+        "mkdir -p /build/gen/root/etc/ssh && \
+         printf 'PermitRootLogin yes\nPermitEmptyPasswords yes\nStrictModes yes\n' \
+         >> /build/gen/root/etc/ssh/sshd_config",
+    )?;
 
-    // Copy host firmware paths.
-    for hfw in &board.host_firmware_paths {
-        runner.run(&format!(
-            "cp -a {hfw} /build/rootfs/lib/firmware/"
-        ))?;
-    }
+    // Update ldconfig in the assembled rootfs.
+    runner.run("/usr/local/bin/ldconfig -v -r /build/gen/root")?;
 
-    // Board-specific assembly overrides.
+    // Board-specific assembly overrides (after ldconfig, matching bash script order).
     if board.has_board_sh(boards_root) {
         runner.run(&format!(
             "source /scripts/{name}/board.sh && board_assemble",
             name = board.name
         ))?;
+    } else {
+        // Default: copy DTBs, firmware overlay, host firmware, kernel image.
+        if let (Some(dtb_glob), Some(karch)) = (&board.kernel_dtb_glob, board.kernel_arch.as_deref()) {
+            runner.run(&format!(
+                "cp /build/linux/arch/{karch}/boot/dts/{dtb_glob} /build/gen/boot/"
+            ))?;
+        }
+        if let (Some(overlay), Some(_)) = (&board.firmware_overlay, &board.firmware_repo) {
+            runner.run(&format!(
+                "mkdir -p /build/gen/root/lib/firmware && \
+                 cp -a /build/firmware/{overlay}/. /build/gen/root/lib/firmware/"
+            ))?;
+        }
+        for hfw in &board.host_firmware_paths {
+            runner.run(&format!("cp -a {hfw} /build/gen/root/lib/firmware/"))?;
+        }
+        if let Some(kname) = &board.kernel_name {
+            runner.run(&format!(
+                "cp /build/linux/arch/{karch}/boot/{kname} /build/gen/boot/",
+            ))?;
+        }
     }
-
-    // Update ldconfig in the assembled rootfs.
-    runner.run("ldconfig -v -r /build/rootfs")?;
 
     build.mark_done("assembled")
 }
