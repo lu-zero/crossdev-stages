@@ -54,7 +54,7 @@ board_assemble() {
     done
 
     run_with_build_and_source "$sandbox_dir" "$build_dir" "$source_dir" \
-      "${extra_args[@]}" -- "
+      ${extra_args[@]+"${extra_args[@]}"} -- "
         set -e
 
         # Copy DTBs
@@ -76,6 +76,7 @@ board_assemble() {
 
         # Build initramfs
         kver=\$(ls /build/gen/root/lib/modules/ | head -1)
+        [[ -z \"\$kver\" ]] && { echo 'Error: no kernel modules found'; exit 1; }
         dracutbasedir=/usr/lib/dracut \
         DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
           dracut -f --no-early-microcode --no-kernel \
