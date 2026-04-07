@@ -1,2 +1,4 @@
 lib/__pycache__/
 target/
+k230-build*.log
+*.log
