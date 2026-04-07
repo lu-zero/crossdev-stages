@@ -9,6 +9,8 @@ mod sysroot;
 mod target;
 mod workspace;
 
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand};
 
 use error::Result;
@@ -60,6 +62,13 @@ enum Commands {
     /// List or download Gentoo stage3 tarballs.
     #[command(subcommand)]
     Stages(StagesCmd),
+
+    /// Clean up stale builds, orphan sysroots, and old stage3 tarballs.
+    Cleanup {
+        /// Remove everything (all builds, sysroots, stages).
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 // ── Sandbox subcommands ──────────────────────────────────────────────────────
@@ -375,7 +384,10 @@ async fn main() -> anyhow::Result<()> {
         // ── Image ────────────────────────────────────────────────────────────
         Commands::Image(ImageCmd::ListBoards) => {
             for b in board::list(&boards_root)? {
-                println!("{b}");
+                let tag = board::load(&boards_root, &b)
+                    .map(|c| if c.testing { " [TESTING]" } else { "" })
+                    .unwrap_or("");
+                println!("{b}{tag}");
             }
         }
         Commands::Image(ImageCmd::Build { board: board_name, sandbox, target, steps }) => {
@@ -395,9 +407,16 @@ async fn main() -> anyhow::Result<()> {
             let steps_to_show = if steps.is_empty() { &default_steps } else { &steps };
 
             if cli.dry_run {
-                println!("Board:      {}", board_cfg.name);
+                let tag = if board_cfg.testing { " [TESTING]" } else { "" };
+                println!("Board:      {}{tag}", board_cfg.name);
                 println!("Arch:       {}", board_cfg.arch);
                 println!("CFLAGS:     {}", board_cfg.effective_cflags());
+                if let Some(ldflags) = &board_cfg.ldflags {
+                    println!("LDFLAGS:    {ldflags}");
+                }
+                if let Some(rustflags) = &board_cfg.rustflags {
+                    println!("RUSTFLAGS:  {rustflags}");
+                }
                 println!("Sysroot:    {} ({})", sysroot_name, ws.sysroot(&sysroot_name).display());
                 println!("Steps:      {}", steps_to_show.iter().map(String::as_str).collect::<Vec<_>>().join(" "));
                 return Ok(());
@@ -430,6 +449,87 @@ async fn main() -> anyhow::Result<()> {
             }
             println!("Pruned {pruned} incomplete build(s).");
         }
+
+        // ── Cleanup ─────────────────────────────────────────────────────────
+        Commands::Cleanup { all } => {
+            let mut total = 0usize;
+
+            // 1. Incomplete builds (always)
+            let builds = ws.list_builds()?;
+            for dir in &builds {
+                let dominated = all || !dir.join(".packed").exists();
+                if dominated {
+                    let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                    if cli.dry_run {
+                        println!("Would remove build: {name}");
+                    } else {
+                        std::fs::remove_dir_all(dir)?;
+                        println!("Removed build: {name}");
+                    }
+                    total += 1;
+                }
+            }
+
+            // 2. Orphan sysroots (not referenced by any board.conf)
+            let board_sysroots: std::collections::HashSet<String> = board::list(&boards_root)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|name| board::load(&boards_root, name).ok())
+                .map(|b| b.sysroot)
+                .collect();
+            for info in sysroot::list(&ws)? {
+                let orphan = all || !board_sysroots.contains(&info.name);
+                if orphan {
+                    if cli.dry_run {
+                        println!("Would remove sysroot: {} ({})", info.name, info.cflags);
+                    } else {
+                        sysroot::destroy(&ws, &info.name)?;
+                    }
+                    total += 1;
+                }
+            }
+
+            // 3. Old stage3 tarballs (keep latest per arch, remove rest)
+            let stages_dir = ws.stages_dir();
+            if stages_dir.is_dir() {
+                let mut by_arch: std::collections::HashMap<String, Vec<(PathBuf, std::time::SystemTime)>> =
+                    std::collections::HashMap::new();
+                for entry in std::fs::read_dir(&stages_dir)? {
+                    let entry = entry?;
+                    let path = entry.path();
+                    if !path.is_file() { continue; }
+                    let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                    // stage3-riscv64-... → arch = riscv64
+                    let arch = fname.strip_prefix("stage3-")
+                        .and_then(|s| s.split('-').next())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    let mtime = entry.metadata().ok().and_then(|m| m.modified().ok())
+                        .unwrap_or(std::time::UNIX_EPOCH);
+                    by_arch.entry(arch).or_default().push((path, mtime));
+                }
+                for (_arch, mut files) in by_arch {
+                    files.sort_by(|a, b| b.1.cmp(&a.1)); // newest first
+                    let to_remove = if all { &files[..] } else { files.get(1..).unwrap_or(&[]) };
+                    for (path, _) in to_remove {
+                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                        if cli.dry_run {
+                            println!("Would remove stage: {name}");
+                        } else {
+                            std::fs::remove_file(path)?;
+                            println!("Removed stage: {name}");
+                        }
+                        total += 1;
+                    }
+                }
+            }
+
+            if cli.dry_run {
+                println!("{total} item(s) would be removed.");
+            } else {
+                println!("{total} item(s) cleaned up.");
+            }
+        }
     }
 
     Ok(())
@@ -442,6 +542,8 @@ fn default_board_config(arch: &str) -> board::BoardConfig {
         arch: arch.to_string(),
         sysroot: String::new(),
         cflags: None,
+        ldflags: None,
+        rustflags: None,
         cross_compile: format!("{arch}-unknown-linux-gnu-"),
         kernel_arch: None,
         opensbi_repo: None,
@@ -471,5 +573,6 @@ fn default_board_config(arch: &str) -> board::BoardConfig {
         workaround_pkgs: vec![],
         workaround_cflags: vec![],
         image_name: None,
+        testing: false,
     }
 }
