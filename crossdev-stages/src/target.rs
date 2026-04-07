@@ -49,8 +49,18 @@ impl Target {
         log::info!("Cross-emerging baselayout…");
         portage.cross_emerge_build(&chost, &["sys-apps/baselayout"])?;
 
-        log::info!("Cross-emerging @system packages…");
-        portage.cross_emerge(&chost, &["@system"])?;
+        log::info!("Cross-emerging packages.build…");
+        let packages = runner.run_output(
+            "grep -v '^#' /var/db/repos/gentoo/profiles/default/linux/packages.build \
+             | grep -v '^[[:space:]]*$' | tr '\\n' ' '"
+        )?;
+        if packages.is_empty() {
+            return Err(crate::error::Error::CommandFailed {
+                code: 1,
+                reason: "packages.build is empty or missing".into(),
+            });
+        }
+        runner.run(&format!("ROOT=/target {chost}-emerge -b -k {packages}"))?;
 
         log::info!("Cross-emerging portage…");
         portage.cross_emerge_build(&chost, &["sys-apps/portage"])?;

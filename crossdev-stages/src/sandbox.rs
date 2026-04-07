@@ -101,6 +101,12 @@ impl Sandbox {
         let gcc_ver = runner.run_output(
             "qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'",
         )?;
+        if gcc_ver.is_empty() {
+            return Err(Error::CommandFailed {
+                code: 1,
+                reason: "Could not determine gcc-16 version".into(),
+            });
+        }
         let gcc_profile = runner.run_output(
             "gcc-config -l | grep '16' | head -n1 | awk '{print $2}'",
         )?;

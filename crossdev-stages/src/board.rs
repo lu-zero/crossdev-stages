@@ -191,8 +191,9 @@ fn parse(name: &str, path: &Path, content: &str) -> Result<BoardConfig> {
 /// Strip surrounding `"…"` or `'…'` quotes.
 fn unquote(s: &str) -> String {
     let s = s.trim();
-    if (s.starts_with('"') && s.ends_with('"'))
-        || (s.starts_with('\'') && s.ends_with('\''))
+    if s.len() >= 2
+        && ((s.starts_with('"') && s.ends_with('"'))
+            || (s.starts_with('\'') && s.ends_with('\'')))
     {
         s[1..s.len() - 1].to_string()
     } else {

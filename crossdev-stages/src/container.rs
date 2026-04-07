@@ -213,8 +213,7 @@ pub fn unpack_tarball(stage_file: &Path, dest_dir: &Path, cache_base: &Path) -> 
 
     let mut container = Container::new();
     container
-        .rootfs("/")
-        .expect("rootfs /")
+        .rootfs("/")?
         .unshare(Namespace::Ipc)
         .unshare(Namespace::Uts)
         .unshare(Namespace::Cgroup)

@@ -148,8 +148,7 @@ pub fn destroy(ws: &Workspace, name: &str) -> Result<()> {
     // Use hakoniwa to remove (may contain root-owned files from stage3)
     let parent = ws.sysroots_dir();
     let mut c = hakoniwa::Container::new();
-    c.rootfs("/")
-        .expect("rootfs /")
+    c.rootfs("/")?
         .runctl(hakoniwa::Runctl::AllowNewPrivs)
         .tmpfsmount("/dev/shm")
         .tmpfsmount("/tmp")
