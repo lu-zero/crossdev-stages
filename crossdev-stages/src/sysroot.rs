@@ -74,7 +74,7 @@ impl Sysroot {
 
         // Step 2: Configure portage
         println!("==> Configuring portage...");
-        configure_sysroot_portage(&dir, &board.arch, &chost, &crossdev_root, &cflags, mirror)?;
+        configure_sysroot_portage(&dir, &board.arch, &chost, &crossdev_root, &cflags, board, mirror)?;
         write_portage_env(&dir)?;
         apply_workarounds(&dir, board)?;
 
@@ -163,6 +163,7 @@ fn configure_sysroot_portage(
     chost: &str,
     crossdev_root: &str,
     cflags: &str,
+    board: &BoardConfig,
     mirror: Option<&str>,
 ) -> Result<()> {
     // Set profile via absolute symlink (sysroot has no portage tree)
@@ -188,6 +189,12 @@ fn configure_sysroot_portage(
     portage::set_make_conf_var(&make_conf, "ROOT", &format!("{crossdev_root}/"))?;
     portage::set_make_conf_var(&make_conf, "CFLAGS", cflags)?;
     portage::set_make_conf_var(&make_conf, "CXXFLAGS", cflags)?;
+    if let Some(ldflags) = &board.ldflags {
+        portage::set_make_conf_var(&make_conf, "LDFLAGS", ldflags)?;
+    }
+    if let Some(rustflags) = &board.rustflags {
+        portage::set_make_conf_var(&make_conf, "RUSTFLAGS", rustflags)?;
+    }
     portage::set_make_conf_var(
         &make_conf,
         "MAKEOPTS",

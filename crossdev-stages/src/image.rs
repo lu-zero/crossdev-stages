@@ -11,6 +11,12 @@ use crate::sysroot::Sysroot;
 use crate::target::Target;
 use crate::workspace::Workspace;
 
+/// Derive the project root from `boards_root` (its parent).
+/// Bash mounts $BASE_DIR at /scripts, so /scripts/boards/<name>/... works.
+fn project_root(boards_root: &Path) -> PathBuf {
+    boards_root.parent().unwrap_or(boards_root).to_path_buf()
+}
+
 /// One timestamped build directory: `builds/<board>-<timestamp>`.
 pub struct Build {
     pub dir: PathBuf,
@@ -134,13 +140,13 @@ pub fn checkout(
 
     // If board.sh defines board_checkout(), delegate to it.
     if board_has_func(boards_root, &board.name, "board_checkout") {
-        let runner = board_runner(sandbox, sysroot, board).with_build(&build.dir, boards_root);
+        let runner = board_runner(sandbox, sysroot, board).with_build(&build.dir, &project_root(boards_root));
         runner.run(&board_sh_call(&board.name, "board_checkout"))?;
         build.mark_done("sources")?;
         return Ok(());
     }
 
-    let runner = board_runner(sandbox, sysroot, board).with_build(&build.dir, boards_root);
+    let runner = board_runner(sandbox, sysroot, board).with_build(&build.dir, &project_root(boards_root));
 
     if let (Some(repo), Some(tag)) = (&board.opensbi_repo, &board.opensbi_tag) {
         runner.run(&format!(
@@ -180,7 +186,7 @@ pub fn build_bootloader(
     }
     log::info!("[{}] Building bootloader…", board.name);
 
-    let runner = board_runner(sandbox, sysroot, board).with_build(&build.dir, boards_root);
+    let runner = board_runner(sandbox, sysroot, board).with_build(&build.dir, &project_root(boards_root));
 
     if board_has_func(boards_root, &board.name, "board_build_bootloader") {
         runner.run(&board_sh_call(&board.name, "board_build_bootloader"))?;
@@ -223,7 +229,7 @@ pub fn build_kernel(
     }
     log::info!("[{}] Building kernel…", board.name);
 
-    let runner = board_runner(sandbox, sysroot, board).with_build(&build.dir, boards_root);
+    let runner = board_runner(sandbox, sysroot, board).with_build(&build.dir, &project_root(boards_root));
 
     if board_has_func(boards_root, &board.name, "board_build_kernel") {
         runner.run(&board_sh_call(&board.name, "board_build_kernel"))?;
@@ -261,7 +267,7 @@ pub fn assemble(
 
     let runner = board_runner(sandbox, sysroot, board)
         .with_target(&target.dir)
-        .with_build(&build.dir, boards_root);
+        .with_build(&build.dir, &project_root(boards_root));
 
     // Create build directories.
     runner.run("mkdir -p /build/gen/root /build/gen/boot")?;
@@ -358,12 +364,12 @@ pub fn pack(
     }
     log::info!("[{}] Packing image…", board.name);
 
-    let runner = board_runner(sandbox, sysroot, board).with_build(&build.dir, boards_root);
+    let runner = board_runner(sandbox, sysroot, board).with_build(&build.dir, &project_root(boards_root));
 
     // Find genimage.cfg: board-specific first, then project default.
     let board_cfg = boards_root.join(&board.name).join("genimage.cfg");
     let cfg_path = if board_cfg.exists() {
-        format!("/scripts/{}/genimage.cfg", board.name)
+        format!("/scripts/boards/{}/genimage.cfg", board.name)
     } else {
         "/scripts/genimage.cfg".to_string()
     };
@@ -395,7 +401,8 @@ fn board_sh_call(board_name: &str, func: &str) -> String {
     format!(
         r#"run_with_build() {{ shift 2; eval "$@"; }}
 run_with_build_and_source() {{ shift 3; local a; while [[ $# -gt 0 && "$1" != "--" ]]; do shift; done; [[ "$1" == "--" ]] && shift; eval "$@"; }}
-source /scripts/{name}/board.conf && source /scripts/{name}/board.sh && \
+export LDCONFIG="/usr/local/bin/ldconfig"
+source /scripts/boards/{name}/board.conf && source /scripts/boards/{name}/board.sh && \
 if type -t {func} &>/dev/null; then {func}; fi"#,
         name = board_name,
     )
