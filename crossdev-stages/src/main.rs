@@ -384,7 +384,10 @@ async fn main() -> anyhow::Result<()> {
         // ── Image ────────────────────────────────────────────────────────────
         Commands::Image(ImageCmd::ListBoards) => {
             for b in board::list(&boards_root)? {
-                println!("{b}");
+                let tag = board::load(&boards_root, &b)
+                    .map(|c| if c.testing { " [TESTING]" } else { "" })
+                    .unwrap_or("");
+                println!("{b}{tag}");
             }
         }
         Commands::Image(ImageCmd::Build { board: board_name, sandbox, target, steps }) => {
@@ -404,7 +407,8 @@ async fn main() -> anyhow::Result<()> {
             let steps_to_show = if steps.is_empty() { &default_steps } else { &steps };
 
             if cli.dry_run {
-                println!("Board:      {}", board_cfg.name);
+                let tag = if board_cfg.testing { " [TESTING]" } else { "" };
+                println!("Board:      {}{tag}", board_cfg.name);
                 println!("Arch:       {}", board_cfg.arch);
                 println!("CFLAGS:     {}", board_cfg.effective_cflags());
                 if let Some(ldflags) = &board_cfg.ldflags {
@@ -569,5 +573,6 @@ fn default_board_config(arch: &str) -> board::BoardConfig {
         workaround_pkgs: vec![],
         workaround_cflags: vec![],
         image_name: None,
+        testing: false,
     }
 }
