@@ -8,6 +8,7 @@ pub struct BoardConfig {
     pub name: String,
     pub arch: String,           // e.g. "riscv64"
     pub cflags: Option<String>, // BOARD_CFLAGS; None → use default_cflags(arch)
+    pub sysroot: String,        // e.g. "rv64gcv_zvl256b" — required
     pub cross_compile: String,  // e.g. "riscv64-unknown-linux-gnu-"
     pub kernel_arch: Option<String>, // e.g. "riscv", "arm64", "x86" — required for image builds
 
@@ -140,6 +141,7 @@ fn parse(name: &str, path: &Path, content: &str) -> Result<BoardConfig> {
     Ok(BoardConfig {
         name: name.to_string(),
         arch: req!("BOARD_ARCH"),
+        sysroot: req!("SYSROOT"),
         cflags: kv.get("BOARD_CFLAGS").cloned(),
         cross_compile: req!("CROSS_COMPILE"),
         kernel_arch: kv.get("KERNEL_ARCH").cloned(),

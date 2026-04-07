@@ -60,6 +60,34 @@ fn parallelism() -> (usize, usize) {
     (jobs, load)
 }
 
+/// Set or replace a variable in a make.conf file.
+/// If the variable exists, replace its value; otherwise append.
+pub fn set_make_conf_var(file: &Path, name: &str, value: &str) -> Result<()> {
+    let content = std::fs::read_to_string(file).unwrap_or_default();
+    let prefix = format!("{name}=");
+    let new_line = format!("{name}=\"{value}\"");
+
+    let mut found = false;
+    let mut lines: Vec<String> = content
+        .lines()
+        .map(|line| {
+            if line.starts_with(&prefix) {
+                found = true;
+                new_line.clone()
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+
+    if !found {
+        lines.push(new_line);
+    }
+
+    std::fs::write(file, lines.join("\n") + "\n")?;
+    Ok(())
+}
+
 /// Portage operations that run *inside* a sandbox container.
 pub struct Portage<'a> {
     runner: &'a SandboxRunner,

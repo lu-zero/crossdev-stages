@@ -391,6 +391,7 @@ dependencies = [
  "env_logger",
  "gentoo-stages",
  "hakoniwa",
+ "libc",
  "log",
  "num_cpus",
  "serde",

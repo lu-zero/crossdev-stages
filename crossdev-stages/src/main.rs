@@ -5,6 +5,7 @@ mod image;
 mod portage;
 mod sandbox;
 mod stage;
+mod sysroot;
 mod target;
 mod workspace;
 
@@ -26,6 +27,14 @@ struct Cli {
     #[arg(long, global = true)]
     mirror: Option<String>,
 
+    /// Override board's SYSROOT (for testing/debug).
+    #[arg(long, global = true)]
+    sysroot_override: Option<String>,
+
+    /// Show what would be done without executing.
+    #[arg(long, global = true)]
+    dry_run: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -39,6 +48,10 @@ enum Commands {
     /// Manage target sysroots.
     #[command(subcommand)]
     Target(TargetCmd),
+
+    /// Manage cross-compilation sysroots.
+    #[command(subcommand)]
+    Sysroot(SysrootCmd),
 
     /// Build board images.
     #[command(subcommand)]
@@ -148,6 +161,27 @@ enum TargetCmd {
     },
 }
 
+// ── Sysroot subcommands ─────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum SysrootCmd {
+    /// List all sysroots with their CFLAGS.
+    List,
+    /// Create a sysroot for a board's CFLAGS (stage3 + glibc rebuild).
+    Create {
+        /// Sysroot name (e.g. rv64gcv_zvl256b).
+        name: String,
+        /// Board to read CFLAGS from.
+        board: String,
+        #[arg(long)]
+        sandbox: Option<String>,
+    },
+    /// Remove a sysroot.
+    Destroy {
+        name: String,
+    },
+}
+
 // ── Image subcommands ────────────────────────────────────────────────────────
 
 #[derive(Subcommand)]
@@ -195,7 +229,8 @@ async fn main() -> anyhow::Result<()> {
     let ws = Workspace::open()?;
     ws.ensure_dirs()?;
 
-    let boards_root = cli.project_dir.join("boards");
+    let boards_root = std::fs::canonicalize(cli.project_dir.join("boards"))
+        .unwrap_or_else(|_| cli.project_dir.join("boards"));
     let mirror = cli.mirror.as_deref();
 
     match cli.command {
@@ -320,6 +355,23 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
+        // ── Sysroot ──────────────────────────────────────────────────────────
+        Commands::Sysroot(SysrootCmd::List) => {
+            for s in sysroot::list(&ws)? {
+                println!("{:<25} {:<10} {}", s.name, s.arch, s.cflags);
+            }
+        }
+        Commands::Sysroot(SysrootCmd::Create { name, board: board_name, sandbox }) => {
+            let sd = ws.resolve_sandbox(sandbox.as_deref())?;
+            let sb = sandbox::Sandbox::open(sd)?;
+            let board_cfg = board::load(&boards_root, &board_name)?;
+            sysroot::Sysroot::create(&ws, &sb, &name, &board_cfg, mirror).await?;
+            sysroot::apply_workarounds(&ws.sysroot(&name), &board_cfg)?;
+        }
+        Commands::Sysroot(SysrootCmd::Destroy { name }) => {
+            sysroot::destroy(&ws, &name)?;
+        }
+
         // ── Image ────────────────────────────────────────────────────────────
         Commands::Image(ImageCmd::ListBoards) => {
             for b in board::list(&boards_root)? {
@@ -327,13 +379,44 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         Commands::Image(ImageCmd::Build { board: board_name, sandbox, target, steps }) => {
+            let board_cfg = board::load(&boards_root, &board_name)?;
+
+            // Sysroot override: CLI flag > env > board.conf
+            let sysroot_name = cli.sysroot_override
+                .or_else(|| std::env::var("CROSSDEV_SYSROOT").ok())
+                .unwrap_or_else(|| board_cfg.sysroot.clone());
+
+            let default_steps: Vec<String> = if board_cfg.build_steps.is_empty() {
+                ["deps", "checkout", "bootloader", "kernel", "assemble", "pack"]
+                    .iter().map(|s| s.to_string()).collect()
+            } else {
+                board_cfg.build_steps.clone()
+            };
+            let steps_to_show = if steps.is_empty() { &default_steps } else { &steps };
+
+            if cli.dry_run {
+                println!("Board:      {}", board_cfg.name);
+                println!("Arch:       {}", board_cfg.arch);
+                println!("CFLAGS:     {}", board_cfg.effective_cflags());
+                println!("Sysroot:    {} ({})", sysroot_name, ws.sysroot(&sysroot_name).display());
+                println!("Steps:      {}", steps_to_show.iter().map(String::as_str).collect::<Vec<_>>().join(" "));
+                return Ok(());
+            }
+
             let sd = ws.resolve_sandbox(sandbox.as_deref())?;
             let td = ws.resolve_target(target.as_deref())?;
             let sb = sandbox::Sandbox::open(sd)?;
             let tgt = target::Target::open(td)?;
-            let board_cfg = board::load(&boards_root, &board_name)?;
+
+            // Resolve sysroot
+            let sr = if !sysroot_name.is_empty() {
+                Some(sysroot::Sysroot::resolve(&ws, &sysroot_name)?)
+            } else {
+                None
+            };
+
             let steps_opt = if steps.is_empty() { None } else { Some(steps.as_slice()) };
-            image::build(&ws, &sb, &tgt, &board_cfg, &boards_root, steps_opt)?;
+            image::build(&ws, &sb, &tgt, &board_cfg, &boards_root, sr.as_ref(), steps_opt)?;
         }
         Commands::Image(ImageCmd::Prune) => {
             let builds = ws.list_builds()?;
@@ -357,6 +440,7 @@ fn default_board_config(arch: &str) -> board::BoardConfig {
     board::BoardConfig {
         name: arch.to_string(),
         arch: arch.to_string(),
+        sysroot: String::new(),
         cflags: None,
         cross_compile: format!("{arch}-unknown-linux-gnu-"),
         kernel_arch: None,
