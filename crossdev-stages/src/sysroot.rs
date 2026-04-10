@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::board::BoardConfig;
-use crate::container::{self, SandboxRunner};
+use crate::container;
 use crate::error::{Error, Result};
 use crate::portage;
 use crate::sandbox::Sandbox;
@@ -92,7 +92,7 @@ impl Sysroot {
 
         // Step 3: Rebuild glibc with board CFLAGS
         println!("==> Rebuilding glibc with CFLAGS: {cflags}");
-        let runner = SandboxRunner::new(&sb.dir).with_sysroot(&dir, &chost);
+        let runner = sb.runner().with_sysroot(&dir, &chost);
         runner.run(&format!(
             "{chost}-emerge -1 -b -k sys-libs/glibc sys-kernel/linux-headers"
         ))?;

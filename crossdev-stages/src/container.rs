@@ -8,6 +8,8 @@ use crate::error::{check_status, Result};
 /// `run*` variants from `sandbox-stage.sh`.
 pub struct SandboxRunner {
     sandbox_dir: PathBuf,
+    /// Host directory bind-mounted read-write at /var/log inside the container.
+    log_dir: PathBuf,
     /// Extra (host_path, container_path) read-write bind mounts.
     extra_rw: Vec<(PathBuf, String)>,
     /// Extra (host_path, container_path) read-only bind mounts.
@@ -19,14 +21,19 @@ pub struct SandboxRunner {
 }
 
 impl SandboxRunner {
-    pub fn new(sandbox_dir: &Path) -> Self {
+    pub fn new(sandbox_dir: &Path, log_dir: PathBuf) -> Self {
         Self {
             sandbox_dir: sandbox_dir.to_path_buf(),
+            log_dir,
             extra_rw: vec![],
             extra_ro: vec![],
             scripts_dir: None,
             sysroot: None,
         }
+    }
+
+    pub fn log_dir(&self) -> &Path {
+        &self.log_dir
     }
 
     /// Bind-mount `target_dir` read-write at `/target` (for cross-emerge).
@@ -67,7 +74,7 @@ impl SandboxRunner {
             )
             .env("COLORTERM", &std::env::var("COLORTERM").unwrap_or_default())
             .env("NO_COLOR", &std::env::var("NO_COLOR").unwrap_or_default());
-        check_status(command.status()?)
+        check_status(command.status()?).map_err(|e| annotate_cmd(e, cmd))
     }
 
     /// Run a shell command and capture its trimmed stdout.
@@ -84,7 +91,7 @@ impl SandboxRunner {
         if !output.status.success() {
             return Err(crate::error::Error::CommandFailed {
                 code: output.status.code,
-                reason: output.status.reason,
+                reason: format!("{cmd}: {}", output.status.reason),
             });
         }
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -106,6 +113,8 @@ impl SandboxRunner {
     }
 
     fn build_container(&self) -> Container {
+        let _ = std::fs::create_dir_all(&self.log_dir);
+
         let mut c = Container::new();
         // Container::new() already unshares Mount, User, Pid.
         // Add the remaining namespaces to match --unshare-all.
@@ -120,11 +129,13 @@ impl SandboxRunner {
             .devfsmount("/dev")
             .bindmount_ro("/etc/resolv.conf", "/etc/resolv.conf")
             .tmpfsmount("/tmp")
-            .tmpfsmount("/dev/shm");
+            .tmpfsmount("/dev/shm")
+            // Explicit bind mount so portage logs are always reachable at
+            // <sandbox_dir>/var/log/ from the host.
+            .bindmount_rw(self.log_dir.to_str().unwrap_or_default(), "/var/log");
         // Map caller → root, plus subordinate IDs for portage user etc.
-        let maps = uid_gid_maps();
-        c.uidmaps(&maps);
-        c.gidmaps(&maps);
+        c.uidmaps(&uid_maps());
+        c.gidmaps(&gid_maps());
 
         for (host, cpath) in &self.extra_rw {
             c.bindmount_rw(host.to_str().unwrap_or_default(), cpath);
@@ -142,24 +153,33 @@ impl SandboxRunner {
     }
 }
 
-/// Build UID/GID maps: caller → root + subordinate range for other UIDs.
-/// Equivalent to hakoniwa CLI's `--userns=auto`.
-fn uid_gid_maps() -> Vec<(u32, u32, u32)> {
+/// Build UID maps: caller → root + subordinate range. Mirrors hakoniwa CLI `--userns=auto`.
+fn uid_maps() -> Vec<(u32, u32, u32)> {
     let my_id = unsafe { libc::getuid() } as u32;
-    // Read subordinate ID range from /etc/subuid (first entry for current user)
-    let username = std::env::var("USER").unwrap_or_else(|_| "nobody".into());
-    let (sub_start, sub_count) = read_subid(&username, "/etc/subuid").unwrap_or((100000, 65536));
-    vec![
-        (0, my_id, 1),             // container root → caller
-        (1, sub_start, sub_count), // container 1..N → subordinate range
-    ]
+    idmaps_for(my_id, "/etc/subuid")
 }
 
-fn read_subid(user: &str, path: &str) -> Option<(u32, u32)> {
+/// Build GID maps: caller → root + subordinate range. Mirrors hakoniwa CLI `--userns=auto`.
+fn gid_maps() -> Vec<(u32, u32, u32)> {
+    let my_id = unsafe { libc::getgid() } as u32;
+    idmaps_for(my_id, "/etc/subgid")
+}
+
+fn idmaps_for(id: u32, subid_file: &str) -> Vec<(u32, u32, u32)> {
+    let username = std::env::var("USER").unwrap_or_else(|_| id.to_string());
+    let mut maps = vec![(0, id, 1)]; // container root → caller
+    if let Some((sub_start, sub_count)) = read_subid(&username, id, subid_file) {
+        maps.push((1, sub_start, sub_count));
+    }
+    maps
+}
+
+fn read_subid(user: &str, id: u32, path: &str) -> Option<(u32, u32)> {
+    let id_str = id.to_string();
     let content = std::fs::read_to_string(path).ok()?;
     for line in content.lines() {
         let parts: Vec<&str> = line.split(':').collect();
-        if parts.len() >= 3 && parts[0] == user {
+        if parts.len() >= 3 && (parts[0] == user || parts[0] == id_str) {
             let start: u32 = parts[1].parse().ok()?;
             let count: u32 = parts[2].parse().ok()?;
             return Some((start, count));
@@ -207,9 +227,8 @@ pub fn unpack_tarball(stage_file: &Path, dest_dir: &Path, cache_base: &Path) -> 
         .tmpfsmount("/dev/shm")
         .bindmount_rw(cache_str, "/cache")
         .runctl(Runctl::AllowNewPrivs);
-    let maps = uid_gid_maps();
-    container.uidmaps(&maps);
-    container.gidmaps(&maps);
+    container.uidmaps(&uid_maps());
+    container.gidmaps(&gid_maps());
 
     let cmd = format!(
         "mkdir -p {dest} && \
@@ -224,5 +243,18 @@ pub fn unpack_tarball(stage_file: &Path, dest_dir: &Path, cache_base: &Path) -> 
 
     let mut command = container.command("/bin/sh");
     command.arg("-c").arg(&cmd);
-    check_status(command.status()?)
+    check_status(command.status()?).map_err(|e| annotate_cmd(e, &cmd))
+}
+
+/// Prefix a failed-command error with the command string for diagnostics.
+fn annotate_cmd(e: crate::error::Error, cmd: &str) -> crate::error::Error {
+    match e {
+        crate::error::Error::CommandFailed { code, reason } => {
+            crate::error::Error::CommandFailed {
+                code,
+                reason: format!("{cmd}: {reason}"),
+            }
+        }
+        other => other,
+    }
 }
