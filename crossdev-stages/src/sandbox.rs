@@ -27,24 +27,27 @@ impl Sandbox {
     pub fn create(ws: &Workspace, name: &str, arch: &str, stage_file: &Path) -> Result<Self> {
         let dir = ws.sandbox(name);
         if dir.is_dir() {
-            log::info!("Sandbox {} already exists, skipping unpack.", name);
+            tracing::info!("Sandbox {} already exists, skipping unpack.", name);
             return Self::open(dir);
         }
-        log::info!("Unpacking stage3 into {}…", dir.display());
+        tracing::info!("Unpacking stage3 into {}…", dir.display());
         unpack_tarball(stage_file, &dir, ws.base())?;
         std::fs::write(dir.join(".arch"), arch)?;
-        log::info!("Sandbox {} created.", name);
-        Ok(Self { dir, arch: arch.to_string() })
+        tracing::info!("Sandbox {} created.", name);
+        Ok(Self {
+            dir,
+            arch: arch.to_string(),
+        })
     }
 
     /// Configure portage and install host build dependencies.
     /// Idempotent: skips if `.prepared` marker exists.
     pub fn prepare(&self, mirror: Option<&str>) -> Result<()> {
         if self.dir.join(".prepared").exists() {
-            log::info!("Sandbox already prepared, skipping.");
+            tracing::info!("Sandbox already prepared, skipping.");
             return Ok(());
         }
-        log::info!("Configuring portage…");
+        tracing::info!("Configuring portage…");
         MakeConf {
             arch: &self.arch,
             chost: None,
@@ -53,11 +56,11 @@ impl Sandbox {
         }
         .write(&self.dir.join("etc/portage"))?;
 
-        log::info!("Installing host dependencies…");
+        tracing::info!("Installing host dependencies…");
         install_host_deps(&self.runner())?;
 
         std::fs::write(self.dir.join(".prepared"), "")?;
-        log::info!("Sandbox prepared.");
+        tracing::info!("Sandbox prepared.");
         Ok(())
     }
 
@@ -66,7 +69,7 @@ impl Sandbox {
     pub fn setup_crossdev(&self, target_arch: &str, board: &BoardConfig) -> Result<()> {
         let marker = self.dir.join(format!(".crossdev-{target_arch}"));
         if marker.exists() {
-            log::info!("Crossdev for {target_arch} already set up, skipping.");
+            tracing::info!("Crossdev for {target_arch} already set up, skipping.");
             return Ok(());
         }
 
@@ -75,13 +78,13 @@ impl Sandbox {
         let cflags = board.effective_cflags();
         let runner = self.runner();
 
-        log::info!("Creating crossdev overlay…");
+        tracing::info!("Creating crossdev overlay…");
         runner.run(
             "eselect repository list -i | grep -q crossdev \
              || eselect repository create crossdev",
         )?;
 
-        log::info!("Initialising crossdev for {chost}…");
+        tracing::info!("Initialising crossdev for {chost}…");
         runner.run(&format!("crossdev {chost} --init-target"))?;
 
         // Allow unstable rust-std and gcc-16 prerelease.
@@ -94,22 +97,20 @@ impl Sandbox {
              > /etc/portage/package.accept_keywords/gcc",
         )?;
 
-        log::info!("Emerging gcc:16 (host)…");
+        tracing::info!("Emerging gcc:16 (host)…");
         runner.run("emerge -b -k sys-devel/gcc:16")?;
 
         // Query the installed gcc-16 version and make it the default.
-        let gcc_ver = runner.run_output(
-            "qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'",
-        )?;
+        let gcc_ver =
+            runner.run_output("qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'")?;
         if gcc_ver.is_empty() {
             return Err(Error::CommandFailed {
                 code: 1,
                 reason: "Could not determine gcc-16 version".into(),
             });
         }
-        let gcc_profile = runner.run_output(
-            "gcc-config -l | grep '16' | head -n1 | awk '{print $2}'",
-        )?;
+        let gcc_profile =
+            runner.run_output("gcc-config -l | grep '16' | head -n1 | awk '{print $2}'")?;
         runner.run(&format!("gcc-config {gcc_profile}"))?;
         runner.run("source /etc/profile && env-update")?;
 
@@ -125,7 +126,7 @@ impl Sandbox {
         runner.run(&format!("mkdir -p /usr/{chost}/bin"))?;
         runner.run(&format!("merge-usr --root /usr/{chost}"))?;
 
-        log::info!("Running crossdev (this takes a while)…");
+        tracing::info!("Running crossdev (this takes a while)…");
         runner.run(&format!(
             "crossdev {chost} \
              --gcc {gcc_ver} \
@@ -137,7 +138,7 @@ impl Sandbox {
         runner.run(&format!("gcc-config {chost}-16 && source /etc/profile"))?;
 
         std::fs::write(&marker, "")?;
-        log::info!("Crossdev for {chost} complete.");
+        tracing::info!("Crossdev for {chost} complete.");
         Ok(())
     }
 
@@ -147,14 +148,14 @@ impl Sandbox {
     pub fn prepare_crossdev_host(&self, target_arch: &str, _board: &BoardConfig) -> Result<()> {
         let marker = self.dir.join(format!(".crossdev-host-{target_arch}"));
         if marker.exists() {
-            log::info!("Host crossdev for {target_arch} already prepared, skipping.");
+            tracing::info!("Host crossdev for {target_arch} already prepared, skipping.");
             return Ok(());
         }
 
         let chost = format!("{target_arch}-unknown-linux-gnu");
         let runner = self.runner();
 
-        log::info!("Creating crossdev overlay...");
+        tracing::info!("Creating crossdev overlay...");
         runner.run(
             "eselect repository list -i | grep -q crossdev \
              || eselect repository create crossdev",
@@ -172,25 +173,23 @@ impl Sandbox {
         runner.run("mkdir -p /etc/portage/package.accept_keywords /etc/portage/package.mask")?;
 
         // Install gcc-16 on host
-        log::info!("Emerging gcc:16 (host)...");
+        tracing::info!("Emerging gcc:16 (host)...");
         runner.run("emerge -b -k sys-devel/gcc:16")?;
-        let gcc_profile = runner.run_output(
-            "gcc-config -l | grep '16' | head -n1 | awk '{print $2}'",
-        )?;
+        let gcc_profile =
+            runner.run_output("gcc-config -l | grep '16' | head -n1 | awk '{print $2}'")?;
         runner.run(&format!("gcc-config {gcc_profile}"))?;
         runner.run("source /etc/profile && env-update")?;
 
         // Install crossdev cross-compiler
-        let gcc_ver = runner.run_output(
-            "qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'",
-        )?;
+        let gcc_ver =
+            runner.run_output("qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'")?;
         if gcc_ver.is_empty() {
             return Err(Error::CommandFailed {
                 code: 1,
                 reason: "Could not determine gcc-16 version".into(),
             });
         }
-        log::info!("Running crossdev for {chost}...");
+        tracing::info!("Running crossdev for {chost}...");
         runner.run(&format!(
             "crossdev {chost} --gcc {gcc_ver} \
              --ex-pkg sys-devel/clang-crossdev-wrappers \
@@ -199,7 +198,7 @@ impl Sandbox {
         runner.run(&format!("gcc-config {chost}-16 && source /etc/profile"))?;
 
         std::fs::write(&marker, "")?;
-        log::info!("Host crossdev for {chost} prepared.");
+        tracing::info!("Host crossdev for {chost} prepared.");
         Ok(())
     }
 
@@ -238,7 +237,12 @@ impl Sandbox {
         }
         .write(portage_dir)?;
 
-        for sub in ["env", "package.env", "package.use", "package.accept_keywords"] {
+        for sub in [
+            "env",
+            "package.env",
+            "package.use",
+            "package.accept_keywords",
+        ] {
             std::fs::create_dir_all(portage_dir.join(sub))?;
         }
 
@@ -249,7 +253,10 @@ impl Sandbox {
         )?;
 
         // package.env
-        std::fs::write(portage_dir.join("package.env/rust"), "dev-lang/rust plain.conf\n")?;
+        std::fs::write(
+            portage_dir.join("package.env/rust"),
+            "dev-lang/rust plain.conf\n",
+        )?;
 
         // package.use
         std::fs::write(
@@ -258,7 +265,10 @@ impl Sandbox {
              >=sys-libs/libxcrypt-4.4.36-r3 static-libs\n\
              >=sys-apps/busybox-1.36.1-r3 -pam static\n",
         )?;
-        std::fs::write(portage_dir.join("package.use/clang"), "llvm-core/clang -extra\n")?;
+        std::fs::write(
+            portage_dir.join("package.use/clang"),
+            "llvm-core/clang -extra\n",
+        )?;
         std::fs::write(
             portage_dir.join("package.use/rust"),
             "dev-lang/rust rustfmt -system-llvm\n",
@@ -272,7 +282,11 @@ impl Sandbox {
         )?;
 
         // Per-package CFLAGS workarounds from board.conf
-        for (pkg, flags) in board.workaround_pkgs.iter().zip(board.workaround_cflags.iter()) {
+        for (pkg, flags) in board
+            .workaround_pkgs
+            .iter()
+            .zip(board.workaround_cflags.iter())
+        {
             let safe_name = pkg.replace('/', "_");
             std::fs::write(
                 portage_dir.join(format!("env/{safe_name}.conf")),
@@ -294,15 +308,18 @@ pub fn list(ws: &Workspace) -> Result<Vec<SandboxInfo>> {
     Ok(dirs
         .into_iter()
         .map(|dir| {
-            let arch = crate::workspace::read_arch(&dir)
-                .unwrap_or_else(|| "unknown".into());
+            let arch = crate::workspace::read_arch(&dir).unwrap_or_else(|| "unknown".into());
             let prepared = dir.join(".prepared").exists();
             let name = dir
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
-            SandboxInfo { name, arch, prepared }
+            SandboxInfo {
+                name,
+                arch,
+                prepared,
+            }
         })
         .collect())
 }
@@ -312,4 +329,3 @@ pub struct SandboxInfo {
     pub arch: String,
     pub prepared: bool,
 }
-

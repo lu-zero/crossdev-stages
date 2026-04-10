@@ -63,7 +63,11 @@ impl Sysroot {
         println!("Creating sysroot '{name}' for {chost} with CFLAGS: {cflags}");
 
         // Ensure host sandbox has crossdev toolchain
-        if !sb.dir.join(format!(".crossdev-host-{}", board.arch)).exists() {
+        if !sb
+            .dir
+            .join(format!(".crossdev-host-{}", board.arch))
+            .exists()
+        {
             sb.prepare_crossdev_host(&board.arch, board)?;
         }
 
@@ -74,7 +78,15 @@ impl Sysroot {
 
         // Step 2: Configure portage
         println!("==> Configuring portage...");
-        configure_sysroot_portage(&dir, &board.arch, &chost, &crossdev_root, &cflags, board, mirror)?;
+        configure_sysroot_portage(
+            &dir,
+            &board.arch,
+            &chost,
+            &crossdev_root,
+            &cflags,
+            board,
+            mirror,
+        )?;
         write_portage_env(&dir)?;
         apply_workarounds(&dir, board)?;
 
@@ -96,7 +108,6 @@ impl Sysroot {
         println!("Sysroot '{name}' created at {}", dir.display());
         Ok(Self { dir })
     }
-
 }
 
 /// List all sysroots with their metadata.
@@ -230,7 +241,10 @@ fn write_portage_env(sysroot_dir: &Path) -> Result<()> {
         portage.join("env/plain.conf"),
         "CFLAGS=\"-O3 -pipe\"\nCXXFLAGS=\"-O3 -pipe\"\n",
     )?;
-    std::fs::write(portage.join("package.env/rust"), "dev-lang/rust plain.conf\n")?;
+    std::fs::write(
+        portage.join("package.env/rust"),
+        "dev-lang/rust plain.conf\n",
+    )?;
 
     // Package USE
     std::fs::write(
@@ -239,7 +253,10 @@ fn write_portage_env(sysroot_dir: &Path) -> Result<()> {
          >=sys-libs/libxcrypt-4.4.36-r3 static-libs\n\
          >=sys-apps/busybox-1.36.1-r3 -pam static\n",
     )?;
-    std::fs::write(portage.join("package.use/clang"), "llvm-core/clang -extra\n")?;
+    std::fs::write(
+        portage.join("package.use/clang"),
+        "llvm-core/clang -extra\n",
+    )?;
     std::fs::write(
         portage.join("package.use/rust"),
         "dev-lang/rust rustfmt -system-llvm\n",
@@ -287,7 +304,11 @@ pub fn apply_workarounds(sysroot_dir: &Path, board: &BoardConfig) -> Result<()> 
     std::fs::create_dir_all(&pkg_env_dir)?;
 
     let mut workaround_lines = Vec::new();
-    for (pkg, flags) in board.workaround_pkgs.iter().zip(board.workaround_cflags.iter()) {
+    for (pkg, flags) in board
+        .workaround_pkgs
+        .iter()
+        .zip(board.workaround_cflags.iter())
+    {
         let env_name = pkg.rsplit('/').next().unwrap_or(pkg);
         std::fs::write(
             env_dir.join(format!("{env_name}.conf")),

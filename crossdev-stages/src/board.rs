@@ -7,12 +7,12 @@ use crate::error::{Error, Result};
 #[allow(dead_code)]
 pub struct BoardConfig {
     pub name: String,
-    pub arch: String,           // e.g. "riscv64"
-    pub cflags: Option<String>,    // BOARD_CFLAGS; None → use default_cflags(arch)
-    pub ldflags: Option<String>,   // BOARD_LDFLAGS; probably never needed (profile default is fine)
+    pub arch: String,                // e.g. "riscv64"
+    pub cflags: Option<String>,      // BOARD_CFLAGS; None → use default_cflags(arch)
+    pub ldflags: Option<String>, // BOARD_LDFLAGS; probably never needed (profile default is fine)
     pub rustflags: Option<String>, // BOARD_RUSTFLAGS; cross-compile target-cpu is handled by rust-std
     pub sysroot: String,           // e.g. "rv64gcv_zvl256b" — required
-    pub cross_compile: String,  // e.g. "riscv64-unknown-linux-gnu-"
+    pub cross_compile: String,     // e.g. "riscv64-unknown-linux-gnu-"
     pub kernel_arch: Option<String>, // e.g. "riscv", "arm64", "x86" — required for image builds
 
     // OpenSBI
@@ -71,16 +71,13 @@ impl BoardConfig {
             .clone()
             .unwrap_or_else(|| crate::stage::default_cflags(&self.arch).to_string())
     }
-
 }
 
 /// Load a board configuration from `<boards_root>/<name>/board.conf`.
 pub fn load(boards_root: &Path, name: &str) -> Result<BoardConfig> {
     let path = boards_root.join(name).join("board.conf");
-    let content = std::fs::read_to_string(&path).map_err(|e| Error::BoardNotFound(format!(
-        "{}: {e}",
-        path.display()
-    )))?;
+    let content = std::fs::read_to_string(&path)
+        .map_err(|e| Error::BoardNotFound(format!("{}: {e}", path.display())))?;
     parse(name, &path, &content)
 }
 
@@ -153,7 +150,10 @@ fn parse(name: &str, path: &Path, content: &str) -> Result<BoardConfig> {
 
         firmware_repo: kv.get("FIRMWARE_REPO").cloned(),
         firmware_overlay: kv.get("BOARD_FIRMWARE_OVERLAY").cloned(),
-        host_firmware_paths: arrays.get("HOST_FIRMWARE_PATHS").cloned().unwrap_or_default(),
+        host_firmware_paths: arrays
+            .get("HOST_FIRMWARE_PATHS")
+            .cloned()
+            .unwrap_or_default(),
 
         kernel_repo: req!("KERNEL_REPO"),
         kernel_tag: kv
@@ -168,7 +168,10 @@ fn parse(name: &str, path: &Path, content: &str) -> Result<BoardConfig> {
 
         root_dev: kv.get("BOOT_ROOT_DEV").cloned(),
         console: kv.get("BOOT_CONSOLE").cloned(),
-        hostname: kv.get("BOOT_HOSTNAME").cloned().unwrap_or_else(|| "gentoo".into()),
+        hostname: kv
+            .get("BOOT_HOSTNAME")
+            .cloned()
+            .unwrap_or_else(|| "gentoo".into()),
         serial_tty: kv.get("BOOT_SERIAL_TTY").cloned(),
         serial_baud: kv.get("BOOT_SERIAL_BAUD").cloned(),
         kernel_name: kv.get("BOOT_KERNEL_NAME").cloned(),
@@ -182,7 +185,10 @@ fn parse(name: &str, path: &Path, content: &str) -> Result<BoardConfig> {
         workaround_cflags: arrays.get("WORKAROUND_CFLAGS").cloned().unwrap_or_default(),
 
         image_name: kv.get("IMAGE_NAME").cloned(),
-        testing: kv.get("TESTING").map(|v| v == "true" || v == "yes" || v == "1").unwrap_or(false),
+        testing: kv
+            .get("TESTING")
+            .map(|v| v == "true" || v == "yes" || v == "1")
+            .unwrap_or(false),
     })
 }
 
@@ -190,8 +196,7 @@ fn parse(name: &str, path: &Path, content: &str) -> Result<BoardConfig> {
 fn unquote(s: &str) -> String {
     let s = s.trim();
     if s.len() >= 2
-        && ((s.starts_with('"') && s.ends_with('"'))
-            || (s.starts_with('\'') && s.ends_with('\'')))
+        && ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')))
     {
         s[1..s.len() - 1].to_string()
     } else {
@@ -225,7 +230,9 @@ fn parse_array(inner: &str) -> Vec<String> {
             }
         } else {
             // Unquoted element (space-delimited)
-            let end = remaining.find(char::is_whitespace).unwrap_or(remaining.len());
+            let end = remaining
+                .find(char::is_whitespace)
+                .unwrap_or(remaining.len());
             result.push(remaining[..end].to_string());
             remaining = remaining[end..].trim_start();
         }
