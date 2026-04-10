@@ -27,13 +27,13 @@ impl Sandbox {
     pub fn create(ws: &Workspace, name: &str, arch: &str, stage_file: &Path) -> Result<Self> {
         let dir = ws.sandbox(name);
         if dir.is_dir() {
-            log::info!("Sandbox {} already exists, skipping unpack.", name);
+            tracing::info!("Sandbox {} already exists, skipping unpack.", name);
             return Self::open(dir);
         }
-        log::info!("Unpacking stage3 into {}…", dir.display());
+        tracing::info!("Unpacking stage3 into {}…", dir.display());
         unpack_tarball(stage_file, &dir, ws.base())?;
         std::fs::write(dir.join(".arch"), arch)?;
-        log::info!("Sandbox {} created.", name);
+        tracing::info!("Sandbox {} created.", name);
         Ok(Self { dir, arch: arch.to_string() })
     }
 
@@ -41,10 +41,10 @@ impl Sandbox {
     /// Idempotent: skips if `.prepared` marker exists.
     pub fn prepare(&self, mirror: Option<&str>) -> Result<()> {
         if self.dir.join(".prepared").exists() {
-            log::info!("Sandbox already prepared, skipping.");
+            tracing::info!("Sandbox already prepared, skipping.");
             return Ok(());
         }
-        log::info!("Configuring portage…");
+        tracing::info!("Configuring portage…");
         MakeConf {
             arch: &self.arch,
             chost: None,
@@ -53,11 +53,11 @@ impl Sandbox {
         }
         .write(&self.dir.join("etc/portage"))?;
 
-        log::info!("Installing host dependencies…");
+        tracing::info!("Installing host dependencies…");
         install_host_deps(&self.runner())?;
 
         std::fs::write(self.dir.join(".prepared"), "")?;
-        log::info!("Sandbox prepared.");
+        tracing::info!("Sandbox prepared.");
         Ok(())
     }
 
@@ -66,7 +66,7 @@ impl Sandbox {
     pub fn setup_crossdev(&self, target_arch: &str, board: &BoardConfig) -> Result<()> {
         let marker = self.dir.join(format!(".crossdev-{target_arch}"));
         if marker.exists() {
-            log::info!("Crossdev for {target_arch} already set up, skipping.");
+            tracing::info!("Crossdev for {target_arch} already set up, skipping.");
             return Ok(());
         }
 
@@ -75,13 +75,13 @@ impl Sandbox {
         let cflags = board.effective_cflags();
         let runner = self.runner();
 
-        log::info!("Creating crossdev overlay…");
+        tracing::info!("Creating crossdev overlay…");
         runner.run(
             "eselect repository list -i | grep -q crossdev \
              || eselect repository create crossdev",
         )?;
 
-        log::info!("Initialising crossdev for {chost}…");
+        tracing::info!("Initialising crossdev for {chost}…");
         runner.run(&format!("crossdev {chost} --init-target"))?;
 
         // Allow unstable rust-std and gcc-16 prerelease.
@@ -94,7 +94,7 @@ impl Sandbox {
              > /etc/portage/package.accept_keywords/gcc",
         )?;
 
-        log::info!("Emerging gcc:16 (host)…");
+        tracing::info!("Emerging gcc:16 (host)…");
         runner.run("emerge -b -k sys-devel/gcc:16")?;
 
         // Query the installed gcc-16 version and make it the default.
@@ -125,7 +125,7 @@ impl Sandbox {
         runner.run(&format!("mkdir -p /usr/{chost}/bin"))?;
         runner.run(&format!("merge-usr --root /usr/{chost}"))?;
 
-        log::info!("Running crossdev (this takes a while)…");
+        tracing::info!("Running crossdev (this takes a while)…");
         runner.run(&format!(
             "crossdev {chost} \
              --gcc {gcc_ver} \
@@ -137,7 +137,7 @@ impl Sandbox {
         runner.run(&format!("gcc-config {chost}-16 && source /etc/profile"))?;
 
         std::fs::write(&marker, "")?;
-        log::info!("Crossdev for {chost} complete.");
+        tracing::info!("Crossdev for {chost} complete.");
         Ok(())
     }
 
@@ -147,14 +147,14 @@ impl Sandbox {
     pub fn prepare_crossdev_host(&self, target_arch: &str, _board: &BoardConfig) -> Result<()> {
         let marker = self.dir.join(format!(".crossdev-host-{target_arch}"));
         if marker.exists() {
-            log::info!("Host crossdev for {target_arch} already prepared, skipping.");
+            tracing::info!("Host crossdev for {target_arch} already prepared, skipping.");
             return Ok(());
         }
 
         let chost = format!("{target_arch}-unknown-linux-gnu");
         let runner = self.runner();
 
-        log::info!("Creating crossdev overlay...");
+        tracing::info!("Creating crossdev overlay...");
         runner.run(
             "eselect repository list -i | grep -q crossdev \
              || eselect repository create crossdev",
@@ -172,7 +172,7 @@ impl Sandbox {
         runner.run("mkdir -p /etc/portage/package.accept_keywords /etc/portage/package.mask")?;
 
         // Install gcc-16 on host
-        log::info!("Emerging gcc:16 (host)...");
+        tracing::info!("Emerging gcc:16 (host)...");
         runner.run("emerge -b -k sys-devel/gcc:16")?;
         let gcc_profile = runner.run_output(
             "gcc-config -l | grep '16' | head -n1 | awk '{print $2}'",
@@ -190,7 +190,7 @@ impl Sandbox {
                 reason: "Could not determine gcc-16 version".into(),
             });
         }
-        log::info!("Running crossdev for {chost}...");
+        tracing::info!("Running crossdev for {chost}...");
         runner.run(&format!(
             "crossdev {chost} --gcc {gcc_ver} \
              --ex-pkg sys-devel/clang-crossdev-wrappers \
@@ -199,7 +199,7 @@ impl Sandbox {
         runner.run(&format!("gcc-config {chost}-16 && source /etc/profile"))?;
 
         std::fs::write(&marker, "")?;
-        log::info!("Host crossdev for {chost} prepared.");
+        tracing::info!("Host crossdev for {chost} prepared.");
         Ok(())
     }
 

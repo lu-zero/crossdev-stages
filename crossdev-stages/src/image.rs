@@ -31,7 +31,7 @@ impl Build {
             for dir in builds {
                 if let Some(b) = Self::open(dir.clone()) {
                     if b.board == board && !b.is_done("packed") {
-                        log::info!("Resuming build: {}", dir.display());
+                        tracing::info!("Resuming build: {}", dir.display());
                         return Ok(b);
                     }
                 }
@@ -79,7 +79,7 @@ pub fn install_deps(
     if build.is_done("deps") {
         return Ok(());
     }
-    log::info!("[{}] Installing board dependencies…", board.name);
+    tracing::info!("[{}] Installing board dependencies…", board.name);
 
     // Host-side extras from boards/<name>/sandbox-packages.txt
     let sandbox_pkgs = boards_root
@@ -136,7 +136,7 @@ pub fn checkout(
     if build.is_done("sources") {
         return Ok(());
     }
-    log::info!("[{}] Checking out sources…", board.name);
+    tracing::info!("[{}] Checking out sources…", board.name);
 
     // If board.sh defines board_checkout(), delegate to it.
     if board_has_func(boards_root, &board.name, "board_checkout") {
@@ -184,7 +184,7 @@ pub fn build_bootloader(
     if build.is_done("bootloader") {
         return Ok(());
     }
-    log::info!("[{}] Building bootloader…", board.name);
+    tracing::info!("[{}] Building bootloader…", board.name);
 
     let runner = board_runner(sandbox, sysroot, board).with_build(&build.dir, &project_root(boards_root));
 
@@ -227,7 +227,7 @@ pub fn build_kernel(
     if build.is_done("kernel") {
         return Ok(());
     }
-    log::info!("[{}] Building kernel…", board.name);
+    tracing::info!("[{}] Building kernel…", board.name);
 
     let runner = board_runner(sandbox, sysroot, board).with_build(&build.dir, &project_root(boards_root));
 
@@ -263,7 +263,7 @@ pub fn assemble(
     if build.is_done("assembled") {
         return Ok(());
     }
-    log::info!("[{}] Assembling root filesystem…", board.name);
+    tracing::info!("[{}] Assembling root filesystem…", board.name);
 
     let runner = board_runner(sandbox, sysroot, board)
         .with_target(&target.dir)
@@ -364,7 +364,7 @@ pub fn pack(
     if build.is_done("packed") {
         return Ok(());
     }
-    log::info!("[{}] Packing image…", board.name);
+    tracing::info!("[{}] Packing image…", board.name);
 
     let runner = board_runner(sandbox, sysroot, board).with_build(&build.dir, &project_root(boards_root));
 
@@ -463,7 +463,7 @@ pub fn build(
             "kernel" => build_kernel(&bld, sandbox, board, boards_root, sysroot)?,
             "assemble" => assemble(&bld, sandbox, target, board, boards_root, sysroot)?,
             "pack" => pack(&bld, sandbox, board, boards_root, sysroot)?,
-            other => log::warn!("Unknown build step '{}', skipping.", other),
+            other => tracing::warn!("Unknown build step '{}', skipping.", other),
         }
     }
 

@@ -154,7 +154,7 @@ impl<'a> Portage<'a> {
 pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
     let portage = Portage::new(runner);
 
-    log::info!("Syncing portage tree…");
+    tracing::info!("Syncing portage tree…");
     portage.webrsync()?;
     let _ = portage.getuto();
 
@@ -163,7 +163,7 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
         "app-arch/bzip2",
         "app-arch/xz-utils",
     ];
-    log::info!("Installing binary packages…");
+    tracing::info!("Installing binary packages…");
     portage.emerge_binary(&bin_packages)?;
 
     let packages = [
@@ -181,10 +181,10 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
         "dev-lang/rust",
         "sys-kernel/gentoo-sources",
     ];
-    log::info!("Installing build dependencies…");
+    tracing::info!("Installing build dependencies…");
     portage.emerge(&packages)?;
 
-    log::info!("Installing Rust ldconfig…");
+    tracing::info!("Installing Rust ldconfig…");
     runner.run("cargo install --root /usr/local ldconfig")?;
 
     Ok(())

@@ -25,13 +25,13 @@ impl Target {
     pub fn create(ws: &Workspace, name: &str, arch: &str, stage_file: &Path) -> Result<Self> {
         let dir = ws.target(name);
         if dir.is_dir() {
-            log::info!("Target {} already exists, skipping unpack.", name);
+            tracing::info!("Target {} already exists, skipping unpack.", name);
             return Self::open(dir);
         }
-        log::info!("Unpacking stage3 into target {}…", dir.display());
+        tracing::info!("Unpacking stage3 into target {}…", dir.display());
         unpack_tarball(stage_file, &dir, ws.base())?;
         std::fs::write(dir.join(".arch"), arch)?;
-        log::info!("Target {} created.", name);
+        tracing::info!("Target {} created.", name);
         Ok(Self { dir, arch: arch.to_string() })
     }
 
@@ -39,17 +39,17 @@ impl Target {
     /// Idempotent via `.stage1` marker.
     pub fn build_stage1(&self, sandbox: &Sandbox) -> Result<()> {
         if self.dir.join(".stage1").exists() {
-            log::info!("Stage1 already built, skipping.");
+            tracing::info!("Stage1 already built, skipping.");
             return Ok(());
         }
         let chost = format!("{}-unknown-linux-gnu", self.arch);
         let runner = sandbox.runner().with_target(&self.dir);
         let portage = Portage::new(&runner);
 
-        log::info!("Cross-emerging baselayout…");
+        tracing::info!("Cross-emerging baselayout…");
         portage.cross_emerge_build(&chost, &["sys-apps/baselayout"])?;
 
-        log::info!("Cross-emerging packages.build…");
+        tracing::info!("Cross-emerging packages.build…");
         let packages = runner.run_output(
             "grep -v '^#' /var/db/repos/gentoo/profiles/default/linux/packages.build \
              | grep -v '^[[:space:]]*$' | tr '\\n' ' '"
@@ -62,13 +62,13 @@ impl Target {
         }
         runner.run(&format!("ROOT=/target {chost}-emerge -b -k {packages}"))?;
 
-        log::info!("Cross-emerging portage…");
+        tracing::info!("Cross-emerging portage…");
         portage.cross_emerge_build(&chost, &["sys-apps/portage"])?;
 
         self.update_ldconfig(sandbox)?;
 
         std::fs::write(self.dir.join(".stage1"), chrono::Utc::now().to_rfc3339())?;
-        log::info!("Stage1 complete.");
+        tracing::info!("Stage1 complete.");
         Ok(())
     }
 
@@ -78,12 +78,12 @@ impl Target {
         let runner = sandbox.runner().with_target(&self.dir);
         let portage = Portage::new(&runner);
 
-        log::info!("Updating target: gcc, binutils-libs, system…");
+        tracing::info!("Updating target: gcc, binutils-libs, system…");
         portage.cross_emerge(&chost, &["sys-devel/gcc"])?;
         portage.cross_emerge(&chost, &["sys-libs/binutils-libs"])?;
         portage.cross_emerge(&chost, &["-u", "system"])?;
 
-        log::info!("Rebuilding @world…");
+        tracing::info!("Rebuilding @world…");
         runner.run(&format!(
             "KERNEL_DIR=/usr/src/linux ROOT=/target {chost}-emerge -b -k -e @world"
         ))?;
@@ -102,7 +102,7 @@ impl Target {
 
     /// Run `ldconfig` inside the target sysroot.
     pub fn update_ldconfig(&self, sandbox: &Sandbox) -> Result<()> {
-        log::info!("Updating ldconfig in target…");
+        tracing::info!("Updating ldconfig in target…");
         let runner = sandbox.runner().with_target(&self.dir);
         runner.run("ldconfig -v -r /target")
     }

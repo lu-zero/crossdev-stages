@@ -232,7 +232,9 @@ enum StagesCmd {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    tracing_subscriber::fmt()
+        .with_env_filter("crossdev_stages=info")
+        .init();
 
     let cli = Cli::parse();
     let ws = Workspace::open()?;
