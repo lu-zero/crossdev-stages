@@ -640,28 +640,37 @@ dependencies = [
 
 [[package]]
 name = "gentoo-core"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "121fdee69b879f58ae3ba739a0150c005074c1c611d5f03f298f9e8464a1e79d"
+checksum = "682c2890e9701c8f677d1f4a3b70766faaf86d91b1a875d1509aba125653d948"
 dependencies = [
- "lasso",
+ "gentoo-interner",
  "thiserror 1.0.69",
 ]
 
 [[package]]
-name = "gentoo-stages"
-version = "0.3.0"
+name = "gentoo-interner"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20240568cbebea0e60b2255037f61683699be9d8b7b892a311dccb8e2252f239"
+checksum = "5f5b129d74ee6ab777ffa9052a2e80a39891f31e5173e6d92e99e78db23ca114"
+dependencies = [
+ "lasso",
+]
+
+[[package]]
+name = "gentoo-stages"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e89ccf2a10dc9880ddd4a0a3c96ee647c0b2f79306e2b9fa1eadf25222adb394"
 dependencies = [
  "bon",
  "futures",
  "gentoo-core",
- "log",
  "reqwest",
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
