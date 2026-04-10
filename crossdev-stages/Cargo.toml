@@ -8,8 +8,8 @@ name = "crossdev-stages"
 path = "src/main.rs"
 
 [dependencies]
-hakoniwa      = { git = "https://github.com/souk4711/hakoniwa" }
-gentoo-stages = { git = "https://github.com/lu-zero/gentoo-stages" }
+hakoniwa      = "1.4"
+gentoo-stages = "0.3"
 clap         = { version = "4", features = ["derive"] }
 tokio        = { version = "1", features = ["full"] }
 anyhow       = "1"

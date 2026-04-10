@@ -674,7 +674,8 @@ dependencies = [
 [[package]]
 name = "gentoo-stages"
 version = "0.3.0"
-source = "git+https://github.com/lu-zero/gentoo-stages#b7b1eeffa2808a07f1db14cf221490047146212f"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20240568cbebea0e60b2255037f61683699be9d8b7b892a311dccb8e2252f239"
 dependencies = [
  "bon",
  "futures",
@@ -748,7 +749,8 @@ dependencies = [
 [[package]]
 name = "hakoniwa"
 version = "1.4.0"
-source = "git+https://github.com/souk4711/hakoniwa#5f684d8723c990b0c849bf7282f9c522bcd1d3d9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cebd6a07b66986cca81ed876745ae8f046059746da7c873300f5fa3588e80e6f"
 dependencies = [
  "bitflags",
  "caps",
