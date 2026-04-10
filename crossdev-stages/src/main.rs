@@ -11,17 +11,32 @@ mod workspace;
 
 use std::path::PathBuf;
 
+use clap::builder::styling::{AnsiColor, Styles};
 use clap::{Parser, Subcommand};
 
 use error::Result;
 use workspace::Workspace;
+
+// Saner default colored style.
+const fn cli_styles() -> Styles {
+    Styles::styled()
+        .header(AnsiColor::Yellow.on_default().bold())
+        .usage(AnsiColor::Green.on_default().bold())
+        .literal(AnsiColor::Green.on_default())
+        .placeholder(AnsiColor::Cyan.on_default())
+        // optional extras that look nice
+        .error(AnsiColor::Red.on_default().bold())
+        .valid(AnsiColor::Green.on_default())
+        .invalid(AnsiColor::Red.on_default())
+}
 
 // ── Top-level CLI ────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
 #[command(
     name = "crossdev-stages",
-    about = "Gentoo-based cross-compilation stage builder"
+    about = "Gentoo-based cross-compilation stage builder",
+    styles = cli_styles()
 )]
 struct Cli {
     /// Path to the project root (where boards/ lives). Defaults to the current directory.
