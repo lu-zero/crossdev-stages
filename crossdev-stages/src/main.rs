@@ -153,6 +153,9 @@ enum TargetCmd {
     List,
     /// Bootstrap the target: cross-emerge baselayout → @system → portage.
     Stage1 {
+        /// Target architecture. Required only when the target directory does not yet exist.
+        #[arg(long)]
+        arch: Option<String>,
         #[arg(long)]
         sandbox: Option<String>,
         #[arg(long)]
@@ -291,15 +294,13 @@ async fn main() -> anyhow::Result<()> {
             sb.prepare(mirror)?;
         }
         Commands::Sandbox(SandboxCmd::Crossdev { arch, board, name }) => {
-            let dir = ws.resolve_sandbox(name.as_deref())?;
-            let sb = sandbox::Sandbox::open(dir)?;
             // Load board config for CFLAGS and workarounds, or use a minimal default.
             let board_cfg = if let Some(b) = &board {
                 board::load(&boards_root, b)?
             } else {
                 default_board_config(&arch)
             };
-            sb.setup_crossdev(&arch, &board_cfg)?;
+            ensure_crossdev(&ws, name.as_deref(), &arch, &board_cfg, mirror).await?;
         }
         Commands::Sandbox(SandboxCmd::Enter { name }) => {
             let dir = ws.resolve_sandbox(name.as_deref())?;
@@ -339,19 +340,51 @@ async fn main() -> anyhow::Result<()> {
             });
             target::Target::create(&ws, &name, &arch, &stage_file)?;
             println!("Target '{name}' created.");
+            ensure_crossdev(&ws, None, &arch, &default_board_config(&arch), mirror).await?;
         }
-        Commands::Target(TargetCmd::Stage1 { sandbox, target }) => {
-            let sd = ws.resolve_sandbox(sandbox.as_deref())?;
-            let td = ws.resolve_target(target.as_deref())?;
-            let sb = sandbox::Sandbox::open(sd)?;
+        Commands::Target(TargetCmd::Stage1 { arch, sandbox, target }) => {
+            // Resolve (or create) the target directory.
+            let (td, resolved_arch) = match ws.resolve_target(target.as_deref()) {
+                Ok(td) => {
+                    let a = std::fs::read_to_string(td.join(".arch"))
+                        .map(|s| s.trim().to_string())
+                        .map_err(|_| error::Error::TargetNotFound(td.display().to_string()))?;
+                    (td, a)
+                }
+                Err(_) => {
+                    let a = arch.ok_or_else(|| {
+                        error::Error::TargetNotFound(
+                            "target not found; specify --arch to create one".into(),
+                        )
+                    })?;
+                    let name = target
+                        .as_deref()
+                        .unwrap_or(&format!("{a}-stage1"))
+                        .to_string();
+                    let td = ws.target(&name);
+                    std::fs::create_dir_all(&td)?;
+                    std::fs::write(td.join(".arch"), &a)?;
+                    (td, a)
+                }
+            };
+            let board_cfg = default_board_config(&resolved_arch);
+            let sb =
+                ensure_crossdev(&ws, sandbox.as_deref(), &resolved_arch, &board_cfg, mirror)
+                    .await?;
             let tgt = target::Target::open(td)?;
             tgt.build_stage1(&sb)?;
         }
         Commands::Target(TargetCmd::Update { sandbox, target }) => {
-            let sd = ws.resolve_sandbox(sandbox.as_deref())?;
             let td = ws.resolve_target(target.as_deref())?;
-            let sb = sandbox::Sandbox::open(sd)?;
             let tgt = target::Target::open(td)?;
+            let sb = ensure_crossdev(
+                &ws,
+                sandbox.as_deref(),
+                &tgt.arch.clone(),
+                &default_board_config(&tgt.arch),
+                mirror,
+            )
+            .await?;
             tgt.update(&sb)?;
         }
         Commands::Target(TargetCmd::Install {
@@ -475,10 +508,25 @@ async fn main() -> anyhow::Result<()> {
                 return Ok(());
             }
 
-            let sd = ws.resolve_sandbox(sandbox.as_deref())?;
-            let td = ws.resolve_target(target.as_deref())?;
-            let sb = sandbox::Sandbox::open(sd)?;
-            let tgt = target::Target::open(td)?;
+            // Ensure sandbox exists, is prepared, and has crossdev for this board's arch.
+            let sb =
+                ensure_crossdev(&ws, sandbox.as_deref(), &board_cfg.arch, &board_cfg, mirror)
+                    .await?;
+
+            // Ensure target exists, creating from stage3 if needed.
+            let tgt = match ws.resolve_target(target.as_deref()) {
+                Ok(td) => target::Target::open(td)?,
+                Err(_) => {
+                    let name = target.as_deref().unwrap_or(&board_cfg.arch).to_string();
+                    tracing::info!("Target '{name}' not found, creating from stage3…");
+                    let stage_file =
+                        stage::fetch(&ws.stages_dir(), &board_cfg.arch, mirror).await?;
+                    target::Target::create(&ws, &name, &board_cfg.arch, &stage_file)?
+                }
+            };
+
+            // Ensure the target sysroot is bootstrapped (idempotent via .stage1 marker).
+            tgt.build_stage1(&sb)?;
 
             // Resolve sysroot
             let sr = if !sysroot_name.is_empty() {
@@ -614,6 +662,33 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+/// Ensure the sandbox exists, is prepared, and has crossdev for `arch`.
+/// Auto-creates a sandbox from the host arch stage3 if none is found.
+async fn ensure_crossdev(
+    ws: &Workspace,
+    sandbox_name: Option<&str>,
+    arch: &str,
+    board_cfg: &board::BoardConfig,
+    mirror: Option<&str>,
+) -> Result<sandbox::Sandbox> {
+    let sd = match ws.resolve_sandbox(sandbox_name) {
+        Ok(p) => p,
+        Err(_) => {
+            let host_arch = std::env::consts::ARCH; // "x86_64"
+            tracing::info!("No sandbox found, creating one for {host_arch}…");
+            let stage_file = stage::fetch(&ws.stages_dir(), host_arch, mirror).await?;
+            let name =
+                format!("{host_arch}-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"));
+            sandbox::Sandbox::create(ws, &name, host_arch, &stage_file)?;
+            ws.resolve_sandbox(None)?
+        }
+    };
+    let sb = sandbox::Sandbox::open(sd)?;
+    sb.prepare(mirror)?;
+    sb.setup_crossdev(arch, board_cfg)?;
+    Ok(sb)
 }
 
 /// Build a minimal `BoardConfig` when no board is specified for crossdev setup.

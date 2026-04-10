@@ -2,8 +2,9 @@ use std::path::{Path, PathBuf};
 
 use crate::container::unpack_tarball;
 use crate::error::{Error, Result};
-use crate::portage::Portage;
+use crate::portage::{MakeConf, Portage};
 use crate::sandbox::Sandbox;
+use crate::stage::default_cflags;
 use crate::workspace::Workspace;
 
 /// A Gentoo target sysroot: a cross-compiled base system for the target arch.
@@ -46,7 +47,13 @@ impl Target {
             return Ok(());
         }
         let chost = format!("{}-unknown-linux-gnu", self.arch);
+
+        // Write target portage config and copy profile before first emerge.
+        tracing::info!("Preparing target portage configuration…");
+        self.prepare_portage(sandbox, &chost)?;
+
         let runner = sandbox.runner().with_target(&self.dir);
+        tracing::info!("Logs at: {}", runner.log_dir().display());
         let portage = Portage::new(&runner);
 
         tracing::info!("Cross-emerging baselayout…");
@@ -81,16 +88,19 @@ impl Target {
         let runner = sandbox.runner().with_target(&self.dir);
         let portage = Portage::new(&runner);
 
-        tracing::info!("Updating target: gcc, binutils-libs, system…");
-        portage.cross_emerge(&chost, &["sys-devel/gcc"])?;
-        portage.cross_emerge(&chost, &["sys-libs/binutils-libs"])?;
-        portage.cross_emerge(&chost, &["-u", "system"])?;
+        // Update the cross-toolchain in the crossdev sysroot first (no ROOT=/target).
+        tracing::info!("Updating crossdev sysroot: gcc, binutils-libs, @system…");
+        portage.cross_emerge_sysroot(&chost, &["sys-devel/gcc"])?;
+        portage.cross_emerge_sysroot(&chost, &["sys-libs/binutils-libs"])?;
+        portage.cross_emerge_sysroot(&chost, &["-u", "system"])?;
 
-        tracing::info!("Rebuilding @world…");
+        // Rebuild @world in the target.
+        tracing::info!("Rebuilding @world in target…");
         runner.run(&format!(
             "KERNEL_DIR=/usr/src/linux ROOT=/target {chost}-emerge -b -k -e @world"
         ))?;
 
+        self.update_ldconfig(sandbox)?;
         std::fs::write(self.dir.join(".updated"), chrono::Utc::now().to_rfc3339())?;
         Ok(())
     }
@@ -108,6 +118,52 @@ impl Target {
         tracing::info!("Updating ldconfig in target…");
         let runner = sandbox.runner().with_target(&self.dir);
         runner.run("ldconfig -v -r /target")
+    }
+
+    /// Write target portage make.conf and copy the profile link from the
+    /// crossdev sysroot in the sandbox — mirrors `prepare_target_portage` in
+    /// the bash script.
+    fn prepare_portage(&self, sandbox: &Sandbox, chost: &str) -> Result<()> {
+        let portage_dir = self.dir.join("etc/portage");
+        std::fs::create_dir_all(&portage_dir)?;
+
+        MakeConf {
+            arch: &self.arch,
+            chost: Some(chost),
+            cflags: Some(default_cflags(&self.arch)),
+            mirror: None,
+        }
+        .write(&portage_dir)?;
+
+        // Copy the profile directory and make.profile symlink from the
+        // crossdev sysroot so the target uses the correct Gentoo profile.
+        let src_portage = sandbox.dir.join(format!("usr/{chost}/etc/portage"));
+
+        let src_profile_dir = src_portage.join("profile");
+        if src_profile_dir.is_dir() {
+            let dst = portage_dir.join("profile");
+            let status = std::process::Command::new("cp")
+                .args(["-a", src_profile_dir.to_str().unwrap(), dst.to_str().unwrap()])
+                .status()?;
+            if !status.success() {
+                return Err(Error::CommandFailed {
+                    code: status.code().unwrap_or(-1),
+                    reason: format!("cp -a {} failed", src_profile_dir.display()),
+                });
+            }
+        }
+
+        let src_link = src_portage.join("make.profile");
+        if src_link.is_symlink() {
+            let link_target = std::fs::read_link(&src_link)?;
+            let dst_link = portage_dir.join("make.profile");
+            if dst_link.exists() || dst_link.is_symlink() {
+                std::fs::remove_file(&dst_link)?;
+            }
+            std::os::unix::fs::symlink(&link_target, &dst_link)?;
+        }
+
+        Ok(())
     }
 }
 
