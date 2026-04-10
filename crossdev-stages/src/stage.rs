@@ -92,8 +92,15 @@ pub async fn fetch(stages_dir: &Path, arch: &str, mirror: Option<&str>) -> Resul
     let gentoo_arch = parse_arch(arch)?;
     let cache = Cache::Path(stages_dir.to_path_buf());
     let client = match mirror {
-        Some(m) => Client::builder().arch(gentoo_arch).cache_dir(cache).mirror_url(m).build()?,
-        None => Client::builder().arch(gentoo_arch).cache_dir(cache).build()?,
+        Some(m) => Client::builder()
+            .arch(gentoo_arch)
+            .cache_dir(cache)
+            .mirror_url(m)
+            .build()?,
+        None => Client::builder()
+            .arch(gentoo_arch)
+            .cache_dir(cache)
+            .build()?,
     };
     let stage = client.get(stage_variant(arch)).await?;
     Ok(stage.file_path())
@@ -104,12 +111,25 @@ pub async fn list(stages_dir: &Path, arch: &str, mirror: Option<&str>) -> Result
     let gentoo_arch = parse_arch(arch)?;
     let cache = Cache::Path(stages_dir.to_path_buf());
     let client = match mirror {
-        Some(m) => Client::builder().arch(gentoo_arch).cache_dir(cache).mirror_url(m).build()?,
-        None => Client::builder().arch(gentoo_arch).cache_dir(cache).build()?,
+        Some(m) => Client::builder()
+            .arch(gentoo_arch)
+            .cache_dir(cache)
+            .mirror_url(m)
+            .build()?,
+        None => Client::builder()
+            .arch(gentoo_arch)
+            .cache_dir(cache)
+            .build()?,
     };
     let stages = client.list().await?;
     Ok(stages
         .into_iter()
-        .map(|s| format!("{} [{}]", s.variant, if s.is_cached() { "cached" } else { "remote" }))
+        .map(|s| {
+            format!(
+                "{} [{}]",
+                s.variant,
+                if s.is_cached() { "cached" } else { "remote" }
+            )
+        })
         .collect())
 }

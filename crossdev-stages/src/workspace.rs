@@ -154,5 +154,7 @@ fn list_dirs_by_mtime(dir: &Path) -> Result<Vec<PathBuf>> {
 
 /// Read the `.arch` marker file from a sandbox/target directory.
 pub fn read_arch(dir: &Path) -> Option<String> {
-    std::fs::read_to_string(dir.join(".arch")).ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string(dir.join(".arch"))
+        .ok()
+        .map(|s| s.trim().to_string())
 }
