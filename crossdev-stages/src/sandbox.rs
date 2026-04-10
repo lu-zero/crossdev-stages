@@ -34,7 +34,10 @@ impl Sandbox {
         unpack_tarball(stage_file, &dir, ws.base())?;
         std::fs::write(dir.join(".arch"), arch)?;
         tracing::info!("Sandbox {} created.", name);
-        Ok(Self { dir, arch: arch.to_string() })
+        Ok(Self {
+            dir,
+            arch: arch.to_string(),
+        })
     }
 
     /// Configure portage and install host build dependencies.
@@ -98,18 +101,16 @@ impl Sandbox {
         runner.run("emerge -b -k sys-devel/gcc:16")?;
 
         // Query the installed gcc-16 version and make it the default.
-        let gcc_ver = runner.run_output(
-            "qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'",
-        )?;
+        let gcc_ver =
+            runner.run_output("qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'")?;
         if gcc_ver.is_empty() {
             return Err(Error::CommandFailed {
                 code: 1,
                 reason: "Could not determine gcc-16 version".into(),
             });
         }
-        let gcc_profile = runner.run_output(
-            "gcc-config -l | grep '16' | head -n1 | awk '{print $2}'",
-        )?;
+        let gcc_profile =
+            runner.run_output("gcc-config -l | grep '16' | head -n1 | awk '{print $2}'")?;
         runner.run(&format!("gcc-config {gcc_profile}"))?;
         runner.run("source /etc/profile && env-update")?;
 
@@ -174,16 +175,14 @@ impl Sandbox {
         // Install gcc-16 on host
         tracing::info!("Emerging gcc:16 (host)...");
         runner.run("emerge -b -k sys-devel/gcc:16")?;
-        let gcc_profile = runner.run_output(
-            "gcc-config -l | grep '16' | head -n1 | awk '{print $2}'",
-        )?;
+        let gcc_profile =
+            runner.run_output("gcc-config -l | grep '16' | head -n1 | awk '{print $2}'")?;
         runner.run(&format!("gcc-config {gcc_profile}"))?;
         runner.run("source /etc/profile && env-update")?;
 
         // Install crossdev cross-compiler
-        let gcc_ver = runner.run_output(
-            "qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'",
-        )?;
+        let gcc_ver =
+            runner.run_output("qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'")?;
         if gcc_ver.is_empty() {
             return Err(Error::CommandFailed {
                 code: 1,
@@ -238,7 +237,12 @@ impl Sandbox {
         }
         .write(portage_dir)?;
 
-        for sub in ["env", "package.env", "package.use", "package.accept_keywords"] {
+        for sub in [
+            "env",
+            "package.env",
+            "package.use",
+            "package.accept_keywords",
+        ] {
             std::fs::create_dir_all(portage_dir.join(sub))?;
         }
 
@@ -249,7 +253,10 @@ impl Sandbox {
         )?;
 
         // package.env
-        std::fs::write(portage_dir.join("package.env/rust"), "dev-lang/rust plain.conf\n")?;
+        std::fs::write(
+            portage_dir.join("package.env/rust"),
+            "dev-lang/rust plain.conf\n",
+        )?;
 
         // package.use
         std::fs::write(
@@ -258,7 +265,10 @@ impl Sandbox {
              >=sys-libs/libxcrypt-4.4.36-r3 static-libs\n\
              >=sys-apps/busybox-1.36.1-r3 -pam static\n",
         )?;
-        std::fs::write(portage_dir.join("package.use/clang"), "llvm-core/clang -extra\n")?;
+        std::fs::write(
+            portage_dir.join("package.use/clang"),
+            "llvm-core/clang -extra\n",
+        )?;
         std::fs::write(
             portage_dir.join("package.use/rust"),
             "dev-lang/rust rustfmt -system-llvm\n",
@@ -272,7 +282,11 @@ impl Sandbox {
         )?;
 
         // Per-package CFLAGS workarounds from board.conf
-        for (pkg, flags) in board.workaround_pkgs.iter().zip(board.workaround_cflags.iter()) {
+        for (pkg, flags) in board
+            .workaround_pkgs
+            .iter()
+            .zip(board.workaround_cflags.iter())
+        {
             let safe_name = pkg.replace('/', "_");
             std::fs::write(
                 portage_dir.join(format!("env/{safe_name}.conf")),
@@ -294,15 +308,18 @@ pub fn list(ws: &Workspace) -> Result<Vec<SandboxInfo>> {
     Ok(dirs
         .into_iter()
         .map(|dir| {
-            let arch = crate::workspace::read_arch(&dir)
-                .unwrap_or_else(|| "unknown".into());
+            let arch = crate::workspace::read_arch(&dir).unwrap_or_else(|| "unknown".into());
             let prepared = dir.join(".prepared").exists();
             let name = dir
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
-            SandboxInfo { name, arch, prepared }
+            SandboxInfo {
+                name,
+                arch,
+                prepared,
+            }
         })
         .collect())
 }
@@ -312,4 +329,3 @@ pub struct SandboxInfo {
     pub arch: String,
     pub prepared: bool,
 }
-

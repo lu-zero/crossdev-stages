@@ -39,10 +39,7 @@ impl SandboxRunner {
     /// Set the sysroot to be bind-mounted at `/usr/$chost`.
     /// All subsequent run calls will include this mount.
     pub fn with_sysroot(mut self, sysroot_dir: &Path, chost: &str) -> Self {
-        self.sysroot = Some((
-            sysroot_dir.to_path_buf(),
-            format!("/usr/{chost}"),
-        ));
+        self.sysroot = Some((sysroot_dir.to_path_buf(), format!("/usr/{chost}")));
         self
     }
 
@@ -68,10 +65,7 @@ impl SandboxRunner {
                 "TERM",
                 &std::env::var("TERM").unwrap_or_else(|_| "xterm".into()),
             )
-            .env(
-                "COLORTERM",
-                &std::env::var("COLORTERM").unwrap_or_default(),
-            )
+            .env("COLORTERM", &std::env::var("COLORTERM").unwrap_or_default())
             .env("NO_COLOR", &std::env::var("NO_COLOR").unwrap_or_default());
         check_status(command.status()?)
     }
@@ -107,10 +101,7 @@ impl SandboxRunner {
                 "TERM",
                 &std::env::var("TERM").unwrap_or_else(|_| "xterm".into()),
             )
-            .env(
-                "COLORTERM",
-                &std::env::var("COLORTERM").unwrap_or_default(),
-            );
+            .env("COLORTERM", &std::env::var("COLORTERM").unwrap_or_default());
         check_status(command.status()?)
     }
 
@@ -129,8 +120,7 @@ impl SandboxRunner {
             .devfsmount("/dev")
             .bindmount_ro("/etc/resolv.conf", "/etc/resolv.conf")
             .tmpfsmount("/tmp")
-            .tmpfsmount("/dev/shm")
-            ;
+            .tmpfsmount("/dev/shm");
         // Map caller → root, plus subordinate IDs for portage user etc.
         let maps = uid_gid_maps();
         c.uidmaps(&maps);
@@ -158,11 +148,10 @@ fn uid_gid_maps() -> Vec<(u32, u32, u32)> {
     let my_id = unsafe { libc::getuid() } as u32;
     // Read subordinate ID range from /etc/subuid (first entry for current user)
     let username = std::env::var("USER").unwrap_or_else(|_| "nobody".into());
-    let (sub_start, sub_count) = read_subid(&username, "/etc/subuid")
-        .unwrap_or((100000, 65536));
+    let (sub_start, sub_count) = read_subid(&username, "/etc/subuid").unwrap_or((100000, 65536));
     vec![
-        (0, my_id, 1),              // container root → caller
-        (1, sub_start, sub_count),   // container 1..N → subordinate range
+        (0, my_id, 1),             // container root → caller
+        (1, sub_start, sub_count), // container 1..N → subordinate range
     ]
 }
 

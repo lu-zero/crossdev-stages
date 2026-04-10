@@ -158,11 +158,7 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
     portage.webrsync()?;
     let _ = portage.getuto();
 
-    let bin_packages = [
-        "app-arch/zstd",
-        "app-arch/bzip2",
-        "app-arch/xz-utils",
-    ];
+    let bin_packages = ["app-arch/zstd", "app-arch/bzip2", "app-arch/xz-utils"];
     tracing::info!("Installing binary packages…");
     portage.emerge_binary(&bin_packages)?;
 

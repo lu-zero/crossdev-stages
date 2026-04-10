@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 hakoniwa      = "1.4"
 gentoo-stages = "0.4"
-clap         = { version = "4", features = ["derive"] }
+clap         = { version = "4", features = ["derive", "color"] }
 tokio        = { version = "1", features = ["full"] }
 anyhow       = "1"
 thiserror    = "2"

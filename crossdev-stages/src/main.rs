@@ -19,7 +19,10 @@ use workspace::Workspace;
 // ── Top-level CLI ────────────────────────────────────────────────────────────
 
 #[derive(Parser)]
-#[command(name = "crossdev-stages", about = "Gentoo-based cross-compilation stage builder")]
+#[command(
+    name = "crossdev-stages",
+    about = "Gentoo-based cross-compilation stage builder"
+)]
 struct Cli {
     /// Path to the project root (where boards/ lives). Defaults to the current directory.
     #[arg(long, global = true, default_value = ".")]
@@ -117,9 +120,7 @@ enum SandboxCmd {
         cmd: Vec<String>,
     },
     /// Remove a sandbox.
-    Destroy {
-        name: String,
-    },
+    Destroy { name: String },
 }
 
 // ── Target subcommands ───────────────────────────────────────────────────────
@@ -165,9 +166,7 @@ enum TargetCmd {
         target: Option<String>,
     },
     /// Remove a target.
-    Destroy {
-        name: String,
-    },
+    Destroy { name: String },
 }
 
 // ── Sysroot subcommands ─────────────────────────────────────────────────────
@@ -186,9 +185,7 @@ enum SysrootCmd {
         sandbox: Option<String>,
     },
     /// Remove a sysroot.
-    Destroy {
-        name: String,
-    },
+    Destroy { name: String },
 }
 
 // ── Image subcommands ────────────────────────────────────────────────────────
@@ -232,11 +229,12 @@ enum StagesCmd {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let cli = Cli::parse();
+
     tracing_subscriber::fmt()
         .with_env_filter("crossdev_stages=info")
         .init();
 
-    let cli = Cli::parse();
     let ws = Workspace::open()?;
     ws.ensure_dirs()?;
 
@@ -267,10 +265,7 @@ async fn main() -> anyhow::Result<()> {
         Commands::Sandbox(SandboxCmd::Setup { arch, name }) => {
             let stage_file = stage::fetch(&ws.stages_dir(), &arch, mirror).await?;
             let name = name.unwrap_or_else(|| {
-                format!(
-                    "{arch}-{}",
-                    chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
-                )
+                format!("{arch}-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"))
             });
             sandbox::Sandbox::create(&ws, &name, &arch, &stage_file)?;
             println!("Sandbox '{name}' created.");
@@ -316,7 +311,10 @@ async fn main() -> anyhow::Result<()> {
             for t in target::list(&ws)? {
                 let s1 = if t.stage1 { "stage1" } else { "unpacked" };
                 let upd = t.updated.as_deref().unwrap_or("-");
-                println!("{:<20} arch={} state={} updated={}", t.name, t.arch, s1, upd);
+                println!(
+                    "{:<20} arch={} state={} updated={}",
+                    t.name, t.arch, s1, upd
+                );
             }
         }
         Commands::Target(TargetCmd::Setup { arch, name }) => {
@@ -341,7 +339,11 @@ async fn main() -> anyhow::Result<()> {
             let tgt = target::Target::open(td)?;
             tgt.update(&sb)?;
         }
-        Commands::Target(TargetCmd::Install { sandbox, target, packages }) => {
+        Commands::Target(TargetCmd::Install {
+            sandbox,
+            target,
+            packages,
+        }) => {
             let sd = ws.resolve_sandbox(sandbox.as_deref())?;
             let td = ws.resolve_target(target.as_deref())?;
             let sb = sandbox::Sandbox::open(sd)?;
@@ -372,7 +374,11 @@ async fn main() -> anyhow::Result<()> {
                 println!("{:<25} {:<10} {}", s.name, s.arch, s.cflags);
             }
         }
-        Commands::Sysroot(SysrootCmd::Create { name, board: board_name, sandbox }) => {
+        Commands::Sysroot(SysrootCmd::Create {
+            name,
+            board: board_name,
+            sandbox,
+        }) => {
             let sd = ws.resolve_sandbox(sandbox.as_deref())?;
             let sb = sandbox::Sandbox::open(sd)?;
             let board_cfg = board::load(&boards_root, &board_name)?;
@@ -392,21 +398,40 @@ async fn main() -> anyhow::Result<()> {
                 println!("{b}{tag}");
             }
         }
-        Commands::Image(ImageCmd::Build { board: board_name, sandbox, target, steps }) => {
+        Commands::Image(ImageCmd::Build {
+            board: board_name,
+            sandbox,
+            target,
+            steps,
+        }) => {
             let board_cfg = board::load(&boards_root, &board_name)?;
 
             // Sysroot override: CLI flag > env > board.conf
-            let sysroot_name = cli.sysroot_override
+            let sysroot_name = cli
+                .sysroot_override
                 .or_else(|| std::env::var("CROSSDEV_SYSROOT").ok())
                 .unwrap_or_else(|| board_cfg.sysroot.clone());
 
             let default_steps: Vec<String> = if board_cfg.build_steps.is_empty() {
-                ["deps", "checkout", "bootloader", "kernel", "assemble", "pack"]
-                    .iter().map(|s| s.to_string()).collect()
+                [
+                    "deps",
+                    "checkout",
+                    "bootloader",
+                    "kernel",
+                    "assemble",
+                    "pack",
+                ]
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
             } else {
                 board_cfg.build_steps.clone()
             };
-            let steps_to_show = if steps.is_empty() { &default_steps } else { &steps };
+            let steps_to_show = if steps.is_empty() {
+                &default_steps
+            } else {
+                &steps
+            };
 
             if cli.dry_run {
                 let tag = if board_cfg.testing { " [TESTING]" } else { "" };
@@ -419,8 +444,19 @@ async fn main() -> anyhow::Result<()> {
                 if let Some(rustflags) = &board_cfg.rustflags {
                     println!("RUSTFLAGS:  {rustflags}");
                 }
-                println!("Sysroot:    {} ({})", sysroot_name, ws.sysroot(&sysroot_name).display());
-                println!("Steps:      {}", steps_to_show.iter().map(String::as_str).collect::<Vec<_>>().join(" "));
+                println!(
+                    "Sysroot:    {} ({})",
+                    sysroot_name,
+                    ws.sysroot(&sysroot_name).display()
+                );
+                println!(
+                    "Steps:      {}",
+                    steps_to_show
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                );
                 return Ok(());
             }
 
@@ -436,8 +472,20 @@ async fn main() -> anyhow::Result<()> {
                 None
             };
 
-            let steps_opt = if steps.is_empty() { None } else { Some(steps.as_slice()) };
-            image::build(&ws, &sb, &tgt, &board_cfg, &boards_root, sr.as_ref(), steps_opt)?;
+            let steps_opt = if steps.is_empty() {
+                None
+            } else {
+                Some(steps.as_slice())
+            };
+            image::build(
+                &ws,
+                &sb,
+                &tgt,
+                &board_cfg,
+                &boards_root,
+                sr.as_ref(),
+                steps_opt,
+            )?;
         }
         Commands::Image(ImageCmd::Prune) => {
             let builds = ws.list_builds()?;
@@ -494,25 +542,41 @@ async fn main() -> anyhow::Result<()> {
             // 3. Old stage3 tarballs (keep latest per arch, remove rest)
             let stages_dir = ws.stages_dir();
             if stages_dir.is_dir() {
-                let mut by_arch: std::collections::HashMap<String, Vec<(PathBuf, std::time::SystemTime)>> =
-                    std::collections::HashMap::new();
+                let mut by_arch: std::collections::HashMap<
+                    String,
+                    Vec<(PathBuf, std::time::SystemTime)>,
+                > = std::collections::HashMap::new();
                 for entry in std::fs::read_dir(&stages_dir)? {
                     let entry = entry?;
                     let path = entry.path();
-                    if !path.is_file() { continue; }
-                    let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+                    if !path.is_file() {
+                        continue;
+                    }
+                    let fname = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_string();
                     // stage3-riscv64-... → arch = riscv64
-                    let arch = fname.strip_prefix("stage3-")
+                    let arch = fname
+                        .strip_prefix("stage3-")
                         .and_then(|s| s.split('-').next())
                         .unwrap_or("unknown")
                         .to_string();
-                    let mtime = entry.metadata().ok().and_then(|m| m.modified().ok())
+                    let mtime = entry
+                        .metadata()
+                        .ok()
+                        .and_then(|m| m.modified().ok())
                         .unwrap_or(std::time::UNIX_EPOCH);
                     by_arch.entry(arch).or_default().push((path, mtime));
                 }
                 for (_arch, mut files) in by_arch {
                     files.sort_by(|a, b| b.1.cmp(&a.1)); // newest first
-                    let to_remove = if all { &files[..] } else { files.get(1..).unwrap_or(&[]) };
+                    let to_remove = if all {
+                        &files[..]
+                    } else {
+                        files.get(1..).unwrap_or(&[])
+                    };
                     for (path, _) in to_remove {
                         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
                         if cli.dry_run {

@@ -32,7 +32,10 @@ impl Target {
         unpack_tarball(stage_file, &dir, ws.base())?;
         std::fs::write(dir.join(".arch"), arch)?;
         tracing::info!("Target {} created.", name);
-        Ok(Self { dir, arch: arch.to_string() })
+        Ok(Self {
+            dir,
+            arch: arch.to_string(),
+        })
     }
 
     /// Bootstrap the target: cross-emerge baselayout → packages.build → portage.
@@ -52,7 +55,7 @@ impl Target {
         tracing::info!("Cross-emerging packages.build…");
         let packages = runner.run_output(
             "grep -v '^#' /var/db/repos/gentoo/profiles/default/linux/packages.build \
-             | grep -v '^[[:space:]]*$' | tr '\\n' ' '"
+             | grep -v '^[[:space:]]*$' | tr '\\n' ' '",
         )?;
         if packages.is_empty() {
             return Err(crate::error::Error::CommandFailed {
@@ -124,7 +127,12 @@ pub fn list(ws: &Workspace) -> Result<Vec<TargetInfo>> {
                 .and_then(|n| n.to_str())
                 .unwrap_or("")
                 .to_string();
-            TargetInfo { name, arch, stage1, updated }
+            TargetInfo {
+                name,
+                arch,
+                stage1,
+                updated,
+            }
         })
         .collect())
 }
