@@ -28,7 +28,7 @@ impl<'a> MakeConf<'a> {
 EMERGE_DEFAULT_OPTS="--jobs={jobs} --load-average {load}"
 FEATURES="parallel-install -merge-wait"
 ACCEPT_KEYWORDS="~{garch}"
-PORT_LOGDIR="/var/log/portage"
+PORT_LOGDIR="/var/log/portage/{garch}"
 "#
         );
 
@@ -133,21 +133,23 @@ impl<'a> Portage<'a> {
     /// Uses `{chost}-emerge` which crossdev installs.
     pub fn cross_emerge(&self, chost: &str, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
-        self.runner.run(&format!(
-            "ROOT=/target {chost}-emerge -b -k {pkgs}",
-            chost = chost,
-            pkgs = pkgs,
-        ))
+        self.runner
+            .run(&format!("ROOT=/target {chost}-emerge -b -k {pkgs}"))
     }
 
     /// Cross-emerge with `USE=build` for bootstrapping (baselayout, portage).
     pub fn cross_emerge_build(&self, chost: &str, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
-        self.runner.run(&format!(
-            "USE=build ROOT=/target {chost}-emerge -b -k {pkgs}",
-            chost = chost,
-            pkgs = pkgs,
-        ))
+        self.runner
+            .run(&format!("USE=build ROOT=/target {chost}-emerge -b -k {pkgs}"))
+    }
+
+    /// Run `{chost}-emerge` without overriding ROOT, so packages install into
+    /// the crossdev sysroot (`/usr/{chost}`) rather than `/target`.
+    /// Used for updating the cross-toolchain itself (gcc, binutils-libs, @system).
+    pub fn cross_emerge_sysroot(&self, chost: &str, packages: &[&str]) -> Result<()> {
+        let pkgs = packages.join(" ");
+        self.runner.run(&format!("{chost}-emerge -b -k {pkgs}"))
     }
 }
 

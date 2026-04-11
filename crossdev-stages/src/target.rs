@@ -88,16 +88,19 @@ impl Target {
         let runner = sandbox.runner().with_target(&self.dir);
         let portage = Portage::new(&runner);
 
-        tracing::info!("Updating target: gcc, binutils-libs, system…");
-        portage.cross_emerge(&chost, &["sys-devel/gcc"])?;
-        portage.cross_emerge(&chost, &["sys-libs/binutils-libs"])?;
-        portage.cross_emerge(&chost, &["-u", "system"])?;
+        // Update the cross-toolchain in the crossdev sysroot first (no ROOT=/target).
+        tracing::info!("Updating crossdev sysroot: gcc, binutils-libs, @system…");
+        portage.cross_emerge_sysroot(&chost, &["sys-devel/gcc"])?;
+        portage.cross_emerge_sysroot(&chost, &["sys-libs/binutils-libs"])?;
+        portage.cross_emerge_sysroot(&chost, &["-u", "system"])?;
 
-        tracing::info!("Rebuilding @world…");
+        // Rebuild @world in the target.
+        tracing::info!("Rebuilding @world in target…");
         runner.run(&format!(
             "KERNEL_DIR=/usr/src/linux ROOT=/target {chost}-emerge -b -k -e @world"
         ))?;
 
+        self.update_ldconfig(sandbox)?;
         std::fs::write(self.dir.join(".updated"), chrono::Utc::now().to_rfc3339())?;
         Ok(())
     }
