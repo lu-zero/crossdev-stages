@@ -67,7 +67,7 @@ impl SandboxRunner {
             )
             .env("COLORTERM", &std::env::var("COLORTERM").unwrap_or_default())
             .env("NO_COLOR", &std::env::var("NO_COLOR").unwrap_or_default());
-        check_status(command.status()?)
+        check_status(command.status()?).map_err(|e| annotate_cmd(e, cmd))
     }
 
     /// Run a shell command and capture its trimmed stdout.
@@ -84,7 +84,7 @@ impl SandboxRunner {
         if !output.status.success() {
             return Err(crate::error::Error::CommandFailed {
                 code: output.status.code,
-                reason: output.status.reason,
+                reason: format!("{cmd}: {}", output.status.reason),
             });
         }
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -231,5 +231,18 @@ pub fn unpack_tarball(stage_file: &Path, dest_dir: &Path, cache_base: &Path) -> 
 
     let mut command = container.command("/bin/sh");
     command.arg("-c").arg(&cmd);
-    check_status(command.status()?)
+    check_status(command.status()?).map_err(|e| annotate_cmd(e, &cmd))
+}
+
+/// Prefix a failed-command error with the command string for diagnostics.
+fn annotate_cmd(e: crate::error::Error, cmd: &str) -> crate::error::Error {
+    match e {
+        crate::error::Error::CommandFailed { code, reason } => {
+            crate::error::Error::CommandFailed {
+                code,
+                reason: format!("{cmd}: {reason}"),
+            }
+        }
+        other => other,
+    }
 }
