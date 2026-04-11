@@ -106,6 +106,10 @@ impl SandboxRunner {
     }
 
     fn build_container(&self) -> Container {
+        // Ensure the log directory exists on the host so the bind mount succeeds.
+        let log_dir = self.sandbox_dir.join("var/log");
+        let _ = std::fs::create_dir_all(&log_dir);
+
         let mut c = Container::new();
         // Container::new() already unshares Mount, User, Pid.
         // Add the remaining namespaces to match --unshare-all.
@@ -120,7 +124,10 @@ impl SandboxRunner {
             .devfsmount("/dev")
             .bindmount_ro("/etc/resolv.conf", "/etc/resolv.conf")
             .tmpfsmount("/tmp")
-            .tmpfsmount("/dev/shm");
+            .tmpfsmount("/dev/shm")
+            // Explicit bind mount so portage logs are always reachable at
+            // <sandbox_dir>/var/log/ from the host.
+            .bindmount_rw(log_dir.to_str().unwrap_or_default(), "/var/log");
         // Map caller → root, plus subordinate IDs for portage user etc.
         c.uidmaps(&uid_maps());
         c.gidmaps(&gid_maps());
