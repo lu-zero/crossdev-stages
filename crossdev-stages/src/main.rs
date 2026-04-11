@@ -164,12 +164,16 @@ enum TargetCmd {
     /// Update the target (@world rebuild).
     Update {
         #[arg(long)]
+        arch: Option<String>,
+        #[arg(long)]
         sandbox: Option<String>,
         #[arg(long)]
         target: Option<String>,
     },
     /// Cross-emerge packages into the target.
     Install {
+        #[arg(long)]
+        arch: Option<String>,
         #[arg(long)]
         sandbox: Option<String>,
         #[arg(long)]
@@ -178,6 +182,8 @@ enum TargetCmd {
     },
     /// Update ldconfig cache in the target.
     Ldconfig {
+        #[arg(long)]
+        arch: Option<String>,
         #[arg(long)]
         sandbox: Option<String>,
         #[arg(long)]
@@ -374,36 +380,52 @@ async fn main() -> anyhow::Result<()> {
             let tgt = target::Target::open(td)?;
             tgt.build_stage1(&sb)?;
         }
-        Commands::Target(TargetCmd::Update { sandbox, target }) => {
+        Commands::Target(TargetCmd::Update { arch, sandbox, target }) => {
             let td = ws.resolve_target(target.as_deref())?;
             let tgt = target::Target::open(td)?;
+            let resolved_arch = arch.unwrap_or_else(|| tgt.arch.clone());
             let sb = ensure_crossdev(
                 &ws,
                 sandbox.as_deref(),
-                &tgt.arch.clone(),
-                &default_board_config(&tgt.arch),
+                &resolved_arch,
+                &default_board_config(&resolved_arch),
                 mirror,
             )
             .await?;
             tgt.update(&sb)?;
         }
         Commands::Target(TargetCmd::Install {
+            arch,
             sandbox,
             target,
             packages,
         }) => {
-            let sd = ws.resolve_sandbox(sandbox.as_deref())?;
             let td = ws.resolve_target(target.as_deref())?;
-            let sb = sandbox::Sandbox::open(sd)?;
             let tgt = target::Target::open(td)?;
+            let resolved_arch = arch.unwrap_or_else(|| tgt.arch.clone());
+            let sb = ensure_crossdev(
+                &ws,
+                sandbox.as_deref(),
+                &resolved_arch,
+                &default_board_config(&resolved_arch),
+                mirror,
+            )
+            .await?;
             let pkgs: Vec<&str> = packages.iter().map(String::as_str).collect();
             tgt.install(&sb, &pkgs)?;
         }
-        Commands::Target(TargetCmd::Ldconfig { sandbox, target }) => {
-            let sd = ws.resolve_sandbox(sandbox.as_deref())?;
+        Commands::Target(TargetCmd::Ldconfig { arch, sandbox, target }) => {
             let td = ws.resolve_target(target.as_deref())?;
-            let sb = sandbox::Sandbox::open(sd)?;
             let tgt = target::Target::open(td)?;
+            let resolved_arch = arch.unwrap_or_else(|| tgt.arch.clone());
+            let sb = ensure_crossdev(
+                &ws,
+                sandbox.as_deref(),
+                &resolved_arch,
+                &default_board_config(&resolved_arch),
+                mirror,
+            )
+            .await?;
             tgt.update_ldconfig(&sb)?;
         }
         Commands::Target(TargetCmd::Destroy { name }) => {
