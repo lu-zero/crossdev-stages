@@ -28,6 +28,7 @@ impl<'a> MakeConf<'a> {
 EMERGE_DEFAULT_OPTS="--jobs={jobs} --load-average {load}"
 FEATURES="parallel-install -merge-wait"
 ACCEPT_KEYWORDS="~{garch}"
+PORT_LOGDIR="/var/log/portage"
 "#
         );
 
