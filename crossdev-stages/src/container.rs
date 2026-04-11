@@ -122,9 +122,8 @@ impl SandboxRunner {
             .tmpfsmount("/tmp")
             .tmpfsmount("/dev/shm");
         // Map caller → root, plus subordinate IDs for portage user etc.
-        let maps = uid_gid_maps();
-        c.uidmaps(&maps);
-        c.gidmaps(&maps);
+        c.uidmaps(&uid_maps());
+        c.gidmaps(&gid_maps());
 
         for (host, cpath) in &self.extra_rw {
             c.bindmount_rw(host.to_str().unwrap_or_default(), cpath);
@@ -142,24 +141,33 @@ impl SandboxRunner {
     }
 }
 
-/// Build UID/GID maps: caller → root + subordinate range for other UIDs.
-/// Equivalent to hakoniwa CLI's `--userns=auto`.
-fn uid_gid_maps() -> Vec<(u32, u32, u32)> {
+/// Build UID maps: caller → root + subordinate range. Mirrors hakoniwa CLI `--userns=auto`.
+fn uid_maps() -> Vec<(u32, u32, u32)> {
     let my_id = unsafe { libc::getuid() } as u32;
-    // Read subordinate ID range from /etc/subuid (first entry for current user)
-    let username = std::env::var("USER").unwrap_or_else(|_| "nobody".into());
-    let (sub_start, sub_count) = read_subid(&username, "/etc/subuid").unwrap_or((100000, 65536));
-    vec![
-        (0, my_id, 1),             // container root → caller
-        (1, sub_start, sub_count), // container 1..N → subordinate range
-    ]
+    idmaps_for(my_id, "/etc/subuid")
 }
 
-fn read_subid(user: &str, path: &str) -> Option<(u32, u32)> {
+/// Build GID maps: caller → root + subordinate range. Mirrors hakoniwa CLI `--userns=auto`.
+fn gid_maps() -> Vec<(u32, u32, u32)> {
+    let my_id = unsafe { libc::getgid() } as u32;
+    idmaps_for(my_id, "/etc/subgid")
+}
+
+fn idmaps_for(id: u32, subid_file: &str) -> Vec<(u32, u32, u32)> {
+    let username = std::env::var("USER").unwrap_or_else(|_| id.to_string());
+    let mut maps = vec![(0, id, 1)]; // container root → caller
+    if let Some((sub_start, sub_count)) = read_subid(&username, id, subid_file) {
+        maps.push((1, sub_start, sub_count));
+    }
+    maps
+}
+
+fn read_subid(user: &str, id: u32, path: &str) -> Option<(u32, u32)> {
+    let id_str = id.to_string();
     let content = std::fs::read_to_string(path).ok()?;
     for line in content.lines() {
         let parts: Vec<&str> = line.split(':').collect();
-        if parts.len() >= 3 && parts[0] == user {
+        if parts.len() >= 3 && (parts[0] == user || parts[0] == id_str) {
             let start: u32 = parts[1].parse().ok()?;
             let count: u32 = parts[2].parse().ok()?;
             return Some((start, count));
@@ -207,9 +215,8 @@ pub fn unpack_tarball(stage_file: &Path, dest_dir: &Path, cache_base: &Path) -> 
         .tmpfsmount("/dev/shm")
         .bindmount_rw(cache_str, "/cache")
         .runctl(Runctl::AllowNewPrivs);
-    let maps = uid_gid_maps();
-    container.uidmaps(&maps);
-    container.gidmaps(&maps);
+    container.uidmaps(&uid_maps());
+    container.gidmaps(&gid_maps());
 
     let cmd = format!(
         "mkdir -p {dest} && \
