@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::board::BoardConfig;
-use crate::container::{unpack_tarball, SandboxRunner};
+use crate::container::{destroy_dir, unpack_tarball, SandboxRunner};
 use crate::error::{Error, Result};
 use crate::portage::{install_host_deps, MakeConf};
 use crate::stage::gentoo_profile;
@@ -309,6 +309,18 @@ impl Sandbox {
 
         Ok(())
     }
+}
+
+/// Remove a sandbox directory (via hakoniwa to handle root-owned files from stage3).
+pub fn destroy(ws: &Workspace, name: &str) -> Result<()> {
+    let dir = ws.sandbox(name);
+    if !dir.is_dir() {
+        return Err(crate::error::Error::SandboxNotFound(name.into()));
+    }
+    println!("Removing sandbox: {name}");
+    destroy_dir(&dir, ws.base())?;
+    println!("Sandbox '{name}' removed.");
+    Ok(())
 }
 
 /// List all sandbox directories with their state.
