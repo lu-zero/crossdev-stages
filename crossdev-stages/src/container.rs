@@ -8,6 +8,8 @@ use crate::error::{check_status, Result};
 /// `run*` variants from `sandbox-stage.sh`.
 pub struct SandboxRunner {
     sandbox_dir: PathBuf,
+    /// Host directory bind-mounted read-write at /var/log inside the container.
+    log_dir: PathBuf,
     /// Extra (host_path, container_path) read-write bind mounts.
     extra_rw: Vec<(PathBuf, String)>,
     /// Extra (host_path, container_path) read-only bind mounts.
@@ -19,14 +21,19 @@ pub struct SandboxRunner {
 }
 
 impl SandboxRunner {
-    pub fn new(sandbox_dir: &Path) -> Self {
+    pub fn new(sandbox_dir: &Path, log_dir: PathBuf) -> Self {
         Self {
             sandbox_dir: sandbox_dir.to_path_buf(),
+            log_dir,
             extra_rw: vec![],
             extra_ro: vec![],
             scripts_dir: None,
             sysroot: None,
         }
+    }
+
+    pub fn log_dir(&self) -> &Path {
+        &self.log_dir
     }
 
     /// Bind-mount `target_dir` read-write at `/target` (for cross-emerge).
@@ -106,9 +113,7 @@ impl SandboxRunner {
     }
 
     fn build_container(&self) -> Container {
-        // Ensure the log directory exists on the host so the bind mount succeeds.
-        let log_dir = self.sandbox_dir.join("var/log");
-        let _ = std::fs::create_dir_all(&log_dir);
+        let _ = std::fs::create_dir_all(&self.log_dir);
 
         let mut c = Container::new();
         // Container::new() already unshares Mount, User, Pid.
@@ -127,7 +132,7 @@ impl SandboxRunner {
             .tmpfsmount("/dev/shm")
             // Explicit bind mount so portage logs are always reachable at
             // <sandbox_dir>/var/log/ from the host.
-            .bindmount_rw(log_dir.to_str().unwrap_or_default(), "/var/log");
+            .bindmount_rw(self.log_dir.to_str().unwrap_or_default(), "/var/log");
         // Map caller → root, plus subordinate IDs for portage user etc.
         c.uidmaps(&uid_maps());
         c.gidmaps(&gid_maps());

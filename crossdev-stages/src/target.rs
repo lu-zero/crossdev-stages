@@ -53,6 +53,7 @@ impl Target {
         self.prepare_portage(sandbox, &chost)?;
 
         let runner = sandbox.runner().with_target(&self.dir);
+        tracing::info!("Logs at: {}", runner.log_dir().display());
         let portage = Portage::new(&runner);
 
         tracing::info!("Cross-emerging baselayout…");

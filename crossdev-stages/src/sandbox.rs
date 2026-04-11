@@ -203,8 +203,17 @@ impl Sandbox {
     }
 
     /// Return a `SandboxRunner` for running commands inside this sandbox.
+    /// Logs are bind-mounted from `~/.cache/crossdev-stages/logs/<name>/`
+    /// so they are accessible outside the sandbox at a known flat path.
     pub fn runner(&self) -> SandboxRunner {
-        SandboxRunner::new(&self.dir)
+        let name = self.dir.file_name().unwrap_or_default();
+        let log_dir = self
+            .dir
+            .parent() // sandboxes/
+            .and_then(|p| p.parent()) // <workspace>/
+            .map(|ws| ws.join("logs").join(name))
+            .unwrap_or_else(|| self.dir.join("var/log"));
+        SandboxRunner::new(&self.dir, log_dir)
     }
 
     #[allow(dead_code)]

@@ -8,6 +8,7 @@ const SANDBOXES: &str = "sandboxes";
 const TARGETS: &str = "targets";
 const BUILDS: &str = "builds";
 const SYSROOTS: &str = "sysroots";
+const LOGS: &str = "logs";
 
 /// Manages the on-disk cache layout:
 /// ~/.cache/crossdev-stages/{stages,sandboxes,targets,builds,sysroots}/
@@ -50,6 +51,10 @@ impl Workspace {
         self.sysroots_dir().join(name)
     }
 
+    pub fn logs_dir(&self) -> PathBuf {
+        self.base.join(LOGS)
+    }
+
     /// Create all cache subdirectories if they don't exist.
     pub fn ensure_dirs(&self) -> Result<()> {
         for dir in [
@@ -58,6 +63,7 @@ impl Workspace {
             self.targets_dir(),
             self.builds_dir(),
             self.sysroots_dir(),
+            self.logs_dir(),
         ] {
             std::fs::create_dir_all(&dir)?;
         }
