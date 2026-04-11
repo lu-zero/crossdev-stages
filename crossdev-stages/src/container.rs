@@ -188,6 +188,43 @@ fn read_subid(user: &str, id: u32, path: &str) -> Option<(u32, u32)> {
     None
 }
 
+/// Remove a directory tree that may contain root-owned files from a stage3 unpack.
+///
+/// Runs `rm -rf` inside a container with the full subordinate uid/gid maps so
+/// that uid 0 inside can access files owned by portage and other system users.
+pub fn destroy_dir(dir: &Path, cache_base: &Path) -> Result<()> {
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let cache_str = cache_base.to_str().unwrap_or_default();
+    let dir_in_container = format!(
+        "/cache/{}",
+        dir.strip_prefix(cache_base)
+            .unwrap_or(dir)
+            .to_str()
+            .unwrap_or_default()
+    );
+
+    let mut container = Container::new();
+    container
+        .rootfs("/")?
+        .unshare(Namespace::Ipc)
+        .unshare(Namespace::Uts)
+        .unshare(Namespace::Cgroup)
+        .devfsmount("/dev")
+        .tmpfsmount("/tmp")
+        .tmpfsmount("/dev/shm")
+        .bindmount_rw(cache_str, "/cache")
+        .runctl(Runctl::AllowNewPrivs);
+    container.uidmaps(&uid_maps());
+    container.gidmaps(&gid_maps());
+
+    let cmd = format!("rm -rf {dir_in_container}");
+    let mut command = container.command("/bin/sh");
+    command.arg("-c").arg(&cmd);
+    check_status(command.status()?).map_err(|e| annotate_cmd(e, &cmd))
+}
+
 /// Unpack a stage3 tarball into `dest_dir`, preserving ownership and xattrs.
 ///
 /// Runs inside a container rooted at the host `/` (so that tar, bash, etc.

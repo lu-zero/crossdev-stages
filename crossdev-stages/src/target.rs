@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::container::unpack_tarball;
+use crate::container::{destroy_dir, unpack_tarball};
 use crate::error::{Error, Result};
 use crate::portage::{MakeConf, Portage};
 use crate::sandbox::Sandbox;
@@ -165,6 +165,18 @@ impl Target {
 
         Ok(())
     }
+}
+
+/// Remove a target directory (via hakoniwa to handle root-owned files).
+pub fn destroy(ws: &Workspace, name: &str) -> Result<()> {
+    let dir = ws.target(name);
+    if !dir.is_dir() {
+        return Err(Error::TargetNotFound(name.into()));
+    }
+    println!("Removing target: {name}");
+    destroy_dir(&dir, ws.base())?;
+    println!("Target '{name}' removed.");
+    Ok(())
 }
 
 /// List all target directories with their state.

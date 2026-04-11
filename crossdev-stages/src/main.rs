@@ -66,8 +66,19 @@ enum Commands {
     Sandbox(SandboxCmd),
 
     /// Manage target sysroots.
-    #[command(subcommand)]
-    Target(TargetCmd),
+    Target {
+        /// Target architecture (overrides .arch marker; required for setup/create).
+        #[arg(long, global = true)]
+        arch: Option<String>,
+        /// Sandbox name (default: most-recently-modified).
+        #[arg(long, global = true)]
+        sandbox: Option<String>,
+        /// Target name (default: most-recently-modified).
+        #[arg(long, global = true)]
+        target: Option<String>,
+        #[command(subcommand)]
+        command: TargetCmd,
+    },
 
     /// Manage cross-compilation sysroots.
     #[command(subcommand)]
@@ -95,8 +106,8 @@ enum Commands {
 enum SandboxCmd {
     /// Download a stage3 and unpack it as a new sandbox.
     Setup {
-        /// Host architecture (e.g. riscv64, x86_64, aarch64).
-        #[arg(long, default_value = "riscv64")]
+        /// Host architecture (e.g. x86_64, aarch64, riscv64). Defaults to the current host arch.
+        #[arg(long, default_value = std::env::consts::ARCH)]
         arch: String,
         /// Sandbox name (default: arch-<timestamp>).
         #[arg(long)]
@@ -112,8 +123,8 @@ enum SandboxCmd {
     },
     /// Set up the crossdev cross-compiler toolchain inside a sandbox.
     Crossdev {
-        /// Target architecture to set up crossdev for.
-        #[arg(long, default_value = "riscv64")]
+        /// Target architecture to set up crossdev for (e.g. riscv64, aarch64).
+        #[arg(long)]
         arch: String,
         /// Board to read BOARD_CFLAGS and workarounds from.
         #[arg(long)]
@@ -144,45 +155,20 @@ enum SandboxCmd {
 enum TargetCmd {
     /// Download a stage3 and create a target sysroot.
     Setup {
-        #[arg(long, default_value = "riscv64")]
-        arch: String,
+        /// Target name (default: arch-<timestamp>).
         #[arg(long)]
         name: Option<String>,
     },
     /// List all target sysroots.
     List,
     /// Bootstrap the target: cross-emerge baselayout → @system → portage.
-    Stage1 {
-        /// Target architecture. Required only when the target directory does not yet exist.
-        #[arg(long)]
-        arch: Option<String>,
-        #[arg(long)]
-        sandbox: Option<String>,
-        #[arg(long)]
-        target: Option<String>,
-    },
+    Stage1,
     /// Update the target (@world rebuild).
-    Update {
-        #[arg(long)]
-        sandbox: Option<String>,
-        #[arg(long)]
-        target: Option<String>,
-    },
+    Update,
     /// Cross-emerge packages into the target.
-    Install {
-        #[arg(long)]
-        sandbox: Option<String>,
-        #[arg(long)]
-        target: Option<String>,
-        packages: Vec<String>,
-    },
+    Install { packages: Vec<String> },
     /// Update ldconfig cache in the target.
-    Ldconfig {
-        #[arg(long)]
-        sandbox: Option<String>,
-        #[arg(long)]
-        target: Option<String>,
-    },
+    Ldconfig,
     /// Remove a target.
     Destroy { name: String },
 }
@@ -233,12 +219,12 @@ enum ImageCmd {
 enum StagesCmd {
     /// List available stage3 variants for an architecture.
     List {
-        #[arg(long, default_value = "riscv64")]
+        #[arg(long, default_value = std::env::consts::ARCH)]
         arch: String,
     },
     /// Download the stage3 for an architecture.
     Fetch {
-        #[arg(long, default_value = "riscv64")]
+        #[arg(long, default_value = std::env::consts::ARCH)]
         arch: String,
     },
 }
@@ -313,106 +299,93 @@ async fn main() -> anyhow::Result<()> {
             sb.runner().run(&cmd.join(" "))?;
         }
         Commands::Sandbox(SandboxCmd::Destroy { name }) => {
-            let dir = ws.sandbox(&name);
-            if dir.is_dir() {
-                std::fs::remove_dir_all(&dir)?;
-                println!("Removed sandbox '{name}'.");
-            } else {
-                eprintln!("Sandbox '{name}' does not exist.");
-            }
+            sandbox::destroy(&ws, &name)?;
         }
 
         // ── Target ───────────────────────────────────────────────────────────
-        Commands::Target(TargetCmd::List) => {
-            for t in target::list(&ws)? {
-                let s1 = if t.stage1 { "stage1" } else { "unpacked" };
-                let upd = t.updated.as_deref().unwrap_or("-");
-                println!(
-                    "{:<20} arch={} state={} updated={}",
-                    t.name, t.arch, s1, upd
-                );
-            }
-        }
-        Commands::Target(TargetCmd::Setup { arch, name }) => {
-            let stage_file = stage::fetch(&ws.stages_dir(), &arch, mirror).await?;
-            let name = name.unwrap_or_else(|| {
-                format!("{arch}-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"))
-            });
-            target::Target::create(&ws, &name, &arch, &stage_file)?;
-            println!("Target '{name}' created.");
-            ensure_crossdev(&ws, None, &arch, &default_board_config(&arch), mirror).await?;
-        }
-        Commands::Target(TargetCmd::Stage1 { arch, sandbox, target }) => {
-            // Resolve (or create) the target directory.
-            let (td, resolved_arch) = match ws.resolve_target(target.as_deref()) {
-                Ok(td) => {
-                    let a = std::fs::read_to_string(td.join(".arch"))
-                        .map(|s| s.trim().to_string())
-                        .map_err(|_| error::Error::TargetNotFound(td.display().to_string()))?;
-                    (td, a)
+        Commands::Target { arch, sandbox, target, command } => {
+            match command {
+                TargetCmd::List => {
+                    for t in target::list(&ws)? {
+                        let s1 = if t.stage1 { "stage1" } else { "unpacked" };
+                        let upd = t.updated.as_deref().unwrap_or("-");
+                        println!(
+                            "{:<20} arch={} state={} updated={}",
+                            t.name, t.arch, s1, upd
+                        );
+                    }
                 }
-                Err(_) => {
-                    let a = arch.ok_or_else(|| {
-                        error::Error::TargetNotFound(
-                            "target not found; specify --arch to create one".into(),
-                        )
+                TargetCmd::Setup { name } => {
+                    let resolved_arch = arch.ok_or_else(|| {
+                        anyhow::anyhow!("--arch is required for target setup")
                     })?;
-                    let name = target
-                        .as_deref()
-                        .unwrap_or(&format!("{a}-stage1"))
-                        .to_string();
-                    let td = ws.target(&name);
-                    std::fs::create_dir_all(&td)?;
-                    std::fs::write(td.join(".arch"), &a)?;
-                    (td, a)
-                }
-            };
-            let board_cfg = default_board_config(&resolved_arch);
-            let sb =
-                ensure_crossdev(&ws, sandbox.as_deref(), &resolved_arch, &board_cfg, mirror)
+                    let stage_file =
+                        stage::fetch(&ws.stages_dir(), &resolved_arch, mirror).await?;
+                    let name = name.unwrap_or_else(|| {
+                        format!(
+                            "{resolved_arch}-{}",
+                            chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+                        )
+                    });
+                    target::Target::create(&ws, &name, &resolved_arch, &stage_file)?;
+                    println!("Target '{name}' created.");
+                    ensure_crossdev(
+                        &ws,
+                        sandbox.as_deref(),
+                        &resolved_arch,
+                        &default_board_config(&resolved_arch),
+                        mirror,
+                    )
                     .await?;
-            let tgt = target::Target::open(td)?;
-            tgt.build_stage1(&sb)?;
-        }
-        Commands::Target(TargetCmd::Update { sandbox, target }) => {
-            let td = ws.resolve_target(target.as_deref())?;
-            let tgt = target::Target::open(td)?;
-            let sb = ensure_crossdev(
-                &ws,
-                sandbox.as_deref(),
-                &tgt.arch.clone(),
-                &default_board_config(&tgt.arch),
-                mirror,
-            )
-            .await?;
-            tgt.update(&sb)?;
-        }
-        Commands::Target(TargetCmd::Install {
-            sandbox,
-            target,
-            packages,
-        }) => {
-            let sd = ws.resolve_sandbox(sandbox.as_deref())?;
-            let td = ws.resolve_target(target.as_deref())?;
-            let sb = sandbox::Sandbox::open(sd)?;
-            let tgt = target::Target::open(td)?;
-            let pkgs: Vec<&str> = packages.iter().map(String::as_str).collect();
-            tgt.install(&sb, &pkgs)?;
-        }
-        Commands::Target(TargetCmd::Ldconfig { sandbox, target }) => {
-            let sd = ws.resolve_sandbox(sandbox.as_deref())?;
-            let td = ws.resolve_target(target.as_deref())?;
-            let sb = sandbox::Sandbox::open(sd)?;
-            let tgt = target::Target::open(td)?;
-            tgt.update_ldconfig(&sb)?;
-        }
-        Commands::Target(TargetCmd::Destroy { name }) => {
-            let dir = ws.target(&name);
-            if dir.is_dir() {
-                std::fs::remove_dir_all(&dir)?;
-                println!("Removed target '{name}'.");
-            } else {
-                eprintln!("Target '{name}' does not exist.");
+                }
+                TargetCmd::Stage1 => {
+                    let (tgt, sb) = ensure_target(
+                        &ws,
+                        target.as_deref(),
+                        arch.as_deref(),
+                        sandbox.as_deref(),
+                        mirror,
+                    )
+                    .await?;
+                    tgt.build_stage1(&sb)?;
+                }
+                TargetCmd::Update => {
+                    let (tgt, sb) = ensure_target(
+                        &ws,
+                        target.as_deref(),
+                        arch.as_deref(),
+                        sandbox.as_deref(),
+                        mirror,
+                    )
+                    .await?;
+                    tgt.update(&sb)?;
+                }
+                TargetCmd::Install { packages } => {
+                    let (tgt, sb) = ensure_target(
+                        &ws,
+                        target.as_deref(),
+                        arch.as_deref(),
+                        sandbox.as_deref(),
+                        mirror,
+                    )
+                    .await?;
+                    let pkgs: Vec<&str> = packages.iter().map(String::as_str).collect();
+                    tgt.install(&sb, &pkgs)?;
+                }
+                TargetCmd::Ldconfig => {
+                    let (tgt, sb) = ensure_target(
+                        &ws,
+                        target.as_deref(),
+                        arch.as_deref(),
+                        sandbox.as_deref(),
+                        mirror,
+                    )
+                    .await?;
+                    tgt.update_ldconfig(&sb)?;
+                }
+                TargetCmd::Destroy { name } => {
+                    target::destroy(&ws, &name)?;
+                }
             }
         }
 
@@ -689,6 +662,50 @@ async fn ensure_crossdev(
     sb.prepare(mirror)?;
     sb.setup_crossdev(arch, board_cfg)?;
     Ok(sb)
+}
+
+/// Ensure the target exists (fetching + unpacking a stage3 if needed) and
+/// that the sandbox has crossdev set up for its arch.  Mirrors bash's
+/// `ensure_target`.  Returns (Target, Sandbox) ready for use.
+async fn ensure_target(
+    ws: &Workspace,
+    target_name: Option<&str>,
+    arch_override: Option<&str>,
+    sandbox_name: Option<&str>,
+    mirror: Option<&str>,
+) -> Result<(target::Target, sandbox::Sandbox)> {
+    let (tgt, resolved_arch) = match ws.resolve_target(target_name) {
+        Ok(td) => {
+            let tgt = target::Target::open(td)?;
+            let arch = arch_override
+                .map(String::from)
+                .unwrap_or_else(|| tgt.arch.clone());
+            (tgt, arch)
+        }
+        Err(_) => {
+            let arch = arch_override.ok_or_else(|| {
+                error::Error::TargetNotFound(
+                    "target not found; specify --arch to create one".into(),
+                )
+            })?;
+            let name = target_name
+                .unwrap_or(&format!("{arch}-stage1"))
+                .to_string();
+            tracing::info!("Target '{name}' not found, creating from stage3…");
+            let stage_file = stage::fetch(&ws.stages_dir(), arch, mirror).await?;
+            let tgt = target::Target::create(ws, &name, arch, &stage_file)?;
+            (tgt, arch.to_string())
+        }
+    };
+    let sb = ensure_crossdev(
+        ws,
+        sandbox_name,
+        &resolved_arch,
+        &default_board_config(&resolved_arch),
+        mirror,
+    )
+    .await?;
+    Ok((tgt, sb))
 }
 
 /// Build a minimal `BoardConfig` when no board is specified for crossdev setup.
