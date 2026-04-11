@@ -343,64 +343,33 @@ async fn main() -> anyhow::Result<()> {
                     .await?;
                 }
                 TargetCmd::Stage1 => {
-                    let (td, resolved_arch) = match ws.resolve_target(target.as_deref()) {
-                        Ok(td) => {
-                            let a = std::fs::read_to_string(td.join(".arch"))
-                                .map(|s| s.trim().to_string())
-                                .map_err(|_| {
-                                    error::Error::TargetNotFound(td.display().to_string())
-                                })?;
-                            (td, arch.unwrap_or(a))
-                        }
-                        Err(_) => {
-                            let a = arch.ok_or_else(|| {
-                                error::Error::TargetNotFound(
-                                    "target not found; specify --arch to create one".into(),
-                                )
-                            })?;
-                            let name = target
-                                .as_deref()
-                                .unwrap_or(&format!("{a}-stage1"))
-                                .to_string();
-                            let td = ws.target(&name);
-                            std::fs::create_dir_all(&td)?;
-                            std::fs::write(td.join(".arch"), &a)?;
-                            (td, a)
-                        }
-                    };
-                    let sb = ensure_crossdev(
+                    let (tgt, sb) = ensure_target(
                         &ws,
+                        target.as_deref(),
+                        arch.as_deref(),
                         sandbox.as_deref(),
-                        &resolved_arch,
-                        &default_board_config(&resolved_arch),
                         mirror,
                     )
                     .await?;
-                    target::Target::open(td)?.build_stage1(&sb)?;
+                    tgt.build_stage1(&sb)?;
                 }
                 TargetCmd::Update => {
-                    let td = ws.resolve_target(target.as_deref())?;
-                    let tgt = target::Target::open(td)?;
-                    let resolved_arch = arch.unwrap_or_else(|| tgt.arch.clone());
-                    let sb = ensure_crossdev(
+                    let (tgt, sb) = ensure_target(
                         &ws,
+                        target.as_deref(),
+                        arch.as_deref(),
                         sandbox.as_deref(),
-                        &resolved_arch,
-                        &default_board_config(&resolved_arch),
                         mirror,
                     )
                     .await?;
                     tgt.update(&sb)?;
                 }
                 TargetCmd::Install { packages } => {
-                    let td = ws.resolve_target(target.as_deref())?;
-                    let tgt = target::Target::open(td)?;
-                    let resolved_arch = arch.unwrap_or_else(|| tgt.arch.clone());
-                    let sb = ensure_crossdev(
+                    let (tgt, sb) = ensure_target(
                         &ws,
+                        target.as_deref(),
+                        arch.as_deref(),
                         sandbox.as_deref(),
-                        &resolved_arch,
-                        &default_board_config(&resolved_arch),
                         mirror,
                     )
                     .await?;
@@ -408,14 +377,11 @@ async fn main() -> anyhow::Result<()> {
                     tgt.install(&sb, &pkgs)?;
                 }
                 TargetCmd::Ldconfig => {
-                    let td = ws.resolve_target(target.as_deref())?;
-                    let tgt = target::Target::open(td)?;
-                    let resolved_arch = arch.unwrap_or_else(|| tgt.arch.clone());
-                    let sb = ensure_crossdev(
+                    let (tgt, sb) = ensure_target(
                         &ws,
+                        target.as_deref(),
+                        arch.as_deref(),
                         sandbox.as_deref(),
-                        &resolved_arch,
-                        &default_board_config(&resolved_arch),
                         mirror,
                     )
                     .await?;
@@ -706,6 +672,50 @@ async fn ensure_crossdev(
     sb.prepare(mirror)?;
     sb.setup_crossdev(arch, board_cfg)?;
     Ok(sb)
+}
+
+/// Ensure the target exists (fetching + unpacking a stage3 if needed) and
+/// that the sandbox has crossdev set up for its arch.  Mirrors bash's
+/// `ensure_target`.  Returns (Target, Sandbox) ready for use.
+async fn ensure_target(
+    ws: &Workspace,
+    target_name: Option<&str>,
+    arch_override: Option<&str>,
+    sandbox_name: Option<&str>,
+    mirror: Option<&str>,
+) -> Result<(target::Target, sandbox::Sandbox)> {
+    let (tgt, resolved_arch) = match ws.resolve_target(target_name) {
+        Ok(td) => {
+            let tgt = target::Target::open(td)?;
+            let arch = arch_override
+                .map(String::from)
+                .unwrap_or_else(|| tgt.arch.clone());
+            (tgt, arch)
+        }
+        Err(_) => {
+            let arch = arch_override.ok_or_else(|| {
+                error::Error::TargetNotFound(
+                    "target not found; specify --arch to create one".into(),
+                )
+            })?;
+            let name = target_name
+                .unwrap_or(&format!("{arch}-stage1"))
+                .to_string();
+            tracing::info!("Target '{name}' not found, creating from stage3…");
+            let stage_file = stage::fetch(&ws.stages_dir(), arch, mirror).await?;
+            let tgt = target::Target::create(ws, &name, arch, &stage_file)?;
+            (tgt, arch.to_string())
+        }
+    };
+    let sb = ensure_crossdev(
+        ws,
+        sandbox_name,
+        &resolved_arch,
+        &default_board_config(&resolved_arch),
+        mirror,
+    )
+    .await?;
+    Ok((tgt, sb))
 }
 
 /// Build a minimal `BoardConfig` when no board is specified for crossdev setup.
