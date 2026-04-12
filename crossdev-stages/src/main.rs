@@ -106,8 +106,8 @@ enum Commands {
 enum SandboxCmd {
     /// Download a stage3 and unpack it as a new sandbox.
     Setup {
-        /// Host architecture (e.g. riscv64, x86_64, aarch64).
-        #[arg(long, default_value = "riscv64")]
+        /// Host architecture (e.g. x86_64, aarch64, riscv64). Defaults to the current host arch.
+        #[arg(long, default_value = std::env::consts::ARCH)]
         arch: String,
         /// Sandbox name (default: arch-<timestamp>).
         #[arg(long)]
@@ -299,13 +299,7 @@ async fn main() -> anyhow::Result<()> {
             sb.runner().run(&cmd.join(" "))?;
         }
         Commands::Sandbox(SandboxCmd::Destroy { name }) => {
-            let dir = ws.sandbox(&name);
-            if dir.is_dir() {
-                std::fs::remove_dir_all(&dir)?;
-                println!("Removed sandbox '{name}'.");
-            } else {
-                eprintln!("Sandbox '{name}' does not exist.");
-            }
+            sandbox::destroy(&ws, &name)?;
         }
 
         // ── Target ───────────────────────────────────────────────────────────
@@ -388,13 +382,7 @@ async fn main() -> anyhow::Result<()> {
                     tgt.update_ldconfig(&sb)?;
                 }
                 TargetCmd::Destroy { name } => {
-                    let dir = ws.target(&name);
-                    if dir.is_dir() {
-                        std::fs::remove_dir_all(&dir)?;
-                        println!("Removed target '{name}'.");
-                    } else {
-                        eprintln!("Target '{name}' does not exist.");
-                    }
+                    target::destroy(&ws, &name)?;
                 }
             }
         }

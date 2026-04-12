@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::board::BoardConfig;
-use crate::container;
+use crate::container::{self, destroy_dir};
 use crate::error::{Error, Result};
 use crate::portage;
 use crate::sandbox::Sandbox;
@@ -148,20 +148,7 @@ pub fn destroy(ws: &Workspace, name: &str) -> Result<()> {
         return Err(Error::SysrootNotFound(name.into()));
     }
     println!("Removing sysroot: {name}");
-    // Use hakoniwa to remove (may contain root-owned files from stage3)
-    let parent = ws.sysroots_dir();
-    let mut c = hakoniwa::Container::new();
-    c.rootfs("/")?
-        .runctl(hakoniwa::Runctl::AllowNewPrivs)
-        .tmpfsmount("/dev/shm")
-        .tmpfsmount("/tmp")
-        .bindmount_rw(parent.to_str().unwrap_or_default(), "/target")
-        .uidmap(0)
-        .gidmap(0);
-    let mut cmd = c.command("/bin/sh");
-    let rm_cmd = format!("rm -rf /target/{name}");
-    cmd.arg("-c").arg(rm_cmd.as_str());
-    crate::error::check_status(cmd.status()?)?;
+    destroy_dir(&dir, ws.base())?;
     println!("Sysroot '{name}' removed.");
     Ok(())
 }
