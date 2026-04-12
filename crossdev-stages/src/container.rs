@@ -58,6 +58,13 @@ impl SandboxRunner {
         self
     }
 
+    /// Bind-mount `cache_dir` read-write at `/cache` (for source cache).
+    pub fn with_cache(mut self, cache_dir: &Utf8Path) -> Self {
+        self.extra_rw
+            .push((cache_dir.to_path_buf(), "/cache".into()));
+        self
+    }
+
     /// Run a shell command (via `bash --login -c`) inside the sandbox.
     pub fn run(&self, cmd: &str) -> Result<()> {
         let container = self.build_container();

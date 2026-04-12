@@ -173,15 +173,15 @@ fn default_checkout(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     crate::bootloader::uboot::clone(runner, board)?;
     if let Some(repo) = &board.firmware_repo {
         let tag = board.u_boot_tag.as_deref().unwrap_or("main");
-        runner.run(&format!(
-            "git clone --depth=1 --branch {tag} {repo} /build/firmware"
-        ))?;
+        crate::source_cache::cached_clone(runner, repo, tag, "/build/firmware", "firmware")?;
     }
-    runner.run(&format!(
-        "git clone --depth=1 --branch {tag} {repo} /build/linux",
-        tag = board.kernel_tag,
-        repo = board.kernel_repo,
-    ))
+    crate::source_cache::cached_clone(
+        runner,
+        &board.kernel_repo,
+        &board.kernel_tag,
+        "/build/linux",
+        &format!("linux-{}", board.name),
+    )
 }
 
 fn default_bootloader(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
@@ -304,7 +304,11 @@ fn default_pack(runner: &SandboxRunner, board: &BoardConfig, build: &Build, boar
     ))?;
 
     runner.run(&format!("xz -f -T0 -9 /build/{img_name}"))?;
-    println!("Image ready: {}/{img_name}.xz", build.dir);
+    let final_name = format!("{img_name}.xz");
+    println!("Image ready: {}/{final_name}", build.dir);
+
+    // Store artifact path in .packed marker for export
+    std::fs::write(build.dir.join(".image"), &final_name)?;
     Ok(())
 }
 
@@ -352,10 +356,12 @@ pub fn build(
     for (i, step) in steps_to_run.iter().enumerate() {
         let step_start = std::time::Instant::now();
         print!("==> [{}/{}] {}...", i + 1, total, step);
+        let _ = std::io::Write::flush(&mut std::io::stdout());
 
         let runner = board_runner(sandbox, sysroot, board)
             .with_target(&target.dir)
-            .with_build(&bld.dir, &project_root(boards_root));
+            .with_build(&bld.dir, &project_root(boards_root))
+            .with_cache(ws.base());
 
         let result = match *step {
             "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board,
