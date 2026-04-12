@@ -22,16 +22,6 @@ board_checkout() {
     "
 }
 
-board_build_bootloader() {
-    local sandbox_dir="$1"
-    local build_dir="$2"
-
-    # opensbi fw_jump (no u-boot)
-    run_with_build "$sandbox_dir" "$build_dir" "
-        make -C /build/opensbi PLATFORM=${OPENSBI_PLATFORM} CROSS_COMPILE=${CROSS_COMPILE} FW_JUMP=y -j\$(nproc)
-    "
-}
-
 board_assemble() {
     local sandbox_dir="$1"
     local build_dir="$2"

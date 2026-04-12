@@ -13,13 +13,24 @@ pub fn clone(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     Ok(())
 }
 
-/// Build OpenSBI: `make -C /build/opensbi PLATFORM=... CROSS_COMPILE=... -j$(nproc)`
+/// Build OpenSBI with firmware type and extra flags from board.conf.
+///
+/// Reads:
+/// - `OPENSBI_FW_TYPE`: "dynamic" (default), "jump", or "payload"
+/// - `OPENSBI_MAKE_FLAGS`: extra make arguments (e.g. "LLVM=1 PLATFORM_DEFCONFIG=defconfig")
+///
 /// No-op if the board has no opensbi_platform configured.
 pub fn build(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     if let (Some(platform), Some(_repo)) = (&board.opensbi_platform, &board.opensbi_repo) {
+        let fw_flag = match board.opensbi_fw_type.as_deref() {
+            Some("jump") => "FW_JUMP=y",
+            Some("payload") => "FW_PAYLOAD=y",
+            _ => "",
+        };
+        let extra = board.opensbi_make_flags.as_deref().unwrap_or("");
         runner.run(&format!(
             "make -C /build/opensbi PLATFORM={platform} \
-             CROSS_COMPILE={cc} -j$(nproc)",
+             CROSS_COMPILE={cc} {fw_flag} {extra} -j$(nproc)",
             cc = board.cross_compile,
         ))?;
     }

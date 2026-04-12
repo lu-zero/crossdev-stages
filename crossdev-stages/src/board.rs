@@ -19,11 +19,14 @@ pub struct BoardConfig {
     pub opensbi_repo: Option<String>,
     pub opensbi_tag: Option<String>,
     pub opensbi_platform: Option<String>,
+    pub opensbi_fw_type: Option<String>,     // dynamic (default) | jump | payload
+    pub opensbi_make_flags: Option<String>,  // extra make args
 
     // U-Boot
     pub u_boot_repo: Option<String>,
     pub u_boot_tag: Option<String>,
     pub u_boot_defconfig: Option<String>,
+    pub u_boot_make_flags: Option<String>,   // extra make args
 
     // Firmware overlay
     pub firmware_repo: Option<String>,
@@ -143,10 +146,13 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         opensbi_repo: kv.get("OPENSBI_REPO").cloned(),
         opensbi_tag: kv.get("OPENSBI_TAG").cloned(),
         opensbi_platform: kv.get("OPENSBI_PLATFORM").cloned(),
+        opensbi_fw_type: kv.get("OPENSBI_FW_TYPE").cloned(),
+        opensbi_make_flags: kv.get("OPENSBI_MAKE_FLAGS").cloned(),
 
         u_boot_repo: kv.get("U_BOOT_REPO").cloned(),
         u_boot_tag: kv.get("U_BOOT_TAG").or_else(|| kv.get("TAG")).cloned(),
         u_boot_defconfig: kv.get("U_BOOT_DEFCONFIG").cloned(),
+        u_boot_make_flags: kv.get("U_BOOT_MAKE_FLAGS").cloned(),
 
         firmware_repo: kv.get("FIRMWARE_REPO").cloned(),
         firmware_overlay: kv.get("BOARD_FIRMWARE_OVERLAY").cloned(),
