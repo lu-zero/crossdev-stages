@@ -1,5 +1,4 @@
-use std::path::{Path, PathBuf};
-
+use camino::{Utf8Path, Utf8PathBuf};
 use gentoo_stages::{Arch, Cache, Client};
 
 use crate::error::Result;
@@ -88,9 +87,9 @@ pub fn stage_variant(arch: &str) -> &'static str {
 
 /// Download the stage3 for `arch` into the stages cache directory.
 /// Returns the local path to the downloaded tarball.
-pub async fn fetch(stages_dir: &Path, arch: &str, mirror: Option<&str>) -> Result<PathBuf> {
+pub async fn fetch(stages_dir: &Utf8Path, arch: &str, mirror: Option<&str>) -> Result<Utf8PathBuf> {
     let gentoo_arch = parse_arch(arch)?;
-    let cache = Cache::Path(stages_dir.to_path_buf());
+    let cache = Cache::Path(stages_dir.as_std_path().to_path_buf());
     let client = match mirror {
         Some(m) => Client::builder()
             .arch(gentoo_arch)
@@ -103,13 +102,15 @@ pub async fn fetch(stages_dir: &Path, arch: &str, mirror: Option<&str>) -> Resul
             .build()?,
     };
     let stage = client.get(stage_variant(arch)).await?;
-    Ok(stage.file_path())
+    let path = stage.file_path();
+    Utf8PathBuf::try_from(path)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()).into())
 }
 
 /// List available stage3 images for the given arch.
-pub async fn list(stages_dir: &Path, arch: &str, mirror: Option<&str>) -> Result<Vec<String>> {
+pub async fn list(stages_dir: &Utf8Path, arch: &str, mirror: Option<&str>) -> Result<Vec<String>> {
     let gentoo_arch = parse_arch(arch)?;
-    let cache = Cache::Path(stages_dir.to_path_buf());
+    let cache = Cache::Path(stages_dir.as_std_path().to_path_buf());
     let client = match mirror {
         Some(m) => Client::builder()
             .arch(gentoo_arch)

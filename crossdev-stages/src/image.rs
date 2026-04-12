@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use camino::{Utf8Path, Utf8PathBuf};
 
 use chrono::Utc;
 
@@ -13,13 +13,16 @@ use crate::workspace::Workspace;
 
 /// Derive the project root from `boards_root` (its parent).
 /// Bash mounts $BASE_DIR at /scripts, so /scripts/boards/<name>/... works.
-fn project_root(boards_root: &Path) -> PathBuf {
-    boards_root.parent().unwrap_or(boards_root).to_path_buf()
+fn project_root(boards_root: &Utf8Path) -> Utf8PathBuf {
+    boards_root
+        .parent()
+        .unwrap_or(boards_root)
+        .to_path_buf()
 }
 
 /// One timestamped build directory: `builds/<board>-<timestamp>`.
 pub struct Build {
-    pub dir: PathBuf,
+    pub dir: Utf8PathBuf,
     pub board: String,
 }
 
@@ -31,7 +34,7 @@ impl Build {
             for dir in builds {
                 if let Some(b) = Self::open(dir.clone()) {
                     if b.board == board && !b.is_done("packed") {
-                        tracing::info!("Resuming build: {}", dir.display());
+                        tracing::info!("Resuming build: {}", dir);
                         return Ok(b);
                     }
                 }
@@ -49,14 +52,14 @@ impl Build {
     }
 
     /// Open an existing build directory.
-    pub fn open(dir: PathBuf) -> Option<Self> {
+    pub fn open(dir: Utf8PathBuf) -> Option<Self> {
         let board = std::fs::read_to_string(dir.join(".board"))
             .ok()
             .map(|s| s.trim().to_string())?;
         Some(Self { dir, board })
     }
 
-    fn marker(&self, step: &str) -> PathBuf {
+    fn marker(&self, step: &str) -> Utf8PathBuf {
         self.dir.join(format!(".{step}"))
     }
 
@@ -76,7 +79,7 @@ pub fn install_deps(
     sandbox: &Sandbox,
     target: &Target,
     board: &BoardConfig,
-    boards_root: &Path,
+    boards_root: &Utf8Path,
     sysroot: Option<&Sysroot>,
 ) -> Result<()> {
     if build.is_done("deps") {
@@ -129,7 +132,7 @@ pub fn checkout(
     build: &Build,
     sandbox: &Sandbox,
     board: &BoardConfig,
-    boards_root: &Path,
+    boards_root: &Utf8Path,
     sysroot: Option<&Sysroot>,
 ) -> Result<()> {
     if build.is_done("sources") {
@@ -179,7 +182,7 @@ pub fn build_bootloader(
     build: &Build,
     sandbox: &Sandbox,
     board: &BoardConfig,
-    boards_root: &Path,
+    boards_root: &Utf8Path,
     sysroot: Option<&Sysroot>,
 ) -> Result<()> {
     if build.is_done("bootloader") {
@@ -223,7 +226,7 @@ pub fn build_kernel(
     build: &Build,
     sandbox: &Sandbox,
     board: &BoardConfig,
-    boards_root: &Path,
+    boards_root: &Utf8Path,
     sysroot: Option<&Sysroot>,
 ) -> Result<()> {
     if build.is_done("kernel") {
@@ -262,7 +265,7 @@ pub fn assemble(
     sandbox: &Sandbox,
     target: &Target,
     board: &BoardConfig,
-    boards_root: &Path,
+    boards_root: &Utf8Path,
     sysroot: Option<&Sysroot>,
 ) -> Result<()> {
     if build.is_done("assembled") {
@@ -366,7 +369,7 @@ pub fn pack(
     build: &Build,
     sandbox: &Sandbox,
     board: &BoardConfig,
-    boards_root: &Path,
+    boards_root: &Utf8Path,
     sysroot: Option<&Sysroot>,
 ) -> Result<()> {
     if build.is_done("packed") {
@@ -398,7 +401,7 @@ pub fn pack(
 
     // Compress with xz
     runner.run(&format!("xz -f -T0 -9 /build/{img_name}"))?;
-    println!("Image ready: {}/{img_name}.xz", build.dir.display());
+    println!("Image ready: {}/{img_name}.xz", build.dir);
 
     build.mark_done("packed")
 }
@@ -422,7 +425,7 @@ if type -t {func} &>/dev/null; then {func}; fi"#,
 }
 
 /// Check if a board.sh defines a specific function.
-fn board_has_func(boards_root: &Path, board_name: &str, func: &str) -> bool {
+fn board_has_func(boards_root: &Utf8Path, board_name: &str, func: &str) -> bool {
     let board_sh = boards_root.join(board_name).join("board.sh");
     if !board_sh.exists() {
         return false;
@@ -452,7 +455,7 @@ pub fn build(
     sandbox: &Sandbox,
     target: &Target,
     board: &BoardConfig,
-    boards_root: &Path,
+    boards_root: &Utf8Path,
     sysroot: Option<&Sysroot>,
     steps: Option<&[String]>,
 ) -> Result<()> {

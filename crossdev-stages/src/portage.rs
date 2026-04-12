@@ -1,4 +1,4 @@
-use std::path::Path;
+use camino::Utf8Path;
 
 use crate::container::SandboxRunner;
 use crate::error::Result;
@@ -15,7 +15,7 @@ pub struct MakeConf<'a> {
 impl<'a> MakeConf<'a> {
     /// Write `make.conf` into `portage_dir` (i.e. `/etc/portage` of a sandbox or sysroot).
     /// Updates variables in-place; preserves any existing content not managed here.
-    pub fn write(&self, portage_dir: &Path) -> Result<()> {
+    pub fn write(&self, portage_dir: &Utf8Path) -> Result<()> {
         std::fs::create_dir_all(portage_dir)?;
         std::fs::create_dir_all(portage_dir.join("package.accept_keywords"))?;
 
@@ -64,7 +64,7 @@ fn parallelism() -> (usize, usize) {
 
 /// Set or replace a variable in a make.conf file.
 /// If the variable exists, replace its value; otherwise append.
-pub fn set_make_conf_var(file: &Path, name: &str, value: &str) -> Result<()> {
+pub fn set_make_conf_var(file: &Utf8Path, name: &str, value: &str) -> Result<()> {
     let content = std::fs::read_to_string(file).unwrap_or_default();
     let prefix = format!("{name}=");
     let new_line = format!("{name}=\"{value}\"");
@@ -189,3 +189,4 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
 
     Ok(())
 }
+

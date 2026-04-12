@@ -1,4 +1,4 @@
-use std::path::Path;
+use camino::Utf8Path;
 
 use crate::error::{Error, Result};
 
@@ -74,15 +74,15 @@ impl BoardConfig {
 }
 
 /// Load a board configuration from `<boards_root>/<name>/board.conf`.
-pub fn load(boards_root: &Path, name: &str) -> Result<BoardConfig> {
+pub fn load(boards_root: &Utf8Path, name: &str) -> Result<BoardConfig> {
     let path = boards_root.join(name).join("board.conf");
     let content = std::fs::read_to_string(&path)
-        .map_err(|e| Error::BoardNotFound(format!("{}: {e}", path.display())))?;
+        .map_err(|e| Error::BoardNotFound(format!("{path}: {e}")))?;
     parse(name, &path, &content)
 }
 
 /// List all board names found under `<boards_root>/*/board.conf`.
-pub fn list(boards_root: &Path) -> Result<Vec<String>> {
+pub fn list(boards_root: &Utf8Path) -> Result<Vec<String>> {
     if !boards_root.is_dir() {
         return Ok(vec![]);
     }
@@ -97,7 +97,7 @@ pub fn list(boards_root: &Path) -> Result<Vec<String>> {
 
 // ── Parser ──────────────────────────────────────────────────────────────────
 
-fn parse(name: &str, path: &Path, content: &str) -> Result<BoardConfig> {
+fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
     let mut kv = std::collections::HashMap::<String, String>::new();
     let mut arrays = std::collections::HashMap::<String, Vec<String>>::new();
 
@@ -124,7 +124,7 @@ fn parse(name: &str, path: &Path, content: &str) -> Result<BoardConfig> {
     macro_rules! req {
         ($k:expr) => {
             kv.get($k).cloned().ok_or_else(|| Error::BoardConfigParse {
-                file: path.display().to_string(),
+                file: path.to_string(),
                 msg: format!("missing required field '{}'", $k),
             })?
         };
