@@ -152,16 +152,8 @@ pub fn checkout(
     let runner =
         board_runner(sandbox, sysroot, board).with_build(&build.dir, &project_root(boards_root));
 
-    if let (Some(repo), Some(tag)) = (&board.opensbi_repo, &board.opensbi_tag) {
-        runner.run(&format!(
-            "git clone --depth=1 --branch {tag} {repo} /build/opensbi"
-        ))?;
-    }
-    if let (Some(repo), Some(tag)) = (&board.u_boot_repo, &board.u_boot_tag) {
-        runner.run(&format!(
-            "git clone --depth=1 --branch {tag} {repo} /build/u-boot"
-        ))?;
-    }
+    crate::bootloader::opensbi::clone(&runner, board)?;
+    crate::bootloader::uboot::clone(&runner, board)?;
     if let Some(repo) = &board.firmware_repo {
         let tag = board.u_boot_tag.as_deref().unwrap_or("main");
         runner.run(&format!(
@@ -196,26 +188,8 @@ pub fn build_bootloader(
     if board_has_func(boards_root, &board.name, "board_build_bootloader") {
         runner.run(&board_sh_call(&board.name, "board_build_bootloader"))?;
     } else {
-        if let (Some(platform), Some(_repo)) = (&board.opensbi_platform, &board.opensbi_repo) {
-            runner.run(&format!(
-                "make -C /build/opensbi PLATFORM={platform} \
-                 CROSS_COMPILE={cc} -j$(nproc)",
-                cc = board.cross_compile,
-            ))?;
-        }
-        if let Some(defconfig) = &board.u_boot_defconfig {
-            let karch = board.kernel_arch.as_deref().ok_or_else(|| {
-                crate::error::Error::BoardConfigParse {
-                    file: board.name.clone(),
-                    msg: "KERNEL_ARCH required for bootloader build".into(),
-                }
-            })?;
-            runner.run(&format!(
-                "make -C /build/u-boot ARCH={karch} CROSS_COMPILE={cc} {defconfig} && \
-                 make -C /build/u-boot ARCH={karch} CROSS_COMPILE={cc} -j$(nproc)",
-                cc = board.cross_compile,
-            ))?;
-        }
+        crate::bootloader::opensbi::build(&runner, board)?;
+        crate::bootloader::uboot::build(&runner, board)?;
     }
 
     build.mark_done("bootloader")
