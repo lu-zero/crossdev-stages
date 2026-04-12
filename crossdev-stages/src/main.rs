@@ -5,6 +5,7 @@ mod error;
 mod image;
 mod portage;
 mod sandbox;
+mod source_cache;
 mod stage;
 mod sysroot;
 mod target;
@@ -99,6 +100,36 @@ enum Commands {
         #[arg(long)]
         all: bool,
     },
+
+    /// Show build output and logs.
+    Logs {
+        /// Board name (shows latest build).
+        board: String,
+        /// Show only a specific step's output.
+        #[arg(long)]
+        step: Option<String>,
+    },
+
+    /// Export build artifacts to a directory.
+    Export {
+        /// Board name.
+        board: String,
+        /// Output directory (default: current directory).
+        #[arg(long, short)]
+        output: Option<Utf8PathBuf>,
+        /// Export all files, not just the final image.
+        #[arg(long)]
+        all: bool,
+    },
+
+    /// Show resolved board configuration.
+    Config {
+        /// Board name.
+        board: String,
+    },
+
+    /// Check environment for common issues.
+    Doctor,
 }
 
 // ── Sandbox subcommands ──────────────────────────────────────────────────────
@@ -633,6 +664,189 @@ async fn main() -> anyhow::Result<()> {
                 println!("{total} item(s) would be removed.");
             } else {
                 println!("{total} item(s) cleaned up.");
+            }
+        }
+
+        // ── Logs ────────────────────────────────────────────────────────────
+        Commands::Logs { board, step } => {
+            let builds = ws.list_builds()?;
+            let build = builds
+                .iter()
+                .filter_map(|dir| image::Build::open(dir.clone()))
+                .find(|b| b.board == board)
+                .ok_or_else(|| error::Error::BoardNotFound(format!("no builds for '{board}'")))?;
+
+            println!("Build: {}", build.dir);
+            println!("Board: {}", build.board);
+
+            let steps = ["deps", "sources", "bootloader", "kernel", "assembled", "packed"];
+            for s in &steps {
+                let marker = build.dir.join(format!(".{s}"));
+                if marker.exists() {
+                    let ts = std::fs::read_to_string(&marker).unwrap_or_default();
+                    let label = if step.as_deref() == Some(s) { " <--" } else { "" };
+                    println!("  {s}: {}{label}", ts.trim());
+                }
+            }
+
+            let log_dir = ws.logs_dir();
+            if let Some(ref step_name) = step {
+                let pattern = format!("{}-", board);
+                let mut found = false;
+                if log_dir.is_dir() {
+                    for entry in std::fs::read_dir(&log_dir)? {
+                        let entry = entry?;
+                        let name = entry.file_name().into_string().unwrap_or_default();
+                        if name.contains(&pattern) && name.contains(step_name) {
+                            println!("\n--- {} ---", name);
+                            let content = std::fs::read_to_string(entry.path())?;
+                            print!("{content}");
+                            found = true;
+                        }
+                    }
+                }
+                if !found {
+                    println!("\nNo log files found for step '{step_name}'.");
+                    println!("Portage logs may be at: {}/portage/", ws.logs_dir());
+                }
+            }
+        }
+
+        // ── Export ──────────────────────────────────────────────────────────
+        Commands::Export { board: board_name, output, all } => {
+            let builds = ws.list_builds()?;
+            let build = builds
+                .iter()
+                .filter_map(|dir| image::Build::open(dir.clone()))
+                .find(|b| b.board == board_name)
+                .ok_or_else(|| error::Error::BoardNotFound(format!("no builds for '{board_name}'")))?;
+
+            let out_dir = output.unwrap_or_else(|| Utf8PathBuf::from("."));
+            std::fs::create_dir_all(&out_dir)?;
+
+            if all {
+                let mut exported = 0;
+                for entry in std::fs::read_dir(&build.dir)? {
+                    let entry = entry?;
+                    let name = entry.file_name().into_string().unwrap_or_default();
+                    if name.starts_with('.') || !entry.path().is_file() {
+                        continue;
+                    }
+                    let dest = out_dir.join(&name);
+                    std::fs::copy(entry.path(), &dest)?;
+                    let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                    println!("{name} ({:.1}M)", size as f64 / 1_048_576.0);
+                    exported += 1;
+                }
+                println!("{exported} file(s) exported to {out_dir}");
+            } else {
+                let image_marker = build.dir.join(".image");
+                let img_name = std::fs::read_to_string(&image_marker)
+                    .map(|s| s.trim().to_string())
+                    .ok();
+
+                if let Some(name) = img_name {
+                    let src = build.dir.join(&name);
+                    if src.is_file() {
+                        let dest = out_dir.join(&name);
+                        std::fs::copy(&src, &dest)?;
+                        let size = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
+                        println!("{name} ({:.1}M) -> {dest}", size as f64 / 1_048_576.0);
+                    } else {
+                        println!("Image file missing: {src}");
+                    }
+                } else {
+                    println!("Build not packed yet. Run: crossdev-stages image build --board {board_name}");
+                }
+            }
+        }
+
+        // ── Config ──────────────────────────────────────────────────────────
+        Commands::Config { board: board_name } => {
+            let board_cfg = board::load(&boards_root, &board_name)?;
+            println!("Board:          {}", board_cfg.name);
+            println!("Arch:           {}", board_cfg.arch);
+            println!("CHOST:          {}", board_cfg.chost());
+            println!("CFLAGS:         {}", board_cfg.effective_cflags());
+            println!("Sysroot:        {}", board_cfg.sysroot);
+            println!("Cross-compile:  {}", board_cfg.cross_compile);
+            if let Some(k) = &board_cfg.kernel_arch { println!("Kernel arch:    {k}"); }
+            println!("Kernel repo:    {}", board_cfg.kernel_repo);
+            println!("Kernel tag:     {}", board_cfg.kernel_tag);
+            println!("Kernel defconf: {}", board_cfg.kernel_defconfig);
+            if let Some(r) = &board_cfg.opensbi_repo { println!("OpenSBI repo:   {r}"); }
+            if let Some(t) = &board_cfg.opensbi_tag { println!("OpenSBI tag:    {t}"); }
+            if let Some(p) = &board_cfg.opensbi_platform { println!("OpenSBI plat:   {p}"); }
+            if let Some(f) = &board_cfg.opensbi_fw_type { println!("OpenSBI fw:     {f}"); }
+            if let Some(f) = &board_cfg.opensbi_make_flags { println!("OpenSBI flags:  {f}"); }
+            if let Some(r) = &board_cfg.u_boot_repo { println!("U-Boot repo:    {r}"); }
+            if let Some(t) = &board_cfg.u_boot_tag { println!("U-Boot tag:     {t}"); }
+            if let Some(d) = &board_cfg.u_boot_defconfig { println!("U-Boot deconf:  {d}"); }
+            if let Some(f) = &board_cfg.u_boot_make_flags { println!("U-Boot flags:   {f}"); }
+            if !board_cfg.build_steps.is_empty() {
+                println!("Build steps:    {}", board_cfg.build_steps.join(" "));
+            }
+            if board_cfg.testing { println!("Testing:        yes"); }
+
+            // Show hook scripts
+            let board_dir = boards_root.join(&board_name);
+            let steps = ["deps", "checkout", "bootloader", "kernel", "assemble", "pack"];
+            let mut hooks = Vec::new();
+            for s in &steps {
+                if board_dir.join(format!("override-{s}.sh")).exists() {
+                    hooks.push(format!("override-{s}.sh"));
+                }
+                if board_dir.join(format!("pre-{s}.sh")).exists() {
+                    hooks.push(format!("pre-{s}.sh"));
+                }
+                if board_dir.join(format!("post-{s}.sh")).exists() {
+                    hooks.push(format!("post-{s}.sh"));
+                }
+            }
+            if !hooks.is_empty() {
+                println!("Hooks:          {}", hooks.join(", "));
+            }
+        }
+
+        // ── Doctor ──────────────────────────────────────────────────────────
+        Commands::Doctor => {
+            let mut ok = 0;
+            let mut fail = 0;
+
+            macro_rules! check {
+                ($label:expr, $cond:expr) => {
+                    if $cond {
+                        println!("  [ok] {}", $label);
+                        ok += 1;
+                    } else {
+                        println!("  [!!] {}", $label);
+                        fail += 1;
+                    }
+                };
+            }
+
+            println!("Workspace: {}", ws.base());
+            check!("stages dir", ws.stages_dir().is_dir());
+            check!("sandboxes dir", ws.sandboxes_dir().is_dir());
+            check!("sysroots dir", ws.sysroots_dir().is_dir());
+            check!("sources cache dir", ws.sources_dir().is_dir());
+
+            let sandboxes = ws.list_sandboxes().unwrap_or_default();
+            check!("at least one sandbox", !sandboxes.is_empty());
+            if let Some(sb_dir) = sandboxes.first() {
+                let prepared = sb_dir.join(".prepared").exists();
+                check!(&format!("sandbox {} prepared", sb_dir.file_name().unwrap_or("?")), prepared);
+            }
+
+            let sysroots = sysroot::list(&ws).unwrap_or_default();
+            check!(&format!("{} sysroot(s) available", sysroots.len()), !sysroots.is_empty());
+
+            let boards = board::list(&boards_root).unwrap_or_default();
+            check!(&format!("{} board(s) found", boards.len()), !boards.is_empty());
+
+            println!("\n{ok} ok, {fail} issues");
+            if fail > 0 {
+                println!("Run 'crossdev-stages sandbox setup' and 'sandbox prepare' to fix.");
             }
         }
     }
