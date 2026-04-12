@@ -1,4 +1,5 @@
 mod board;
+mod bootloader;
 mod container;
 mod error;
 mod image;
