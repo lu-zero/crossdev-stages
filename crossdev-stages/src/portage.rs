@@ -14,42 +14,43 @@ pub struct MakeConf<'a> {
 
 impl<'a> MakeConf<'a> {
     /// Write `make.conf` into `portage_dir` (i.e. `/etc/portage` of a sandbox or sysroot).
+    /// Updates variables in-place; preserves any existing content not managed here.
     pub fn write(&self, portage_dir: &Path) -> Result<()> {
         std::fs::create_dir_all(portage_dir)?;
         std::fs::create_dir_all(portage_dir.join("package.accept_keywords"))?;
 
         let make_conf = portage_dir.join("make.conf");
+        if !make_conf.exists() {
+            std::fs::write(&make_conf, "")?;
+        }
+
         let (jobs, load) = parallelism();
         let garch = gentoo_arch(self.arch)?;
         let cflags = self.cflags.unwrap_or_else(|| default_cflags(self.arch));
 
-        let mut conf = format!(
-            r#"MAKEOPTS="-j{jobs} --load-average {load}"
-EMERGE_DEFAULT_OPTS="--jobs={jobs} --load-average {load}"
-FEATURES="parallel-install -merge-wait"
-ACCEPT_KEYWORDS="~{garch}"
-PORT_LOGDIR="/var/log/portage/{garch}"
-"#
-        );
+        set_make_conf_var(&make_conf, "MAKEOPTS", &format!("-j{jobs} --load-average {load}"))?;
+        set_make_conf_var(
+            &make_conf,
+            "EMERGE_DEFAULT_OPTS",
+            &format!("--jobs={jobs} --load-average {load}"),
+        )?;
+        set_make_conf_var(&make_conf, "FEATURES", "parallel-install -merge-wait")?;
+        set_make_conf_var(&make_conf, "ACCEPT_KEYWORDS", &format!("~{garch}"))?;
+        set_make_conf_var(&make_conf, "PORT_LOGDIR", &format!("/var/log/portage/{garch}"))?;
 
         if let Some(chost) = self.chost {
-            conf += &format!("CHOST=\"{chost}\"\n");
-            conf += &format!("CFLAGS=\"{cflags}\"\n");
-            conf += &format!("CXXFLAGS=\"{cflags}\"\n");
+            set_make_conf_var(&make_conf, "CHOST", chost)?;
+            set_make_conf_var(&make_conf, "CFLAGS", cflags)?;
+            set_make_conf_var(&make_conf, "CXXFLAGS", cflags)?;
             if let Some(llvm) = llvm_target(self.arch) {
-                conf += &format!("LLVM_TARGETS=\"{llvm}\"\n");
+                set_make_conf_var(&make_conf, "LLVM_TARGETS", llvm)?;
             }
         }
 
         if let Some(mirror) = self.mirror {
-            conf += &format!("GENTOO_MIRRORS=\"{mirror}\"\n");
+            set_make_conf_var(&make_conf, "GENTOO_MIRRORS", mirror)?;
         }
 
-        // Only write if the file doesn't exist or needs an update.
-        let existing = std::fs::read_to_string(&make_conf).unwrap_or_default();
-        if existing != conf {
-            std::fs::write(&make_conf, &conf)?;
-        }
         Ok(())
     }
 }
