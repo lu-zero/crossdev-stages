@@ -9,7 +9,7 @@ mod sysroot;
 mod target;
 mod workspace;
 
-use std::path::PathBuf;
+use camino::Utf8PathBuf;
 
 use clap::builder::styling::{AnsiColor, Styles};
 use clap::{Parser, Subcommand};
@@ -242,8 +242,11 @@ async fn main() -> anyhow::Result<()> {
     let ws = Workspace::open()?;
     ws.ensure_dirs()?;
 
-    let boards_root = std::fs::canonicalize(cli.project_dir.join("boards"))
-        .unwrap_or_else(|_| cli.project_dir.join("boards"));
+    let boards_root = {
+        let p = std::fs::canonicalize(cli.project_dir.join("boards"))
+            .unwrap_or_else(|_| cli.project_dir.join("boards"));
+        Utf8PathBuf::try_from(p).expect("boards path is not UTF-8")
+    };
     let mirror = cli.mirror.as_deref();
 
     match cli.command {
@@ -256,7 +259,7 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Stages(StagesCmd::Fetch { arch }) => {
             let path = stage::fetch(&ws.stages_dir(), &arch, mirror).await?;
-            println!("{}", path.display());
+            println!("{path}");
         }
 
         // ── Sandbox ──────────────────────────────────────────────────────────
@@ -468,7 +471,7 @@ async fn main() -> anyhow::Result<()> {
                 println!(
                     "Sysroot:    {} ({})",
                     sysroot_name,
-                    ws.sysroot(&sysroot_name).display()
+                    ws.sysroot(&sysroot_name)
                 );
                 println!(
                     "Steps:      {}",
@@ -545,7 +548,7 @@ async fn main() -> anyhow::Result<()> {
             for dir in &builds {
                 let dominated = all || !dir.join(".packed").exists();
                 if dominated {
-                    let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                    let name = dir.file_name().unwrap_or("?");
                     if cli.dry_run {
                         println!("Would remove build: {name}");
                     } else {
@@ -580,19 +583,18 @@ async fn main() -> anyhow::Result<()> {
             if stages_dir.is_dir() {
                 let mut by_arch: std::collections::HashMap<
                     String,
-                    Vec<(PathBuf, std::time::SystemTime)>,
+                    Vec<(Utf8PathBuf, std::time::SystemTime)>,
                 > = std::collections::HashMap::new();
                 for entry in std::fs::read_dir(&stages_dir)? {
                     let entry = entry?;
-                    let path = entry.path();
+                    let path = match Utf8PathBuf::try_from(entry.path()) {
+                        Ok(p) => p,
+                        Err(_) => continue,
+                    };
                     if !path.is_file() {
                         continue;
                     }
-                    let fname = path
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("")
-                        .to_string();
+                    let fname = path.file_name().unwrap_or("").to_string();
                     // stage3-riscv64-... → arch = riscv64
                     let arch = fname
                         .strip_prefix("stage3-")
@@ -614,7 +616,7 @@ async fn main() -> anyhow::Result<()> {
                         files.get(1..).unwrap_or(&[])
                     };
                     for (path, _) in to_remove {
-                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
+                        let name = path.file_name().unwrap_or("?");
                         if cli.dry_run {
                             println!("Would remove stage: {name}");
                         } else {

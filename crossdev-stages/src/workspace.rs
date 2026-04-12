@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::error::{Error, Result};
 
@@ -13,7 +13,7 @@ const LOGS: &str = "logs";
 /// Manages the on-disk cache layout:
 /// ~/.cache/crossdev-stages/{stages,sandboxes,targets,builds,sysroots}/
 pub struct Workspace {
-    base: PathBuf,
+    base: Utf8PathBuf,
 }
 
 impl Workspace {
@@ -23,35 +23,35 @@ impl Workspace {
         Ok(Self { base })
     }
 
-    pub fn base(&self) -> &Path {
+    pub fn base(&self) -> &Utf8Path {
         &self.base
     }
 
-    pub fn stages_dir(&self) -> PathBuf {
+    pub fn stages_dir(&self) -> Utf8PathBuf {
         self.base.join(STAGES)
     }
 
-    pub fn sandboxes_dir(&self) -> PathBuf {
+    pub fn sandboxes_dir(&self) -> Utf8PathBuf {
         self.base.join(SANDBOXES)
     }
 
-    pub fn targets_dir(&self) -> PathBuf {
+    pub fn targets_dir(&self) -> Utf8PathBuf {
         self.base.join(TARGETS)
     }
 
-    pub fn builds_dir(&self) -> PathBuf {
+    pub fn builds_dir(&self) -> Utf8PathBuf {
         self.base.join(BUILDS)
     }
 
-    pub fn sysroots_dir(&self) -> PathBuf {
+    pub fn sysroots_dir(&self) -> Utf8PathBuf {
         self.base.join(SYSROOTS)
     }
 
-    pub fn sysroot(&self, name: &str) -> PathBuf {
+    pub fn sysroot(&self, name: &str) -> Utf8PathBuf {
         self.sysroots_dir().join(name)
     }
 
-    pub fn logs_dir(&self) -> PathBuf {
+    pub fn logs_dir(&self) -> Utf8PathBuf {
         self.base.join(LOGS)
     }
 
@@ -70,31 +70,31 @@ impl Workspace {
         Ok(())
     }
 
-    pub fn sandbox(&self, name: &str) -> PathBuf {
+    pub fn sandbox(&self, name: &str) -> Utf8PathBuf {
         self.sandboxes_dir().join(name)
     }
 
-    pub fn target(&self, name: &str) -> PathBuf {
+    pub fn target(&self, name: &str) -> Utf8PathBuf {
         self.targets_dir().join(name)
     }
 
     /// Return all sandbox directories, newest first (by mtime).
-    pub fn list_sandboxes(&self) -> Result<Vec<PathBuf>> {
+    pub fn list_sandboxes(&self) -> Result<Vec<Utf8PathBuf>> {
         list_dirs_by_mtime(&self.sandboxes_dir())
     }
 
     /// Return all target directories, newest first (by mtime).
-    pub fn list_targets(&self) -> Result<Vec<PathBuf>> {
+    pub fn list_targets(&self) -> Result<Vec<Utf8PathBuf>> {
         list_dirs_by_mtime(&self.targets_dir())
     }
 
     /// Return all build directories, newest first (by mtime).
-    pub fn list_builds(&self) -> Result<Vec<PathBuf>> {
+    pub fn list_builds(&self) -> Result<Vec<Utf8PathBuf>> {
         list_dirs_by_mtime(&self.builds_dir())
     }
 
     /// Resolve a sandbox by name or fall back to the most recently modified one.
-    pub fn resolve_sandbox(&self, name: Option<&str>) -> Result<PathBuf> {
+    pub fn resolve_sandbox(&self, name: Option<&str>) -> Result<Utf8PathBuf> {
         match name {
             Some(n) => {
                 let p = self.sandbox(n);
@@ -113,7 +113,7 @@ impl Workspace {
     }
 
     /// Resolve a target by name or fall back to the most recently modified one.
-    pub fn resolve_target(&self, name: Option<&str>) -> Result<PathBuf> {
+    pub fn resolve_target(&self, name: Option<&str>) -> Result<Utf8PathBuf> {
         match name {
             Some(n) => {
                 let p = self.target(n);
@@ -132,26 +132,29 @@ impl Workspace {
     }
 }
 
-fn dirs_next() -> PathBuf {
+fn dirs_next() -> Utf8PathBuf {
     // ~/.cache
-    if let Some(cache) = std::env::var_os("XDG_CACHE_HOME") {
-        PathBuf::from(cache)
+    if let Ok(cache) = std::env::var("XDG_CACHE_HOME") {
+        Utf8PathBuf::from(cache)
     } else {
-        let home = std::env::var_os("HOME").unwrap_or_default();
-        PathBuf::from(home).join(".cache")
+        let home = std::env::var("HOME").unwrap_or_default();
+        Utf8PathBuf::from(home).join(".cache")
     }
 }
 
-fn list_dirs_by_mtime(dir: &Path) -> Result<Vec<PathBuf>> {
+fn list_dirs_by_mtime(dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>> {
     if !dir.exists() {
         return Ok(vec![]);
     }
-    let mut entries: Vec<(PathBuf, std::time::SystemTime)> = std::fs::read_dir(dir)?
+    let mut entries: Vec<(Utf8PathBuf, std::time::SystemTime)> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir())
         .filter_map(|e| {
+            let path = Utf8PathBuf::try_from(e.path()).ok()?;
+            if !path.is_dir() {
+                return None;
+            }
             let mtime = e.metadata().ok()?.modified().ok()?;
-            Some((e.path(), mtime))
+            Some((path, mtime))
         })
         .collect();
     entries.sort_by(|a, b| b.1.cmp(&a.1));
@@ -159,7 +162,7 @@ fn list_dirs_by_mtime(dir: &Path) -> Result<Vec<PathBuf>> {
 }
 
 /// Read the `.arch` marker file from a sandbox/target directory.
-pub fn read_arch(dir: &Path) -> Option<String> {
+pub fn read_arch(dir: &Utf8Path) -> Option<String> {
     std::fs::read_to_string(dir.join(".arch"))
         .ok()
         .map(|s| s.trim().to_string())

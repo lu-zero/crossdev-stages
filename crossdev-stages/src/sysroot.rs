@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::board::BoardConfig;
 use crate::container::{self, destroy_dir};
@@ -15,7 +15,7 @@ use crate::workspace::Workspace;
 ///
 /// Boards with the same SYSROOT name share a sysroot and its PKGDIR cache.
 pub struct Sysroot {
-    pub dir: PathBuf,
+    pub dir: Utf8PathBuf,
 }
 
 #[derive(Debug)]
@@ -52,7 +52,7 @@ impl Sysroot {
     ) -> Result<Self> {
         let dir = ws.sysroot(name);
         if dir.is_dir() && dir.join(".cflags").exists() {
-            println!("Sysroot '{name}' already exists at {}", dir.display());
+            println!("Sysroot '{name}' already exists at {dir}");
             return Ok(Self { dir });
         }
 
@@ -105,7 +105,7 @@ impl Sysroot {
             chrono::Utc::now().format("%Y%m%dT%H%M%SZ").to_string(),
         )?;
 
-        println!("Sysroot '{name}' created at {}", dir.display());
+        println!("Sysroot '{name}' created at {dir}");
         Ok(Self { dir })
     }
 }
@@ -119,14 +119,14 @@ pub fn list(ws: &Workspace) -> Result<Vec<SysrootInfo>> {
     let mut result = Vec::new();
     for entry in std::fs::read_dir(&sdir)? {
         let entry = entry?;
-        let path = entry.path();
+        let path = match Utf8PathBuf::try_from(entry.path()) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
         if !path.is_dir() {
             continue;
         }
-        let name = entry
-            .file_name()
-            .into_string()
-            .unwrap_or_else(|_| "???".into());
+        let name = path.file_name().unwrap_or("???").to_string();
         let cflags = std::fs::read_to_string(path.join(".cflags"))
             .unwrap_or_else(|_| "(unknown)".into())
             .trim()
@@ -156,7 +156,7 @@ pub fn destroy(ws: &Workspace, name: &str) -> Result<()> {
 // ── Internal helpers ────────────────────────────────────────────────────────
 
 fn configure_sysroot_portage(
-    sysroot_dir: &Path,
+    sysroot_dir: &Utf8Path,
     target_arch: &str,
     chost: &str,
     crossdev_root: &str,
@@ -216,7 +216,7 @@ fn configure_sysroot_portage(
     Ok(())
 }
 
-fn write_portage_env(sysroot_dir: &Path) -> Result<()> {
+fn write_portage_env(sysroot_dir: &Utf8Path) -> Result<()> {
     let portage = sysroot_dir.join("etc/portage");
     std::fs::create_dir_all(portage.join("env"))?;
     std::fs::create_dir_all(portage.join("package.env"))?;
@@ -274,7 +274,7 @@ fn write_portage_env(sysroot_dir: &Path) -> Result<()> {
 }
 
 /// Apply per-package CFLAGS workarounds from board config.
-pub fn apply_workarounds(sysroot_dir: &Path, board: &BoardConfig) -> Result<()> {
+pub fn apply_workarounds(sysroot_dir: &Utf8Path, board: &BoardConfig) -> Result<()> {
     if board.workaround_pkgs.is_empty() {
         return Ok(());
     }

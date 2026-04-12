@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::container::{destroy_dir, unpack_tarball};
 use crate::error::{Error, Result};
@@ -9,27 +9,27 @@ use crate::workspace::Workspace;
 
 /// A Gentoo target sysroot: a cross-compiled base system for the target arch.
 pub struct Target {
-    pub dir: PathBuf,
+    pub dir: Utf8PathBuf,
     pub arch: String,
 }
 
 impl Target {
-    pub fn open(dir: PathBuf) -> Result<Self> {
+    pub fn open(dir: Utf8PathBuf) -> Result<Self> {
         let arch = std::fs::read_to_string(dir.join(".arch"))
             .map(|s| s.trim().to_string())
-            .map_err(|_| Error::TargetNotFound(dir.display().to_string()))?;
+            .map_err(|_| Error::TargetNotFound(dir.to_string()))?;
         Ok(Self { dir, arch })
     }
 
     /// Create a new target by unpacking a stage3 into the targets directory.
     /// Writes a `.arch` marker on success.
-    pub fn create(ws: &Workspace, name: &str, arch: &str, stage_file: &Path) -> Result<Self> {
+    pub fn create(ws: &Workspace, name: &str, arch: &str, stage_file: &Utf8Path) -> Result<Self> {
         let dir = ws.target(name);
         if dir.is_dir() {
             tracing::info!("Target {} already exists, skipping unpack.", name);
             return Self::open(dir);
         }
-        tracing::info!("Unpacking stage3 into target {}…", dir.display());
+        tracing::info!("Unpacking stage3 into target {}…", dir);
         unpack_tarball(stage_file, &dir, ws.base())?;
         std::fs::write(dir.join(".arch"), arch)?;
         tracing::info!("Target {} created.", name);
@@ -53,7 +53,7 @@ impl Target {
         self.prepare_portage(sandbox, &chost)?;
 
         let runner = sandbox.runner().with_target(&self.dir);
-        tracing::info!("Logs at: {}", runner.log_dir().display());
+        tracing::info!("Logs at: {}", runner.log_dir());
         let portage = Portage::new(&runner);
 
         tracing::info!("Cross-emerging baselayout…");
@@ -143,12 +143,12 @@ impl Target {
         if src_profile_dir.is_dir() {
             let dst = portage_dir.join("profile");
             let status = std::process::Command::new("cp")
-                .args(["-a", src_profile_dir.to_str().unwrap(), dst.to_str().unwrap()])
+                .args(["-a", src_profile_dir.as_str(), dst.as_str()])
                 .status()?;
             if !status.success() {
                 return Err(Error::CommandFailed {
                     code: status.code().unwrap_or(-1),
-                    reason: format!("cp -a {} failed", src_profile_dir.display()),
+                    reason: format!("cp -a {src_profile_dir} failed"),
                 });
             }
         }
@@ -190,11 +190,7 @@ pub fn list(ws: &Workspace) -> Result<Vec<TargetInfo>> {
             let updated = std::fs::read_to_string(dir.join(".updated"))
                 .ok()
                 .map(|s| s.trim().to_string());
-            let name = dir
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_string();
+            let name = dir.file_name().unwrap_or("").to_string();
             TargetInfo {
                 name,
                 arch,
