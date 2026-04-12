@@ -347,28 +347,49 @@ pub fn build(
     };
 
     let total = steps_to_run.len();
+    let build_start = std::time::Instant::now();
+
     for (i, step) in steps_to_run.iter().enumerate() {
-        println!("==> [{}/{}] {}...", i + 1, total, step);
+        let step_start = std::time::Instant::now();
+        print!("==> [{}/{}] {}...", i + 1, total, step);
+
         let runner = board_runner(sandbox, sysroot, board)
             .with_target(&target.dir)
             .with_build(&bld.dir, &project_root(boards_root));
 
-        match *step {
+        let result = match *step {
             "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board,
-                |_r| default_deps(_r, sandbox, target, board, boards_root, sysroot))?,
+                |_r| default_deps(_r, sandbox, target, board, boards_root, sysroot)),
             "checkout" => run_step("checkout", "sources", &bld, &runner, boards_root, board,
-                |r| default_checkout(r, board))?,
+                |r| default_checkout(r, board)),
             "bootloader" => run_step("bootloader", "bootloader", &bld, &runner, boards_root, board,
-                |r| default_bootloader(r, board))?,
+                |r| default_bootloader(r, board)),
             "kernel" => run_step("kernel", "kernel", &bld, &runner, boards_root, board,
-                |r| default_kernel(r, board))?,
+                |r| default_kernel(r, board)),
             "assemble" => run_step("assemble", "assembled", &bld, &runner, boards_root, board,
-                |r| default_assemble(r, board))?,
+                |r| default_assemble(r, board)),
             "pack" => run_step("pack", "packed", &bld, &runner, boards_root, board,
-                |r| default_pack(r, board, &bld, boards_root))?,
-            other => tracing::warn!("Unknown step '{}', skipping.", other),
-        }
+                |r| default_pack(r, board, &bld, boards_root)),
+            other => { tracing::warn!("Unknown step '{}', skipping.", other); Ok(()) },
+        };
+
+        let elapsed = step_start.elapsed();
+        println!(" ({})", format_duration(elapsed));
+        result?;
     }
 
+    let total_elapsed = build_start.elapsed();
+    println!("Build complete: {}", format_duration(total_elapsed));
     Ok(())
+}
+
+fn format_duration(d: std::time::Duration) -> String {
+    let secs = d.as_secs();
+    if secs < 60 {
+        format!("{secs}s")
+    } else if secs < 3600 {
+        format!("{}m {}s", secs / 60, secs % 60)
+    } else {
+        format!("{}h {}m {}s", secs / 3600, (secs % 3600) / 60, secs % 60)
+    }
 }
