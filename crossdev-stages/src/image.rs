@@ -356,6 +356,7 @@ pub fn build(
     for (i, step) in steps_to_run.iter().enumerate() {
         let step_start = std::time::Instant::now();
         print!("==> [{}/{}] {}...", i + 1, total, step);
+        let _ = std::io::Write::flush(&mut std::io::stdout());
 
         let runner = board_runner(sandbox, sysroot, board)
             .with_target(&target.dir)
