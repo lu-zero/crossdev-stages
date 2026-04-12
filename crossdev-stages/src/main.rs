@@ -100,6 +100,27 @@ enum Commands {
         #[arg(long)]
         all: bool,
     },
+
+    /// Show build output and logs.
+    Logs {
+        /// Board name (shows latest build).
+        board: String,
+        /// Show only a specific step's output.
+        #[arg(long)]
+        step: Option<String>,
+    },
+
+    /// Export build artifacts to a directory.
+    Export {
+        /// Board name.
+        board: String,
+        /// Output directory (default: current directory).
+        #[arg(long, short)]
+        output: Option<Utf8PathBuf>,
+        /// Export all files, not just the final image.
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 // ── Sandbox subcommands ──────────────────────────────────────────────────────
@@ -634,6 +655,100 @@ async fn main() -> anyhow::Result<()> {
                 println!("{total} item(s) would be removed.");
             } else {
                 println!("{total} item(s) cleaned up.");
+            }
+        }
+
+        // ── Logs ────────────────────────────────────────────────────────────
+        Commands::Logs { board, step } => {
+            let builds = ws.list_builds()?;
+            let build = builds
+                .iter()
+                .filter_map(|dir| image::Build::open(dir.clone()))
+                .find(|b| b.board == board)
+                .ok_or_else(|| error::Error::BoardNotFound(format!("no builds for '{board}'")))?;
+
+            println!("Build: {}", build.dir);
+            println!("Board: {}", build.board);
+
+            let steps = ["deps", "sources", "bootloader", "kernel", "assembled", "packed"];
+            for s in &steps {
+                let marker = build.dir.join(format!(".{s}"));
+                if marker.exists() {
+                    let ts = std::fs::read_to_string(&marker).unwrap_or_default();
+                    let label = if step.as_deref() == Some(s) { " <--" } else { "" };
+                    println!("  {s}: {}{label}", ts.trim());
+                }
+            }
+
+            let log_dir = ws.logs_dir();
+            if let Some(ref step_name) = step {
+                let pattern = format!("{}-", board);
+                let mut found = false;
+                if log_dir.is_dir() {
+                    for entry in std::fs::read_dir(&log_dir)? {
+                        let entry = entry?;
+                        let name = entry.file_name().into_string().unwrap_or_default();
+                        if name.contains(&pattern) && name.contains(step_name) {
+                            println!("\n--- {} ---", name);
+                            let content = std::fs::read_to_string(entry.path())?;
+                            print!("{content}");
+                            found = true;
+                        }
+                    }
+                }
+                if !found {
+                    println!("\nNo log files found for step '{step_name}'.");
+                    println!("Portage logs may be at: {}/portage/", ws.logs_dir());
+                }
+            }
+        }
+
+        // ── Export ──────────────────────────────────────────────────────────
+        Commands::Export { board: board_name, output, all } => {
+            let builds = ws.list_builds()?;
+            let build = builds
+                .iter()
+                .filter_map(|dir| image::Build::open(dir.clone()))
+                .find(|b| b.board == board_name)
+                .ok_or_else(|| error::Error::BoardNotFound(format!("no builds for '{board_name}'")))?;
+
+            let out_dir = output.unwrap_or_else(|| Utf8PathBuf::from("."));
+            std::fs::create_dir_all(&out_dir)?;
+
+            if all {
+                let mut exported = 0;
+                for entry in std::fs::read_dir(&build.dir)? {
+                    let entry = entry?;
+                    let name = entry.file_name().into_string().unwrap_or_default();
+                    if name.starts_with('.') || !entry.path().is_file() {
+                        continue;
+                    }
+                    let dest = out_dir.join(&name);
+                    std::fs::copy(entry.path(), &dest)?;
+                    let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                    println!("{name} ({:.1}M)", size as f64 / 1_048_576.0);
+                    exported += 1;
+                }
+                println!("{exported} file(s) exported to {out_dir}");
+            } else {
+                let image_marker = build.dir.join(".image");
+                let img_name = std::fs::read_to_string(&image_marker)
+                    .map(|s| s.trim().to_string())
+                    .ok();
+
+                if let Some(name) = img_name {
+                    let src = build.dir.join(&name);
+                    if src.is_file() {
+                        let dest = out_dir.join(&name);
+                        std::fs::copy(&src, &dest)?;
+                        let size = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
+                        println!("{name} ({:.1}M) -> {dest}", size as f64 / 1_048_576.0);
+                    } else {
+                        println!("Image file missing: {src}");
+                    }
+                } else {
+                    println!("Build not packed yet. Run: crossdev-stages image build --board {board_name}");
+                }
             }
         }
     }

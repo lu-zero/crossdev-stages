@@ -304,7 +304,11 @@ fn default_pack(runner: &SandboxRunner, board: &BoardConfig, build: &Build, boar
     ))?;
 
     runner.run(&format!("xz -f -T0 -9 /build/{img_name}"))?;
-    println!("Image ready: {}/{img_name}.xz", build.dir);
+    let final_name = format!("{img_name}.xz");
+    println!("Image ready: {}/{final_name}", build.dir);
+
+    // Store artifact path in .packed marker for export
+    std::fs::write(build.dir.join(".image"), &final_name)?;
     Ok(())
 }
 
