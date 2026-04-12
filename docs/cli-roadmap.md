@@ -10,58 +10,36 @@ crossdev-stages
   image     list-boards|build|prune
   stages    list|fetch
   cleanup   [--all] [--dry-run]
+  logs      <board> [--step]
+  export    <board> [-o dir] [--all]
+  config    <board>
+  doctor
 ```
 
-## Planned
+## TODO
 
-### `logs` -- view build logs (like `docker logs`)
-```
-crossdev-stages logs <board>               # latest build log
-crossdev-stages logs <board> --step <step> # specific step
-crossdev-stages logs <board> --follow      # tail -f
-crossdev-stages logs --list                # list available logs
-```
-Requires: per-step log capture in run_step(), store in build dir.
+### CLI
+- [ ] `status` -- overview of sandboxes, sysroots, builds, boards
+- [ ] `enter <board>` -- shell with sysroot + build mounted
+- [ ] `cache list|size|clean` -- PKGDIR binary package management
+- [ ] `sandbox clone` -- cp -al for parallel builds
+- [ ] `logs --follow` -- tail -f style
+- [ ] `export --format raw` -- decompress before export
+- [ ] `image build --parallel` -- deps sequential, rest parallel
 
-### `export` -- export build artifacts
-```
-crossdev-stages export <board>                    # export latest image
-crossdev-stages export <board> --output /path/    # to specific dir
-crossdev-stages export <board> --format raw       # decompress (no xz)
-crossdev-stages export <board> --step bootloader  # export specific artifact (idbloader.img, u-boot.itb)
-```
-Skips internal files (.board, .done-* markers). Copies only the useful output.
+### Architecture
+- [ ] Library conversion (lib.rs) -- thin CLI wrapper over pub API
+- [ ] Workspace::at(path) -- custom workspace path for CI
+- [ ] Default package lists -- common base + per-board additions
+- [ ] rkbin DDR filename auto-detect -- glob instead of hardcoded path
 
-### `status` -- show build/sysroot/sandbox state
-```
-crossdev-stages status                   # overview of everything
-crossdev-stages status <board>           # board-specific: sysroot, latest build, steps done
-```
-
-### `config` -- show resolved board config
-```
-crossdev-stages config <board>           # print all resolved variables
-crossdev-stages config <board> --diff    # diff against defaults
-```
-Useful for debugging board.conf issues.
-
-### `enter` -- enter build sandbox with board context
-```
-crossdev-stages enter <board>            # shell in sandbox with sysroot + build mounted
-crossdev-stages enter <board> --step assemble  # shell at specific step's state
-```
-Like `docker exec` into a running/stopped container.
-
-### `cache` -- binary package cache management
-```
-crossdev-stages cache list               # list cached packages per sysroot
-crossdev-stages cache size               # disk usage
-crossdev-stages cache clean [--sysroot <name>]  # remove cached packages
-```
-
-### `doctor` -- diagnose common issues
-```
-crossdev-stages doctor                   # check sandbox, crossdev, sysroots, deps
-```
-Checks: sandbox exists + prepared, crossdev installed, sysroots valid,
-host deps present (pyelftools, pkg-resources, etc.).
+### Done
+- [x] logs, export, config, doctor, cleanup
+- [x] Bootloader modularize (opensbi.rs, uboot.rs)
+- [x] Hook convention (pre/post/override-{step}.sh)
+- [x] Source cache (bare repo references)
+- [x] Build timing per step
+- [x] Odroid M2 board config (aarch64)
+- [x] K230 firmware.py -> bash
+- [x] Smart bootloader defaults (OPENSBI_FW_TYPE, MAKE_FLAGS)
+- [x] pyelftools + pkg-resources host deps
