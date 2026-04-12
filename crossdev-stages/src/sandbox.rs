@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::board::BoardConfig;
 use crate::container::{destroy_dir, unpack_tarball, SandboxRunner};
@@ -9,28 +9,28 @@ use crate::workspace::Workspace;
 
 /// A Gentoo sandbox: an unpacked stage3 used as the host build environment.
 pub struct Sandbox {
-    pub dir: PathBuf,
+    pub dir: Utf8PathBuf,
     pub arch: String,
 }
 
 impl Sandbox {
     /// Open an existing sandbox directory, reading its `.arch` marker.
-    pub fn open(dir: PathBuf) -> Result<Self> {
+    pub fn open(dir: Utf8PathBuf) -> Result<Self> {
         let arch = std::fs::read_to_string(dir.join(".arch"))
             .map(|s| s.trim().to_string())
-            .map_err(|_| Error::SandboxNotFound(dir.display().to_string()))?;
+            .map_err(|_| Error::SandboxNotFound(dir.to_string()))?;
         Ok(Self { dir, arch })
     }
 
     /// Create a new sandbox by unpacking a stage3 tarball.
     /// Writes a `.arch` marker on success.
-    pub fn create(ws: &Workspace, name: &str, arch: &str, stage_file: &Path) -> Result<Self> {
+    pub fn create(ws: &Workspace, name: &str, arch: &str, stage_file: &Utf8Path) -> Result<Self> {
         let dir = ws.sandbox(name);
         if dir.is_dir() {
             tracing::info!("Sandbox {} already exists, skipping unpack.", name);
             return Self::open(dir);
         }
-        tracing::info!("Unpacking stage3 into {}…", dir.display());
+        tracing::info!("Unpacking stage3 into {}…", dir);
         unpack_tarball(stage_file, &dir, ws.base())?;
         std::fs::write(dir.join(".arch"), arch)?;
         tracing::info!("Sandbox {} created.", name);
@@ -231,7 +231,7 @@ impl Sandbox {
     /// Write portage config files for the cross-sysroot directly on the host fs.
     fn write_crossdev_portage(
         &self,
-        portage_dir: &Path,
+        portage_dir: &Utf8Path,
         arch: &str,
         chost: &str,
         cflags: &str,
@@ -331,11 +331,7 @@ pub fn list(ws: &Workspace) -> Result<Vec<SandboxInfo>> {
         .map(|dir| {
             let arch = crate::workspace::read_arch(&dir).unwrap_or_else(|| "unknown".into());
             let prepared = dir.join(".prepared").exists();
-            let name = dir
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_string();
+            let name = dir.file_name().unwrap_or("").to_string();
             SandboxInfo {
                 name,
                 arch,

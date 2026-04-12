@@ -1,5 +1,4 @@
-use std::path::{Path, PathBuf};
-
+use camino::{Utf8Path, Utf8PathBuf};
 use hakoniwa::{Container, Namespace, Runctl};
 
 use crate::error::{check_status, Result};
@@ -7,21 +6,21 @@ use crate::error::{check_status, Result};
 /// Abstraction over the hakoniwa container API, modeling the four
 /// `run*` variants from `sandbox-stage.sh`.
 pub struct SandboxRunner {
-    sandbox_dir: PathBuf,
+    sandbox_dir: Utf8PathBuf,
     /// Host directory bind-mounted read-write at /var/log inside the container.
-    log_dir: PathBuf,
+    log_dir: Utf8PathBuf,
     /// Extra (host_path, container_path) read-write bind mounts.
-    extra_rw: Vec<(PathBuf, String)>,
+    extra_rw: Vec<(Utf8PathBuf, String)>,
     /// Extra (host_path, container_path) read-only bind mounts.
-    extra_ro: Vec<(PathBuf, String)>,
+    extra_ro: Vec<(Utf8PathBuf, String)>,
     /// Absolute path to the project directory, mounted read-only at /scripts.
-    scripts_dir: Option<PathBuf>,
+    scripts_dir: Option<Utf8PathBuf>,
     /// Sysroot bind-mount: (host_path, /usr/$chost).
-    sysroot: Option<(PathBuf, String)>,
+    sysroot: Option<(Utf8PathBuf, String)>,
 }
 
 impl SandboxRunner {
-    pub fn new(sandbox_dir: &Path, log_dir: PathBuf) -> Self {
+    pub fn new(sandbox_dir: &Utf8Path, log_dir: Utf8PathBuf) -> Self {
         Self {
             sandbox_dir: sandbox_dir.to_path_buf(),
             log_dir,
@@ -32,12 +31,12 @@ impl SandboxRunner {
         }
     }
 
-    pub fn log_dir(&self) -> &Path {
+    pub fn log_dir(&self) -> &Utf8Path {
         &self.log_dir
     }
 
     /// Bind-mount `target_dir` read-write at `/target` (for cross-emerge).
-    pub fn with_target(mut self, target_dir: &Path) -> Self {
+    pub fn with_target(mut self, target_dir: &Utf8Path) -> Self {
         self.extra_rw
             .push((target_dir.to_path_buf(), "/target".into()));
         self
@@ -45,14 +44,14 @@ impl SandboxRunner {
 
     /// Set the sysroot to be bind-mounted at `/usr/$chost`.
     /// All subsequent run calls will include this mount.
-    pub fn with_sysroot(mut self, sysroot_dir: &Path, chost: &str) -> Self {
+    pub fn with_sysroot(mut self, sysroot_dir: &Utf8Path, chost: &str) -> Self {
         self.sysroot = Some((sysroot_dir.to_path_buf(), format!("/usr/{chost}")));
         self
     }
 
     /// Bind-mount `build_dir` read-write at `/build` (for kernel/bootloader builds).
     /// Also mounts `scripts_dir` read-only at `/scripts`.
-    pub fn with_build(mut self, build_dir: &Path, scripts_dir: &Path) -> Self {
+    pub fn with_build(mut self, build_dir: &Utf8Path, scripts_dir: &Utf8Path) -> Self {
         self.extra_rw
             .push((build_dir.to_path_buf(), "/build".into()));
         self.scripts_dir = Some(scripts_dir.to_path_buf());
@@ -132,22 +131,22 @@ impl SandboxRunner {
             .tmpfsmount("/dev/shm")
             // Explicit bind mount so portage logs are always reachable at
             // <sandbox_dir>/var/log/ from the host.
-            .bindmount_rw(self.log_dir.to_str().unwrap_or_default(), "/var/log");
+            .bindmount_rw(self.log_dir.as_str(), "/var/log");
         // Map caller → root, plus subordinate IDs for portage user etc.
         c.uidmaps(&uid_maps());
         c.gidmaps(&gid_maps());
 
         for (host, cpath) in &self.extra_rw {
-            c.bindmount_rw(host.to_str().unwrap_or_default(), cpath);
+            c.bindmount_rw(host.as_str(), cpath);
         }
         for (host, cpath) in &self.extra_ro {
-            c.bindmount_ro(host.to_str().unwrap_or_default(), cpath);
+            c.bindmount_ro(host.as_str(), cpath);
         }
         if let Some(ref scripts) = self.scripts_dir {
-            c.bindmount_ro(scripts.to_str().unwrap_or_default(), "/scripts");
+            c.bindmount_ro(scripts.as_str(), "/scripts");
         }
         if let Some((ref host_path, ref container_path)) = self.sysroot {
-            c.bindmount_rw(host_path.to_str().unwrap_or_default(), container_path);
+            c.bindmount_rw(host_path.as_str(), container_path);
         }
         c
     }
@@ -192,17 +191,14 @@ fn read_subid(user: &str, id: u32, path: &str) -> Option<(u32, u32)> {
 ///
 /// Runs `rm -rf` inside a container with the full subordinate uid/gid maps so
 /// that uid 0 inside can access files owned by portage and other system users.
-pub fn destroy_dir(dir: &Path, cache_base: &Path) -> Result<()> {
+pub fn destroy_dir(dir: &Utf8Path, cache_base: &Utf8Path) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }
-    let cache_str = cache_base.to_str().unwrap_or_default();
     let dir_in_container = format!(
         "/cache/{}",
         dir.strip_prefix(cache_base)
             .unwrap_or(dir)
-            .to_str()
-            .unwrap_or_default()
     );
 
     let mut container = Container::new();
@@ -214,7 +210,7 @@ pub fn destroy_dir(dir: &Path, cache_base: &Path) -> Result<()> {
         .devfsmount("/dev")
         .tmpfsmount("/tmp")
         .tmpfsmount("/dev/shm")
-        .bindmount_rw(cache_str, "/cache")
+        .bindmount_rw(cache_base.as_str(), "/cache")
         .runctl(Runctl::AllowNewPrivs);
     container.uidmaps(&uid_maps());
     container.gidmaps(&gid_maps());
@@ -231,26 +227,17 @@ pub fn destroy_dir(dir: &Path, cache_base: &Path) -> Result<()> {
 /// are available from the host system).  The entire cache base directory is
 /// bind-mounted read-write at `/cache` so that both the source tarball and
 /// the destination directory are reachable inside the container.
-pub fn unpack_tarball(stage_file: &Path, dest_dir: &Path, cache_base: &Path) -> Result<()> {
+pub fn unpack_tarball(stage_file: &Utf8Path, dest_dir: &Utf8Path, cache_base: &Utf8Path) -> Result<()> {
     std::fs::create_dir_all(dest_dir)?;
 
-    let cache_str = cache_base.to_str().unwrap_or_default();
     // Paths inside the container: /cache/<relative_to_cache_base>
     let stage_in_container = format!(
         "/cache/{}",
-        stage_file
-            .strip_prefix(cache_base)
-            .unwrap_or(stage_file)
-            .to_str()
-            .unwrap_or_default()
+        stage_file.strip_prefix(cache_base).unwrap_or(stage_file)
     );
     let dest_in_container = format!(
         "/cache/{}",
-        dest_dir
-            .strip_prefix(cache_base)
-            .unwrap_or(dest_dir)
-            .to_str()
-            .unwrap_or_default()
+        dest_dir.strip_prefix(cache_base).unwrap_or(dest_dir)
     );
 
     let mut container = Container::new();
@@ -262,7 +249,7 @@ pub fn unpack_tarball(stage_file: &Path, dest_dir: &Path, cache_base: &Path) -> 
         .devfsmount("/dev")
         .tmpfsmount("/tmp")
         .tmpfsmount("/dev/shm")
-        .bindmount_rw(cache_str, "/cache")
+        .bindmount_rw(cache_base.as_str(), "/cache")
         .runctl(Runctl::AllowNewPrivs);
     container.uidmaps(&uid_maps());
     container.gidmaps(&gid_maps());
