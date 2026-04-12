@@ -22,7 +22,7 @@ LABEL 01studio
 EXTEOF
 
 # K230 firmware header for u-boot SPL
-python3 /scripts/boards/k230/make-k230-firmware.py \
+bash /scripts/boards/k230/make-k230-firmware.sh \
     -i /build/u-boot/spl/u-boot-spl.bin \
     -o /build/u-boot/fn_u-boot-spl.bin
 
