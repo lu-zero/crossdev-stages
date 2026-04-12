@@ -116,7 +116,7 @@ fn run_board_script(board_name: &str, script: &str) -> String {
     format!(
         "set -e\nexport LDCONFIG=/usr/local/bin/ldconfig\n\
          source /scripts/boards/{name}/board.conf\n\
-         bash /scripts/boards/{name}/{script}",
+         source /scripts/boards/{name}/{script}",
         name = board_name,
     )
 }
