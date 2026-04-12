@@ -67,7 +67,7 @@ enum Commands {
 
     /// Manage target sysroots.
     Target {
-        /// Target architecture (overrides .arch marker; defaults to riscv64 for setup).
+        /// Target architecture (overrides .arch marker; required for setup/create).
         #[arg(long, global = true)]
         arch: Option<String>,
         /// Sandbox name (default: most-recently-modified).
@@ -123,8 +123,8 @@ enum SandboxCmd {
     },
     /// Set up the crossdev cross-compiler toolchain inside a sandbox.
     Crossdev {
-        /// Target architecture to set up crossdev for.
-        #[arg(long, default_value = "riscv64")]
+        /// Target architecture to set up crossdev for (e.g. riscv64, aarch64).
+        #[arg(long)]
         arch: String,
         /// Board to read BOARD_CFLAGS and workarounds from.
         #[arg(long)]
@@ -219,12 +219,12 @@ enum ImageCmd {
 enum StagesCmd {
     /// List available stage3 variants for an architecture.
     List {
-        #[arg(long, default_value = "riscv64")]
+        #[arg(long, default_value = std::env::consts::ARCH)]
         arch: String,
     },
     /// Download the stage3 for an architecture.
     Fetch {
-        #[arg(long, default_value = "riscv64")]
+        #[arg(long, default_value = std::env::consts::ARCH)]
         arch: String,
     },
 }
@@ -316,7 +316,9 @@ async fn main() -> anyhow::Result<()> {
                     }
                 }
                 TargetCmd::Setup { name } => {
-                    let resolved_arch = arch.unwrap_or_else(|| "riscv64".to_string());
+                    let resolved_arch = arch.ok_or_else(|| {
+                        anyhow::anyhow!("--arch is required for target setup")
+                    })?;
                     let stage_file =
                         stage::fetch(&ws.stages_dir(), &resolved_arch, mirror).await?;
                     let name = name.unwrap_or_else(|| {
