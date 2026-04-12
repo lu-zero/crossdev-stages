@@ -5,6 +5,7 @@ mod error;
 mod image;
 mod portage;
 mod sandbox;
+mod source_cache;
 mod stage;
 mod sysroot;
 mod target;

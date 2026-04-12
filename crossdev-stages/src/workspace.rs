@@ -8,6 +8,7 @@ const SANDBOXES: &str = "sandboxes";
 const TARGETS: &str = "targets";
 const BUILDS: &str = "builds";
 const SYSROOTS: &str = "sysroots";
+const SOURCES: &str = "sources";
 const LOGS: &str = "logs";
 
 /// Manages the on-disk cache layout:
@@ -51,6 +52,10 @@ impl Workspace {
         self.sysroots_dir().join(name)
     }
 
+    pub fn sources_dir(&self) -> Utf8PathBuf {
+        self.base.join(SOURCES)
+    }
+
     pub fn logs_dir(&self) -> Utf8PathBuf {
         self.base.join(LOGS)
     }
@@ -63,6 +68,7 @@ impl Workspace {
             self.targets_dir(),
             self.builds_dir(),
             self.sysroots_dir(),
+            self.sources_dir(),
             self.logs_dir(),
         ] {
             std::fs::create_dir_all(&dir)?;

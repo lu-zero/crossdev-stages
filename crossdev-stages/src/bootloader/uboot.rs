@@ -2,23 +2,15 @@ use crate::board::BoardConfig;
 use crate::container::SandboxRunner;
 use crate::error::Result;
 
-/// Clone the U-Boot source tree into /build/u-boot.
-/// No-op if the board has no u_boot_repo configured.
+/// Clone U-Boot into /build/u-boot, using bare repo cache at /cache/sources/.
 pub fn clone(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     if let (Some(repo), Some(tag)) = (&board.u_boot_repo, &board.u_boot_tag) {
-        runner.run(&format!(
-            "git clone --depth=1 --branch {tag} {repo} /build/u-boot"
-        ))?;
+        crate::source_cache::cached_clone(runner, repo, tag, "/build/u-boot", "u-boot")?;
     }
     Ok(())
 }
 
 /// Build U-Boot with extra flags from board.conf.
-///
-/// Reads `U_BOOT_MAKE_FLAGS` for extra make arguments
-/// (e.g. "OPENSBI=/build/opensbi/.../fw_dynamic.bin").
-///
-/// No-op if the board has no u_boot_defconfig configured.
 pub fn build(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     if let Some(defconfig) = &board.u_boot_defconfig {
         let karch = board.kernel_arch.as_deref().ok_or_else(|| {

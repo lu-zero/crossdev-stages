@@ -173,15 +173,15 @@ fn default_checkout(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     crate::bootloader::uboot::clone(runner, board)?;
     if let Some(repo) = &board.firmware_repo {
         let tag = board.u_boot_tag.as_deref().unwrap_or("main");
-        runner.run(&format!(
-            "git clone --depth=1 --branch {tag} {repo} /build/firmware"
-        ))?;
+        crate::source_cache::cached_clone(runner, repo, tag, "/build/firmware", "firmware")?;
     }
-    runner.run(&format!(
-        "git clone --depth=1 --branch {tag} {repo} /build/linux",
-        tag = board.kernel_tag,
-        repo = board.kernel_repo,
-    ))
+    crate::source_cache::cached_clone(
+        runner,
+        &board.kernel_repo,
+        &board.kernel_tag,
+        "/build/linux",
+        &format!("linux-{}", board.name),
+    )
 }
 
 fn default_bootloader(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
@@ -355,7 +355,8 @@ pub fn build(
 
         let runner = board_runner(sandbox, sysroot, board)
             .with_target(&target.dir)
-            .with_build(&bld.dir, &project_root(boards_root));
+            .with_build(&bld.dir, &project_root(boards_root))
+            .with_cache(ws.base());
 
         let result = match *step {
             "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board,
