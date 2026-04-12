@@ -11,8 +11,6 @@ use crate::sysroot::Sysroot;
 use crate::target::Target;
 use crate::workspace::Workspace;
 
-/// Derive the project root from `boards_root` (its parent).
-/// Bash mounts $BASE_DIR at /scripts, so /scripts/boards/<name>/... works.
 fn project_root(boards_root: &Utf8Path) -> Utf8PathBuf {
     boards_root
         .parent()
@@ -20,16 +18,15 @@ fn project_root(boards_root: &Utf8Path) -> Utf8PathBuf {
         .to_path_buf()
 }
 
-/// One timestamped build directory: `builds/<board>-<timestamp>`.
+// ── Build directory ─────────────────────────────────────────────────────────
+
 pub struct Build {
     pub dir: Utf8PathBuf,
     pub board: String,
 }
 
 impl Build {
-    /// Reuse latest incomplete build for this board, or create a fresh one.
     pub fn create(ws: &Workspace, board: &str) -> Result<Self> {
-        // Try to reuse latest incomplete (not yet packed) build for this board
         if let Ok(builds) = ws.list_builds() {
             for dir in builds {
                 if let Some(b) = Self::open(dir.clone()) {
@@ -51,7 +48,6 @@ impl Build {
         })
     }
 
-    /// Open an existing build directory.
     pub fn open(dir: Utf8PathBuf) -> Option<Self> {
         let board = std::fs::read_to_string(dir.join(".board"))
             .ok()
@@ -73,30 +69,76 @@ impl Build {
     }
 }
 
-/// Install host-side and target-side packages required for this board.
-pub fn install_deps(
+// ── Step runner with file-convention hooks ───────────────────────────────────
+//
+// For each step, check boards/<name>/ for:
+//   override-{step}.sh  →  replaces Rust default entirely
+//   pre-{step}.sh       →  runs before Rust default
+//   post-{step}.sh      →  runs after Rust default
+
+fn run_step(
+    step: &str,
+    marker: &str,
     build: &Build,
+    runner: &SandboxRunner,
+    boards_root: &Utf8Path,
+    board: &BoardConfig,
+    default_fn: impl FnOnce(&SandboxRunner) -> Result<()>,
+) -> Result<()> {
+    if build.is_done(marker) {
+        return Ok(());
+    }
+
+    let board_dir = boards_root.join(&board.name);
+
+    let override_sh = format!("override-{step}.sh");
+    if board_dir.join(&override_sh).exists() {
+        runner.run(&run_board_script(&board.name, &override_sh))?;
+        return build.mark_done(marker);
+    }
+
+    let pre_sh = format!("pre-{step}.sh");
+    if board_dir.join(&pre_sh).exists() {
+        runner.run(&run_board_script(&board.name, &pre_sh))?;
+    }
+
+    default_fn(runner)?;
+
+    let post_sh = format!("post-{step}.sh");
+    if board_dir.join(&post_sh).exists() {
+        runner.run(&run_board_script(&board.name, &post_sh))?;
+    }
+
+    build.mark_done(marker)
+}
+
+fn run_board_script(board_name: &str, script: &str) -> String {
+    format!(
+        "set -e\nexport LDCONFIG=/usr/local/bin/ldconfig\n\
+         source /scripts/boards/{name}/board.conf\n\
+         bash /scripts/boards/{name}/{script}",
+        name = board_name,
+    )
+}
+
+// ── Default implementations ─────────────────────────────────────────────────
+
+fn default_deps(
+    _runner: &SandboxRunner,
     sandbox: &Sandbox,
     target: &Target,
     board: &BoardConfig,
     boards_root: &Utf8Path,
     sysroot: Option<&Sysroot>,
 ) -> Result<()> {
-    if build.is_done("deps") {
-        return Ok(());
-    }
-    tracing::info!("[{}] Installing board dependencies…", board.name);
-
-    // Host-side extras from boards/<name>/sandbox-packages.txt
-    let sandbox_pkgs = boards_root.join(&board.name).join("sandbox-packages.txt");
-    // Apply sysroot workarounds
     if let Some(sr) = sysroot {
         crate::sysroot::apply_workarounds(&sr.dir, board)?;
     }
 
+    let sandbox_pkgs = boards_root.join(&board.name).join("sandbox-packages.txt");
     if sandbox_pkgs.exists() {
-        let runner = board_runner(sandbox, sysroot, board);
-        let portage = Portage::new(&runner);
+        let host_runner = board_runner(sandbox, sysroot, board);
+        let portage = Portage::new(&host_runner);
         let content = std::fs::read_to_string(&sandbox_pkgs)?;
         let pkgs: Vec<&str> = content
             .lines()
@@ -108,7 +150,6 @@ pub fn install_deps(
         }
     }
 
-    // Target-side extras from boards/<name>/target-packages.txt
     let target_pkgs = boards_root.join(&board.name).join("target-packages.txt");
     if target_pkgs.exists() {
         let content = std::fs::read_to_string(&target_pkgs)?;
@@ -118,42 +159,18 @@ pub fn install_deps(
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .collect();
         if !pkgs.is_empty() {
-            let runner = board_runner(sandbox, sysroot, board).with_target(&target.dir);
-            let portage = Portage::new(&runner);
+            let target_runner = board_runner(sandbox, sysroot, board).with_target(&target.dir);
+            let portage = Portage::new(&target_runner);
             portage.cross_emerge(&board.chost(), &pkgs)?;
         }
     }
 
-    build.mark_done("deps")
+    Ok(())
 }
 
-/// Clone source repositories for bootloader, kernel, and optional firmware.
-pub fn checkout(
-    build: &Build,
-    sandbox: &Sandbox,
-    board: &BoardConfig,
-    boards_root: &Utf8Path,
-    sysroot: Option<&Sysroot>,
-) -> Result<()> {
-    if build.is_done("sources") {
-        return Ok(());
-    }
-    tracing::info!("[{}] Checking out sources…", board.name);
-
-    // If board.sh defines board_checkout(), delegate to it.
-    if board_has_func(boards_root, &board.name, "board_checkout") {
-        let runner = board_runner(sandbox, sysroot, board)
-            .with_build(&build.dir, &project_root(boards_root));
-        runner.run(&board_sh_call(&board.name, "board_checkout"))?;
-        build.mark_done("sources")?;
-        return Ok(());
-    }
-
-    let runner =
-        board_runner(sandbox, sysroot, board).with_build(&build.dir, &project_root(boards_root));
-
-    crate::bootloader::opensbi::clone(&runner, board)?;
-    crate::bootloader::uboot::clone(&runner, board)?;
+fn default_checkout(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+    crate::bootloader::opensbi::clone(runner, board)?;
+    crate::bootloader::uboot::clone(runner, board)?;
     if let Some(repo) = &board.firmware_repo {
         let tag = board.u_boot_tag.as_deref().unwrap_or("main");
         runner.run(&format!(
@@ -164,115 +181,62 @@ pub fn checkout(
         "git clone --depth=1 --branch {tag} {repo} /build/linux",
         tag = board.kernel_tag,
         repo = board.kernel_repo,
-    ))?;
-
-    build.mark_done("sources")
+    ))
 }
 
-/// Compile the bootloader (OpenSBI + U-Boot).
-pub fn build_bootloader(
-    build: &Build,
-    sandbox: &Sandbox,
-    board: &BoardConfig,
-    boards_root: &Utf8Path,
-    sysroot: Option<&Sysroot>,
-) -> Result<()> {
-    if build.is_done("bootloader") {
-        return Ok(());
-    }
-    tracing::info!("[{}] Building bootloader…", board.name);
-
-    let runner =
-        board_runner(sandbox, sysroot, board).with_build(&build.dir, &project_root(boards_root));
-
-    if board_has_func(boards_root, &board.name, "board_build_bootloader") {
-        runner.run(&board_sh_call(&board.name, "board_build_bootloader"))?;
-    } else {
-        crate::bootloader::opensbi::build(&runner, board)?;
-        crate::bootloader::uboot::build(&runner, board)?;
-    }
-
-    build.mark_done("bootloader")
+fn default_bootloader(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+    crate::bootloader::opensbi::build(runner, board)?;
+    crate::bootloader::uboot::build(runner, board)
 }
 
-/// Build the Linux kernel.
-pub fn build_kernel(
-    build: &Build,
-    sandbox: &Sandbox,
-    board: &BoardConfig,
-    boards_root: &Utf8Path,
-    sysroot: Option<&Sysroot>,
-) -> Result<()> {
-    if build.is_done("kernel") {
-        return Ok(());
-    }
-    tracing::info!("[{}] Building kernel…", board.name);
-
-    let runner =
-        board_runner(sandbox, sysroot, board).with_build(&build.dir, &project_root(boards_root));
-
-    if board_has_func(boards_root, &board.name, "board_build_kernel") {
-        runner.run(&board_sh_call(&board.name, "board_build_kernel"))?;
-    } else {
-        let karch =
-            board
-                .kernel_arch
-                .as_deref()
-                .ok_or_else(|| crate::error::Error::BoardConfigParse {
-                    file: board.name.clone(),
-                    msg: "KERNEL_ARCH required for kernel build".into(),
-                })?;
-        runner.run(&format!(
-            "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} {defconfig} && \
-             make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} -j$(nproc)",
-            cc = board.cross_compile,
-            defconfig = board.kernel_defconfig,
-        ))?;
-    }
-
-    build.mark_done("kernel")
-}
-
-/// Assemble the root filesystem: copy target sysroot, install modules, configure boot.
-pub fn assemble(
-    build: &Build,
-    sandbox: &Sandbox,
-    target: &Target,
-    board: &BoardConfig,
-    boards_root: &Utf8Path,
-    sysroot: Option<&Sysroot>,
-) -> Result<()> {
-    if build.is_done("assembled") {
-        return Ok(());
-    }
-    tracing::info!("[{}] Assembling root filesystem…", board.name);
-
-    let runner = board_runner(sandbox, sysroot, board)
-        .with_target(&target.dir)
-        .with_build(&build.dir, &project_root(boards_root));
-
-    // Create build directories.
-    runner.run("mkdir -p /build/gen/root /build/gen/boot")?;
-
-    // Copy target sysroot.
-    runner.run("cp -a /target/. /build/gen/root/")?;
-
-    // Install kernel modules.
+fn default_kernel(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     let karch =
         board
             .kernel_arch
             .as_deref()
             .ok_or_else(|| crate::error::Error::BoardConfigParse {
                 file: board.name.clone(),
-                msg: "KERNEL_ARCH required for modules_install".into(),
+                msg: "KERNEL_ARCH required for kernel build".into(),
             })?;
+    runner.run(&format!(
+        "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} {defconfig} && \
+         make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} -j$(nproc)",
+        cc = board.cross_compile,
+        defconfig = board.kernel_defconfig,
+    ))
+}
+
+fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+    let karch =
+        board
+            .kernel_arch
+            .as_deref()
+            .ok_or_else(|| crate::error::Error::BoardConfigParse {
+                file: board.name.clone(),
+                msg: "KERNEL_ARCH required for assemble".into(),
+            })?;
+
+    runner.run("mkdir -p /build/gen/root /build/gen/boot")?;
+    runner.run("cp -a /target/. /build/gen/root/")?;
+
     runner.run(&format!(
         "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} \
          INSTALL_MOD_PATH=/build/gen/root modules_install",
         cc = board.cross_compile,
     ))?;
 
-    // Enable services.
+    if let Some(dtb_glob) = &board.kernel_dtb_glob {
+        runner.run(&format!(
+            "cp /build/linux/{dtb_glob} /build/gen/boot/"
+        ))?;
+    }
+
+    if let Some(kname) = &board.kernel_name {
+        runner.run(&format!(
+            "cp /build/linux/arch/{karch}/boot/{kname} /build/gen/boot/"
+        ))?;
+    }
+
     runner
         .run("mkdir -p /build/gen/root/etc/runlevels/{boot,default,nonetwork,shutdown,sysinit}")?;
     for svc in &board.services {
@@ -283,14 +247,12 @@ pub fn assemble(
         }
     }
 
-    // Set hostname via /etc/conf.d/hostname (OpenRC style).
     runner.run(&format!(
         "mkdir -p /build/gen/root/etc/conf.d && \
          printf 'hostname=\"{}\"\n' > /build/gen/root/etc/conf.d/hostname",
         board.hostname
     ))?;
 
-    // Configure serial console via inittab.
     if let (Some(tty), Some(baud)) = (&board.serial_tty, &board.serial_baud) {
         runner.run(&format!(
             "echo 'x1:12345:respawn:/sbin/agetty {baud} {tty} linux' \
@@ -298,7 +260,6 @@ pub fn assemble(
         ))?;
     }
 
-    // Clear root password and configure SSH.
     runner.run("sed -i -e 's/root:x:/root::/' /build/gen/root/etc/passwd")?;
     runner.run(
         "mkdir -p /build/gen/root/etc/ssh && \
@@ -306,57 +267,24 @@ pub fn assemble(
          >> /build/gen/root/etc/ssh/sshd_config",
     )?;
 
-    // Update ldconfig in the assembled rootfs.
-    runner.run("/usr/local/bin/ldconfig -v -r /build/gen/root")?;
-
-    // Board-specific assembly overrides (after ldconfig, matching bash script order).
-    if board_has_func(boards_root, &board.name, "board_assemble") {
-        runner.run(&board_sh_call(&board.name, "board_assemble"))?;
-    } else {
-        // Default: copy DTBs, firmware overlay, host firmware, kernel image.
-        if let (Some(dtb_glob), Some(karch)) =
-            (&board.kernel_dtb_glob, board.kernel_arch.as_deref())
-        {
-            runner.run(&format!(
-                "cp /build/linux/arch/{karch}/boot/dts/{dtb_glob} /build/gen/boot/"
-            ))?;
-        }
-        if let (Some(overlay), Some(_)) = (&board.firmware_overlay, &board.firmware_repo) {
-            runner.run(&format!(
-                "mkdir -p /build/gen/root/lib/firmware && \
-                 cp -a /build/firmware/{overlay}/. /build/gen/root/lib/firmware/"
-            ))?;
-        }
-        for hfw in &board.host_firmware_paths {
-            runner.run(&format!("cp -a {hfw} /build/gen/root/lib/firmware/"))?;
-        }
-        if let Some(kname) = &board.kernel_name {
-            runner.run(&format!(
-                "cp /build/linux/arch/{karch}/boot/{kname} /build/gen/boot/",
-            ))?;
-        }
+    if let Some(dracut_modules) = &board.dracut_modules {
+        runner.run(&format!(
+            "kver=$(ls /build/gen/root/lib/modules/ | head -1) && \
+             [ -n \"$kver\" ] && \
+             dracutbasedir=/usr/lib/dracut \
+             DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
+               dracut -f --no-early-microcode --no-kernel \
+                 -m '{dracut_modules}' --gzip \
+                 --sysroot /build/gen/root \
+                 --tmpdir /tmp \
+                 /build/gen/boot/initramfs.img \"$kver\""
+        ))?;
     }
 
-    build.mark_done("assembled")
+    runner.run("/usr/local/bin/ldconfig -v -r /build/gen/root")
 }
 
-/// Pack the assembled rootfs into an image using genimage.
-pub fn pack(
-    build: &Build,
-    sandbox: &Sandbox,
-    board: &BoardConfig,
-    boards_root: &Utf8Path,
-    sysroot: Option<&Sysroot>,
-) -> Result<()> {
-    if build.is_done("packed") {
-        return Ok(());
-    }
-    tracing::info!("[{}] Packing image…", board.name);
-
-    let runner =
-        board_runner(sandbox, sysroot, board).with_build(&build.dir, &project_root(boards_root));
-
-    // Find genimage.cfg: board-specific first, then project default.
+fn default_pack(runner: &SandboxRunner, board: &BoardConfig, build: &Build, boards_root: &Utf8Path) -> Result<()> {
     let board_cfg = boards_root.join(&board.name).join("genimage.cfg");
     let cfg_path = if board_cfg.exists() {
         format!("/scripts/boards/{}/genimage.cfg", board.name)
@@ -375,43 +303,13 @@ pub fn pack(
          --inputpath /build --outputpath /build --rootpath /build/gen"
     ))?;
 
-    // Compress with xz
     runner.run(&format!("xz -f -T0 -9 /build/{img_name}"))?;
     println!("Image ready: {}/{img_name}.xz", build.dir);
-
-    build.mark_done("packed")
+    Ok(())
 }
 
-/// Shell snippet to source board.conf and board.sh, then call a function
-/// only if it's defined.
-///
-/// board.sh functions expect to call run_with_build() etc. which are bash
-/// wrappers from sandbox-stage.sh. Inside the Rust container, these don't
-/// exist. We provide stubs that execute the script argument directly
-/// (since we're already inside the sandbox with /build mounted).
-fn board_sh_call(board_name: &str, func: &str) -> String {
-    format!(
-        r#"run_with_build() {{ shift 2; eval "$@"; }}
-run_with_build_and_source() {{ shift 3; local a; while [[ $# -gt 0 && "$1" != "--" ]]; do shift; done; [[ "$1" == "--" ]] && shift; eval "$@"; }}
-export LDCONFIG="/usr/local/bin/ldconfig"
-source /scripts/boards/{name}/board.conf && source /scripts/boards/{name}/board.sh && \
-if type -t {func} &>/dev/null; then {func}; fi"#,
-        name = board_name,
-    )
-}
+// ── Helpers ─────────────────────────────────────────────────────────────────
 
-/// Check if a board.sh defines a specific function.
-fn board_has_func(boards_root: &Utf8Path, board_name: &str, func: &str) -> bool {
-    let board_sh = boards_root.join(board_name).join("board.sh");
-    if !board_sh.exists() {
-        return false;
-    }
-    std::fs::read_to_string(&board_sh)
-        .map(|s| s.contains(&format!("{func}()")))
-        .unwrap_or(false)
-}
-
-/// Return a runner with sysroot bound (if provided).
 fn board_runner(
     sandbox: &Sandbox,
     sysroot: Option<&Sysroot>,
@@ -425,7 +323,8 @@ fn board_runner(
     }
 }
 
-/// Run the full build pipeline for a board.
+// ── Pipeline ────────────────────────────────────────────────────────────────
+
 pub fn build(
     ws: &Workspace,
     sandbox: &Sandbox,
@@ -438,14 +337,7 @@ pub fn build(
     let bld = Build::create(ws, &board.name)?;
 
     let default_steps = if board.build_steps.is_empty() {
-        vec![
-            "deps",
-            "checkout",
-            "bootloader",
-            "kernel",
-            "assemble",
-            "pack",
-        ]
+        vec!["deps", "checkout", "bootloader", "kernel", "assemble", "pack"]
     } else {
         board.build_steps.iter().map(String::as_str).collect()
     };
@@ -457,14 +349,24 @@ pub fn build(
     let total = steps_to_run.len();
     for (i, step) in steps_to_run.iter().enumerate() {
         println!("==> [{}/{}] {}...", i + 1, total, step);
+        let runner = board_runner(sandbox, sysroot, board)
+            .with_target(&target.dir)
+            .with_build(&bld.dir, &project_root(boards_root));
+
         match *step {
-            "deps" => install_deps(&bld, sandbox, target, board, boards_root, sysroot)?,
-            "checkout" => checkout(&bld, sandbox, board, boards_root, sysroot)?,
-            "bootloader" => build_bootloader(&bld, sandbox, board, boards_root, sysroot)?,
-            "kernel" => build_kernel(&bld, sandbox, board, boards_root, sysroot)?,
-            "assemble" => assemble(&bld, sandbox, target, board, boards_root, sysroot)?,
-            "pack" => pack(&bld, sandbox, board, boards_root, sysroot)?,
-            other => tracing::warn!("Unknown build step '{}', skipping.", other),
+            "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board,
+                |_r| default_deps(_r, sandbox, target, board, boards_root, sysroot))?,
+            "checkout" => run_step("checkout", "sources", &bld, &runner, boards_root, board,
+                |r| default_checkout(r, board))?,
+            "bootloader" => run_step("bootloader", "bootloader", &bld, &runner, boards_root, board,
+                |r| default_bootloader(r, board))?,
+            "kernel" => run_step("kernel", "kernel", &bld, &runner, boards_root, board,
+                |r| default_kernel(r, board))?,
+            "assemble" => run_step("assemble", "assembled", &bld, &runner, boards_root, board,
+                |r| default_assemble(r, board))?,
+            "pack" => run_step("pack", "packed", &bld, &runner, boards_root, board,
+                |r| default_pack(r, board, &bld, boards_root))?,
+            other => tracing::warn!("Unknown step '{}', skipping.", other),
         }
     }
 
