@@ -59,6 +59,21 @@ pub fn default_cflags(arch: &str) -> &'static str {
     }
 }
 
+/// Space-separated union of every supported arch's LLVM target name.
+/// Used for the host sandbox's make.conf so the bundled LLVM inside
+/// `dev-lang/rust` (the crossdev bootstrap compiler) can target any
+/// arch we know how to cross-build for.
+pub fn all_llvm_targets() -> String {
+    let mut targets: Vec<&str> = ["x86_64", "aarch64", "arm", "riscv64", "mips",
+                                  "loongarch64", "powerpc64", "sparc64"]
+        .into_iter()
+        .filter_map(llvm_target)
+        .collect();
+    targets.sort();
+    targets.dedup();
+    targets.join(" ")
+}
+
 /// Map an OS arch to the LLVM target name for `LLVM_TARGETS`.
 pub fn llvm_target(arch: &str) -> Option<&'static str> {
     Some(match arch {
