@@ -189,8 +189,8 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
         "app-eselect/eselect-repository",
         "dev-lang/rust",
         "sys-kernel/gentoo-sources",
-        "dev-python/pyelftools",    // u-boot binman ELF parsing
-        "dev-python/pkg-resources", // u-boot binman (setuptools 82+ split)
+        "dev-python/pyelftools",
+        "dev-python/pkg-resources",
     ];
     tracing::info!("Installing build dependencies…");
     portage.emerge(&packages)?;
