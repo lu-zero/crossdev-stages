@@ -245,6 +245,9 @@ enum ImageCmd {
         sandbox: Option<String>,
         #[arg(long)]
         target: Option<String>,
+        /// Compression: xz (default), gz, none.
+        #[arg(long)]
+        compression: Option<String>,
         /// Specific steps to run (default: all steps from board.conf).
         steps: Vec<String>,
     },
@@ -465,9 +468,13 @@ async fn main() -> anyhow::Result<()> {
             board: board_name,
             sandbox,
             target,
+            compression,
             steps,
         }) => {
-            let board_cfg = board::load(&boards_root, &board_name)?;
+            let mut board_cfg = board::load(&boards_root, &board_name)?;
+            if let Some(c) = compression {
+                board_cfg.compression = Some(c);
+            }
 
             // Sysroot override: CLI flag > env > board.conf
             let sysroot_name = cli
@@ -539,9 +546,6 @@ async fn main() -> anyhow::Result<()> {
                     target::Target::create(&ws, &name, &board_cfg.arch, &stage_file)?
                 }
             };
-
-            // Ensure the target sysroot is bootstrapped (idempotent via .stage1 marker).
-            tgt.build_stage1(&sb)?;
 
             // Resolve sysroot
             let sr = if !sysroot_name.is_empty() {
@@ -1034,6 +1038,7 @@ fn default_board_config(arch: &str) -> board::BoardConfig {
         workaround_pkgs: vec![],
         workaround_cflags: vec![],
         image_name: None,
+        compression: None,
         testing: false,
     }
 }
