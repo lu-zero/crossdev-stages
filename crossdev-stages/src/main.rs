@@ -1,15 +1,4 @@
-mod board;
-mod bootloader;
-mod container;
-mod error;
-mod image;
-mod portage;
-mod sandbox;
-mod source_cache;
-mod stage;
-mod sysroot;
-mod target;
-mod workspace;
+use crossdev_stages::{board, error, image, sandbox, stage, sysroot, target, workspace};
 
 use camino::Utf8PathBuf;
 
@@ -48,6 +37,10 @@ struct Cli {
     /// Gentoo mirror URL to use for downloads.
     #[arg(long, global = true)]
     mirror: Option<String>,
+
+    /// Binary package host URL (sets PORTAGE_BINHOST).
+    #[arg(long, global = true)]
+    binhost: Option<String>,
 
     /// Override board's SYSROOT (for testing/debug).
     #[arg(long, global = true)]
