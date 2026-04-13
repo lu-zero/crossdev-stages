@@ -217,7 +217,7 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
             })?;
 
     runner.run("mkdir -p /build/gen/root /build/gen/boot")?;
-    runner.run("cp -a /target/. /build/gen/root/")?;
+    runner.run("rsync -a /target/ /build/gen/root/")?;
 
     runner.run(&format!(
         "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} \
@@ -351,6 +351,16 @@ pub fn build(
     sysroot: Option<&Sysroot>,
     steps: Option<&[String]>,
 ) -> Result<()> {
+    if !target.dir.join("sbin/init").exists() {
+        return Err(crate::error::Error::CommandFailed {
+            code: 1,
+            reason: format!(
+                "target {} has no /sbin/init. Use a stage3 target, not stage1.",
+                target.dir
+            ),
+        });
+    }
+
     let bld = Build::create(ws, &board.name)?;
 
     let default_steps = if board.build_steps.is_empty() {
