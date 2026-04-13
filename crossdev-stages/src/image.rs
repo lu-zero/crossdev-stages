@@ -308,13 +308,13 @@ fn default_pack(runner: &SandboxRunner, board: &BoardConfig, build: &Build, boar
             img_name.clone()
         }
         "gz" | "gzip" => {
-            runner.run(&format!("gzip -f -9 /build/{img_name}"))?;
+            runner.run(&format!("gzip -fv -9 /build/{img_name}"))?;
             let name = format!("{img_name}.gz");
             println!("Image ready: {}/{name}", build.dir);
             name
         }
         _ => {
-            runner.run(&format!("xz -f -T0 -9 /build/{img_name}"))?;
+            runner.run(&format!("xz -fv -T0 -9 /build/{img_name}"))?;
             let name = format!("{img_name}.xz");
             println!("Image ready: {}/{name}", build.dir);
             name
