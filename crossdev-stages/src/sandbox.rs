@@ -143,66 +143,6 @@ impl Sandbox {
         Ok(())
     }
 
-    /// Prepare host sandbox for cross-compilation: gcc-16, crossdev overlay,
-    /// cross-compiler toolchain. Does NOT configure the sysroot (that's in
-    /// sysroot::create). Idempotent via `.crossdev-host-<arch>` marker.
-    pub fn prepare_crossdev_host(&self, target_arch: &str, _board: &BoardConfig) -> Result<()> {
-        let marker = self.dir.join(format!(".crossdev-host-{target_arch}"));
-        if marker.exists() {
-            tracing::info!("Host crossdev for {target_arch} already prepared, skipping.");
-            return Ok(());
-        }
-
-        let chost = format!("{target_arch}-unknown-linux-gnu");
-        let runner = self.runner();
-
-        tracing::info!("Creating crossdev overlay...");
-        runner.run(
-            "eselect repository list -i | grep -q crossdev \
-             || eselect repository create crossdev",
-        )?;
-
-        // Accept unstable packages
-        runner.run(&format!(
-            "echo 'cross-{chost}/rust-std **' \
-             > /etc/portage/package.accept_keywords/rust-std"
-        ))?;
-        runner.run(
-            "echo '<sys-devel/gcc-16.0.9999:16 **' \
-             > /etc/portage/package.accept_keywords/gcc",
-        )?;
-        runner.run("mkdir -p /etc/portage/package.accept_keywords /etc/portage/package.mask")?;
-
-        // Install gcc-16 on host
-        tracing::info!("Emerging gcc:16 (host)...");
-        runner.run("emerge -b -k sys-devel/gcc:16")?;
-        let gcc_profile =
-            runner.run_output("gcc-config -l | grep '16' | head -n1 | awk '{print $2}'")?;
-        runner.run(&format!("gcc-config {gcc_profile}"))?;
-        runner.run("source /etc/profile && env-update")?;
-
-        // Install crossdev cross-compiler
-        let gcc_ver =
-            runner.run_output("qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'")?;
-        if gcc_ver.is_empty() {
-            return Err(Error::CommandFailed {
-                code: 1,
-                reason: "Could not determine gcc-16 version".into(),
-            });
-        }
-        tracing::info!("Running crossdev for {chost}...");
-        runner.run(&format!(
-            "crossdev {chost} --gcc {gcc_ver} \
-             --ex-pkg sys-devel/clang-crossdev-wrappers \
-             --ex-pkg sys-devel/rust-std"
-        ))?;
-        runner.run(&format!("gcc-config {chost}-16 && source /etc/profile"))?;
-
-        std::fs::write(&marker, "")?;
-        tracing::info!("Host crossdev for {chost} prepared.");
-        Ok(())
-    }
-
     /// Return a `SandboxRunner` for running commands inside this sandbox.
     /// Logs are bind-mounted from `~/.cache/crossdev-stages/logs/<name>/`
     /// so they are accessible outside the sandbox at a known flat path.

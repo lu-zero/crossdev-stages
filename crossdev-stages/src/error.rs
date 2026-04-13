@@ -11,9 +11,6 @@ pub enum Error {
     #[error("board not found: {0}")]
     BoardNotFound(String),
 
-    #[error("sysroot not found: {0}")]
-    SysrootNotFound(String),
-
     #[error("board config parse error in {file}: {msg}")]
     BoardConfigParse { file: String, msg: String },
 

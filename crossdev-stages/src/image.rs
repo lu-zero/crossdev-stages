@@ -7,7 +7,6 @@ use crate::container::SandboxRunner;
 use crate::error::Result;
 use crate::portage::Portage;
 use crate::sandbox::Sandbox;
-use crate::sysroot::Sysroot;
 use crate::target::Target;
 use crate::workspace::Workspace;
 
@@ -129,15 +128,10 @@ fn default_deps(
     target: &Target,
     board: &BoardConfig,
     boards_root: &Utf8Path,
-    sysroot: Option<&Sysroot>,
 ) -> Result<()> {
-    if let Some(sr) = sysroot {
-        crate::sysroot::apply_workarounds(&sr.dir, board)?;
-    }
-
     let sandbox_pkgs = boards_root.join(&board.name).join("sandbox-packages.txt");
     if sandbox_pkgs.exists() {
-        let host_runner = board_runner(sandbox, sysroot, board);
+        let host_runner = board_runner(sandbox, board);
         let portage = Portage::new(&host_runner);
         let content = std::fs::read_to_string(&sandbox_pkgs)?;
         let pkgs: Vec<&str> = content
@@ -159,7 +153,7 @@ fn default_deps(
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .collect();
         if !pkgs.is_empty() {
-            let target_runner = board_runner(sandbox, sysroot, board).with_target(&target.dir);
+            let target_runner = board_runner(sandbox, board).with_target(&target.dir);
             let portage = Portage::new(&target_runner);
             portage.cross_emerge(&board.chost(), &pkgs)?;
         }
@@ -327,17 +321,9 @@ fn default_pack(runner: &SandboxRunner, board: &BoardConfig, build: &Build, boar
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-fn board_runner(
-    sandbox: &Sandbox,
-    sysroot: Option<&Sysroot>,
-    board: &BoardConfig,
-) -> SandboxRunner {
-    let runner = sandbox.runner();
-    if let Some(sr) = sysroot {
-        runner.with_sysroot(&sr.dir, &board.chost())
-    } else {
-        runner
-    }
+fn board_runner(sandbox: &Sandbox, board: &BoardConfig) -> SandboxRunner {
+    let _ = board; // arch available if needed later
+    sandbox.runner()
 }
 
 // ── Pipeline ────────────────────────────────────────────────────────────────
@@ -348,7 +334,6 @@ pub fn build(
     target: &Target,
     board: &BoardConfig,
     boards_root: &Utf8Path,
-    sysroot: Option<&Sysroot>,
     steps: Option<&[String]>,
 ) -> Result<()> {
     let bld = Build::create(ws, &board.name)?;
@@ -370,14 +355,14 @@ pub fn build(
         let step_start = std::time::Instant::now();
         println!("==> [{}/{}] {}...", i + 1, total, step);
 
-        let runner = board_runner(sandbox, sysroot, board)
+        let runner = board_runner(sandbox, board)
             .with_target(&target.dir)
             .with_build(&bld.dir, &project_root(boards_root))
             .with_cache(ws.base());
 
         let result = match *step {
             "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board,
-                |_r| default_deps(_r, sandbox, target, board, boards_root, sysroot)),
+                |_r| default_deps(_r, sandbox, target, board, boards_root)),
             "checkout" => run_step("checkout", "sources", &bld, &runner, boards_root, board,
                 |r| default_checkout(r, board)),
             "bootloader" => run_step("bootloader", "bootloader", &bld, &runner, boards_root, board,

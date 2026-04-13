@@ -7,7 +7,6 @@ mod portage;
 mod sandbox;
 mod source_cache;
 mod stage;
-mod sysroot;
 mod target;
 mod workspace;
 
@@ -49,9 +48,6 @@ struct Cli {
     #[arg(long, global = true)]
     mirror: Option<String>,
 
-    /// Override board's SYSROOT (for testing/debug).
-    #[arg(long, global = true)]
-    sysroot_override: Option<String>,
 
     /// Show what would be done without executing.
     #[arg(long, global = true)]
@@ -81,10 +77,6 @@ enum Commands {
         #[command(subcommand)]
         command: TargetCmd,
     },
-
-    /// Manage cross-compilation sysroots.
-    #[command(subcommand)]
-    Sysroot(SysrootCmd),
 
     /// Build board images.
     #[command(subcommand)]
@@ -209,25 +201,6 @@ enum TargetCmd {
     /// Update ldconfig cache in the target.
     Ldconfig,
     /// Remove a target.
-    Destroy { name: String },
-}
-
-// ── Sysroot subcommands ─────────────────────────────────────────────────────
-
-#[derive(Subcommand)]
-enum SysrootCmd {
-    /// List all sysroots with their CFLAGS.
-    List,
-    /// Create a sysroot for a board's CFLAGS (stage3 + glibc rebuild).
-    Create {
-        /// Sysroot name (e.g. rv64gcv_zvl256b).
-        name: String,
-        /// Board to read CFLAGS from.
-        board: String,
-        #[arg(long)]
-        sandbox: Option<String>,
-    },
-    /// Remove a sysroot.
     Destroy { name: String },
 }
 
@@ -434,27 +407,6 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        // ── Sysroot ──────────────────────────────────────────────────────────
-        Commands::Sysroot(SysrootCmd::List) => {
-            for s in sysroot::list(&ws)? {
-                println!("{:<25} {:<10} {}", s.name, s.arch, s.cflags);
-            }
-        }
-        Commands::Sysroot(SysrootCmd::Create {
-            name,
-            board: board_name,
-            sandbox,
-        }) => {
-            let sd = ws.resolve_sandbox(sandbox.as_deref())?;
-            let sb = sandbox::Sandbox::open(sd)?;
-            let board_cfg = board::load(&boards_root, &board_name)?;
-            sysroot::Sysroot::create(&ws, &sb, &name, &board_cfg, mirror).await?;
-            sysroot::apply_workarounds(&ws.sysroot(&name), &board_cfg)?;
-        }
-        Commands::Sysroot(SysrootCmd::Destroy { name }) => {
-            sysroot::destroy(&ws, &name)?;
-        }
-
         // ── Image ────────────────────────────────────────────────────────────
         Commands::Image(ImageCmd::ListBoards) => {
             for b in board::list(&boards_root)? {
@@ -475,12 +427,6 @@ async fn main() -> anyhow::Result<()> {
             if let Some(c) = compression {
                 board_cfg.compression = Some(c);
             }
-
-            // Sysroot override: CLI flag > env > board.conf
-            let sysroot_name = cli
-                .sysroot_override
-                .or_else(|| std::env::var("CROSSDEV_SYSROOT").ok())
-                .unwrap_or_else(|| board_cfg.sysroot.clone());
 
             let default_steps: Vec<String> = if board_cfg.build_steps.is_empty() {
                 [
@@ -515,11 +461,6 @@ async fn main() -> anyhow::Result<()> {
                     println!("RUSTFLAGS:  {rustflags}");
                 }
                 println!(
-                    "Sysroot:    {} ({})",
-                    sysroot_name,
-                    ws.sysroot(&sysroot_name)
-                );
-                println!(
                     "Steps:      {}",
                     steps_to_show
                         .iter()
@@ -547,13 +488,6 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
-            // Resolve sysroot
-            let sr = if !sysroot_name.is_empty() {
-                Some(sysroot::Sysroot::resolve(&ws, &sysroot_name)?)
-            } else {
-                None
-            };
-
             let steps_opt = if steps.is_empty() {
                 None
             } else {
@@ -565,7 +499,6 @@ async fn main() -> anyhow::Result<()> {
                 &tgt,
                 &board_cfg,
                 &boards_root,
-                sr.as_ref(),
                 steps_opt,
             )?;
         }
@@ -602,26 +535,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
 
-            // 2. Orphan sysroots (not referenced by any board.conf)
-            let board_sysroots: std::collections::HashSet<String> = board::list(&boards_root)
-                .unwrap_or_default()
-                .iter()
-                .filter_map(|name| board::load(&boards_root, name).ok())
-                .map(|b| b.sysroot)
-                .collect();
-            for info in sysroot::list(&ws)? {
-                let orphan = all || !board_sysroots.contains(&info.name);
-                if orphan {
-                    if cli.dry_run {
-                        println!("Would remove sysroot: {} ({})", info.name, info.cflags);
-                    } else {
-                        sysroot::destroy(&ws, &info.name)?;
-                    }
-                    total += 1;
-                }
-            }
-
-            // 3. Old stage3 tarballs (keep latest per arch, remove rest)
+            // 2. Old stage3 tarballs (keep latest per arch, remove rest)
             let stages_dir = ws.stages_dir();
             if stages_dir.is_dir() {
                 let mut by_arch: std::collections::HashMap<
@@ -779,7 +693,6 @@ async fn main() -> anyhow::Result<()> {
             println!("Arch:           {}", board_cfg.arch);
             println!("CHOST:          {}", board_cfg.chost());
             println!("CFLAGS:         {}", board_cfg.effective_cflags());
-            println!("Sysroot:        {}", board_cfg.sysroot);
             println!("Cross-compile:  {}", board_cfg.cross_compile);
             if let Some(k) = &board_cfg.kernel_arch { println!("Kernel arch:    {k}"); }
             println!("Kernel repo:    {}", board_cfg.kernel_repo);
@@ -839,7 +752,6 @@ async fn main() -> anyhow::Result<()> {
             println!("Workspace: {}", ws.base());
             check!("stages dir", ws.stages_dir().is_dir());
             check!("sandboxes dir", ws.sandboxes_dir().is_dir());
-            check!("sysroots dir", ws.sysroots_dir().is_dir());
             check!("sources cache dir", ws.sources_dir().is_dir());
 
             let sandboxes = ws.list_sandboxes().unwrap_or_default();
@@ -848,9 +760,6 @@ async fn main() -> anyhow::Result<()> {
                 let prepared = sb_dir.join(".prepared").exists();
                 check!(&format!("sandbox {} prepared", sb_dir.file_name().unwrap_or("?")), prepared);
             }
-
-            let sysroots = sysroot::list(&ws).unwrap_or_default();
-            check!(&format!("{} sysroot(s) available", sysroots.len()), !sysroots.is_empty());
 
             let boards = board::list(&boards_root).unwrap_or_default();
             check!(&format!("{} board(s) found", boards.len()), !boards.is_empty());
@@ -866,7 +775,6 @@ async fn main() -> anyhow::Result<()> {
             let tty = !tsv;
 
             let sandboxes = sandbox::list(&ws)?;
-            let sysroots = sysroot::list(&ws)?;
             let boards = board::list(&boards_root)?;
             let builds = ws.list_builds()?;
 
@@ -876,15 +784,11 @@ async fn main() -> anyhow::Result<()> {
                     let state = if s.prepared { "prepared" } else { "unpacked" };
                     println!("  {:<20} {:<10} {}", s.name, s.arch, state);
                 }
-                println!("\nSysroots ({}):", sysroots.len());
-                for s in &sysroots {
-                    println!("  {:<25} {:<10} {}", s.name, s.arch, s.cflags);
-                }
                 println!("\nBoards ({}):", boards.len());
                 for name in &boards {
                     if let Ok(b) = board::load(&boards_root, name) {
                         let tag = if b.testing { " [TESTING]" } else { "" };
-                        println!("  {:<16} {:<10} sysroot={}{tag}", name, b.arch, b.sysroot);
+                        println!("  {:<16} {:<10}{tag}", name, b.arch);
                     }
                 }
                 println!("\nBuilds (latest {}/{}):", builds.len().min(5), builds.len());
@@ -902,12 +806,9 @@ async fn main() -> anyhow::Result<()> {
                     let state = if s.prepared { "prepared" } else { "unpacked" };
                     println!("sandbox\t{}\t{}\t{}", s.name, s.arch, state);
                 }
-                for s in &sysroots {
-                    println!("sysroot\t{}\t{}\t{}", s.name, s.arch, s.cflags);
-                }
                 for name in &boards {
                     if let Ok(b) = board::load(&boards_root, name) {
-                        println!("board\t{}\t{}\t{}\t{}", name, b.arch, b.sysroot, b.testing);
+                        println!("board\t{}\t{}\t{}", name, b.arch, b.testing);
                     }
                 }
                 for dir in builds.iter().take(10) {
@@ -1002,7 +903,6 @@ fn default_board_config(arch: &str) -> board::BoardConfig {
     board::BoardConfig {
         name: arch.to_string(),
         arch: arch.to_string(),
-        sysroot: String::new(),
         cflags: None,
         ldflags: None,
         rustflags: None,

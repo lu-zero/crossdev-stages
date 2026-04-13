@@ -15,8 +15,6 @@ pub struct SandboxRunner {
     extra_ro: Vec<(Utf8PathBuf, String)>,
     /// Absolute path to the project directory, mounted read-only at /scripts.
     scripts_dir: Option<Utf8PathBuf>,
-    /// Sysroot bind-mount: (host_path, /usr/$chost).
-    sysroot: Option<(Utf8PathBuf, String)>,
 }
 
 impl SandboxRunner {
@@ -27,7 +25,6 @@ impl SandboxRunner {
             extra_rw: vec![],
             extra_ro: vec![],
             scripts_dir: None,
-            sysroot: None,
         }
     }
 
@@ -39,13 +36,6 @@ impl SandboxRunner {
     pub fn with_target(mut self, target_dir: &Utf8Path) -> Self {
         self.extra_rw
             .push((target_dir.to_path_buf(), "/target".into()));
-        self
-    }
-
-    /// Set the sysroot to be bind-mounted at `/usr/$chost`.
-    /// All subsequent run calls will include this mount.
-    pub fn with_sysroot(mut self, sysroot_dir: &Utf8Path, chost: &str) -> Self {
-        self.sysroot = Some((sysroot_dir.to_path_buf(), format!("/usr/{chost}")));
         self
     }
 
@@ -151,9 +141,6 @@ impl SandboxRunner {
         }
         if let Some(ref scripts) = self.scripts_dir {
             c.bindmount_ro(scripts.as_str(), "/scripts");
-        }
-        if let Some((ref host_path, ref container_path)) = self.sysroot {
-            c.bindmount_rw(host_path.as_str(), container_path);
         }
         c
     }
