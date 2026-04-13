@@ -6,10 +6,11 @@ use crate::stage::{all_llvm_targets, default_cflags, gentoo_arch, llvm_target};
 
 /// Parameters for a Portage `make.conf` file.
 pub struct MakeConf<'a> {
-    pub arch: &'a str,           // OS arch, e.g. "riscv64"
-    pub chost: Option<&'a str>,  // set for cross-sysroot make.conf
-    pub cflags: Option<&'a str>, // defaults to `default_cflags(arch)`
+    pub arch: &'a str,
+    pub chost: Option<&'a str>,
+    pub cflags: Option<&'a str>,
     pub mirror: Option<&'a str>,
+    pub binhost: Option<&'a str>,
 }
 
 impl<'a> MakeConf<'a> {
@@ -57,6 +58,12 @@ impl<'a> MakeConf<'a> {
 
         if let Some(mirror) = self.mirror {
             set_make_conf_var(&make_conf, "GENTOO_MIRRORS", mirror)?;
+        }
+
+        if let Some(binhost) = self.binhost {
+            set_make_conf_var(&make_conf, "PORTAGE_BINHOST", binhost)?;
+            let features = "parallel-install -merge-wait getbinpkg";
+            set_make_conf_var(&make_conf, "FEATURES", features)?;
         }
 
         Ok(())
