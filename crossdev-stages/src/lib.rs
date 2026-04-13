@@ -7,6 +7,5 @@ pub mod portage;
 pub mod sandbox;
 pub mod source_cache;
 pub mod stage;
-pub mod sysroot;
 pub mod target;
 pub mod workspace;

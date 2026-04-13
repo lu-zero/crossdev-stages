@@ -7,12 +7,11 @@ const STAGES: &str = "stages";
 const SANDBOXES: &str = "sandboxes";
 const TARGETS: &str = "targets";
 const BUILDS: &str = "builds";
-const SYSROOTS: &str = "sysroots";
 const SOURCES: &str = "sources";
 const LOGS: &str = "logs";
 
 /// Manages the on-disk cache layout:
-/// ~/.cache/crossdev-stages/{stages,sandboxes,targets,builds,sysroots}/
+/// ~/.cache/crossdev-stages/{stages,sandboxes,targets,builds}/
 pub struct Workspace {
     base: Utf8PathBuf,
 }
@@ -44,14 +43,6 @@ impl Workspace {
         self.base.join(BUILDS)
     }
 
-    pub fn sysroots_dir(&self) -> Utf8PathBuf {
-        self.base.join(SYSROOTS)
-    }
-
-    pub fn sysroot(&self, name: &str) -> Utf8PathBuf {
-        self.sysroots_dir().join(name)
-    }
-
     pub fn sources_dir(&self) -> Utf8PathBuf {
         self.base.join(SOURCES)
     }
@@ -67,7 +58,6 @@ impl Workspace {
             self.sandboxes_dir(),
             self.targets_dir(),
             self.builds_dir(),
-            self.sysroots_dir(),
             self.sources_dir(),
             self.logs_dir(),
         ] {
