@@ -59,7 +59,8 @@ pub struct BoardConfig {
     pub workaround_cflags: Vec<String>,
 
     pub image_name: Option<String>,
-    pub testing: bool, // TESTING=true marks experimental/upstream boards
+    pub compression: Option<String>,  // xz (default) | gz | none
+    pub testing: bool,
 }
 
 impl BoardConfig {
@@ -191,6 +192,7 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         workaround_cflags: arrays.get("WORKAROUND_CFLAGS").cloned().unwrap_or_default(),
 
         image_name: kv.get("IMAGE_NAME").cloned(),
+        compression: kv.get("COMPRESSION").cloned(),
         testing: kv
             .get("TESTING")
             .map(|v| v == "true" || v == "yes" || v == "1")
