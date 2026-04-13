@@ -301,11 +301,26 @@ fn default_pack(runner: &SandboxRunner, board: &BoardConfig, build: &Build, boar
          --inputpath /build --outputpath /build --rootpath /build/gen"
     ))?;
 
-    runner.run(&format!("xz -f -T0 -9 /build/{img_name}"))?;
-    let final_name = format!("{img_name}.xz");
-    println!("Image ready: {}/{final_name}", build.dir);
+    let compression = board.compression.as_deref().unwrap_or("xz");
+    let final_name = match compression {
+        "none" => {
+            println!("Image ready: {}/{img_name}", build.dir);
+            img_name.clone()
+        }
+        "gz" | "gzip" => {
+            runner.run(&format!("gzip -fv -9 /build/{img_name}"))?;
+            let name = format!("{img_name}.gz");
+            println!("Image ready: {}/{name}", build.dir);
+            name
+        }
+        _ => {
+            runner.run(&format!("xz -fv -T0 -9 /build/{img_name}"))?;
+            let name = format!("{img_name}.xz");
+            println!("Image ready: {}/{name}", build.dir);
+            name
+        }
+    };
 
-    // Store artifact path in .packed marker for export
     std::fs::write(build.dir.join(".image"), &final_name)?;
     Ok(())
 }
