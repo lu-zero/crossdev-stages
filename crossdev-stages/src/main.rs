@@ -540,9 +540,6 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
 
-            // Ensure the target sysroot is bootstrapped (idempotent via .stage1 marker).
-            tgt.build_stage1(&sb)?;
-
             // Resolve sysroot
             let sr = if !sysroot_name.is_empty() {
                 Some(sysroot::Sysroot::resolve(&ws, &sysroot_name)?)
