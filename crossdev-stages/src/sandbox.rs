@@ -53,6 +53,7 @@ impl Sandbox {
             chost: None,
             cflags: None,
             mirror,
+            binhost: None,
         }
         .write(&self.dir.join("etc/portage"))?;
 
@@ -243,6 +244,7 @@ impl Sandbox {
             chost: Some(chost),
             cflags: Some(cflags),
             mirror: None,
+            binhost: None,
         }
         .write(portage_dir)?;
 
