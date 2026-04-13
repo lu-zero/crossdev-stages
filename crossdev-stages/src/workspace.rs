@@ -132,8 +132,8 @@ impl Workspace {
             None => self
                 .list_targets()?
                 .into_iter()
-                .next()
-                .ok_or_else(|| Error::TargetNotFound("(none exist)".into())),
+                .find(|p| p.join("sbin/init").exists())
+                .ok_or_else(|| Error::TargetNotFound("no bootable target (missing /sbin/init)".into())),
         }
     }
 }
