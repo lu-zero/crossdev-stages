@@ -132,6 +132,7 @@ impl Target {
             chost: Some(chost),
             cflags: Some(default_cflags(&self.arch)),
             mirror: None,
+            binhost: None,
         }
         .write(&portage_dir)?;
 
