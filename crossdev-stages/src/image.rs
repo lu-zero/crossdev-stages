@@ -302,6 +302,9 @@ fn default_pack(runner: &SandboxRunner, board: &BoardConfig, build: &Build, boar
     ))?;
 
     let compression = board.compression.as_deref().unwrap_or("xz");
+    if compression != "none" {
+        println!("Compressing with {compression}...");
+    }
     let final_name = match compression {
         "none" => {
             println!("Image ready: {}/{img_name}", build.dir);
