@@ -56,7 +56,7 @@ enum Commands {
     #[command(subcommand)]
     Sandbox(SandboxCmd),
 
-    /// Manage target sysroots.
+    /// Manage cross-compiled target stages.
     Target {
         /// Target architecture (overrides .arch marker; required for setup/create).
         #[arg(long, global = true)]
@@ -87,7 +87,7 @@ enum Commands {
     #[command(subcommand)]
     Maint(MaintCmd),
 
-    /// Show overview of sandboxes, sysroots, builds, and boards.
+    /// Show overview of sandboxes, targets, builds, and boards.
     Status {
         /// Machine-readable TAB-separated output.
         #[arg(long)]
@@ -148,7 +148,7 @@ enum SandboxCmd {
 
 #[derive(Subcommand)]
 enum TargetCmd {
-    /// Create a target sysroot from a stage3 tarball (downloaded or local).
+    /// Create a target stage from a stage3 tarball (downloaded or local).
     Setup {
         /// Target name (default: arch-<timestamp>).
         #[arg(long)]
@@ -157,7 +157,7 @@ enum TargetCmd {
         #[arg(long)]
         from: Option<Utf8PathBuf>,
     },
-    /// List all target sysroots.
+    /// List all target stages.
     List,
     /// Bootstrap the target: cross-emerge baselayout → @system → portage.
     Stage1,
@@ -169,7 +169,7 @@ enum TargetCmd {
     Ldconfig,
     /// Remove a target.
     Destroy { name: String },
-    /// Pack the target rootfs as a stage3-compatible tarball.
+    /// Pack the target stage as a stage3-compatible tarball.
     Export {
         /// Output path for the tarball (default: stage3-<arch>-<name>.tar.xz in current dir).
         #[arg(long, short)]
