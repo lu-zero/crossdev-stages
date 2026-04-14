@@ -83,24 +83,9 @@ enum Commands {
     #[command(subcommand)]
     Stages(StagesCmd),
 
-    /// Clean up stale builds, orphan sysroots, and old stage3 tarballs.
-    Cleanup {
-        /// Remove everything (all builds, sysroots, stages).
-        #[arg(long)]
-        all: bool,
-    },
-
-    /// Show build output and logs.
-    Logs {
-        /// Board name (shows latest build).
-        board: String,
-        /// Show only a specific step's output.
-        #[arg(long)]
-        step: Option<String>,
-    },
-
-    /// Check environment for common issues.
-    Doctor,
+    /// Maintenance: cleanup, logs, diagnostics.
+    #[command(subcommand)]
+    Maint(MaintCmd),
 
     /// Show overview of sandboxes, sysroots, builds, and boards.
     Status {
@@ -258,6 +243,28 @@ enum StagesCmd {
         #[arg(long, default_value = std::env::consts::ARCH)]
         arch: String,
     },
+}
+
+// ── Maint subcommands ────────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum MaintCmd {
+    /// Clean up stale builds and old stage3 tarballs.
+    Cleanup {
+        /// Remove everything (all builds, stages).
+        #[arg(long)]
+        all: bool,
+    },
+    /// Show build output and logs.
+    Logs {
+        /// Board name (shows latest build).
+        board: String,
+        /// Show only a specific step's output.
+        #[arg(long)]
+        step: Option<String>,
+    },
+    /// Check environment for common issues.
+    Doctor,
 }
 
 // ── Entry point ──────────────────────────────────────────────────────────────
@@ -600,8 +607,8 @@ async fn main() -> anyhow::Result<()> {
             println!("Pruned {pruned} incomplete build(s).");
         }
 
-        // ── Cleanup ─────────────────────────────────────────────────────────
-        Commands::Cleanup { all } => {
+        // ── Maint ────────────────────────────────────────────────────────────
+        Commands::Maint(MaintCmd::Cleanup { all }) => {
             let mut total = 0usize;
 
             // 1. Incomplete builds (always)
@@ -677,8 +684,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        // ── Logs ────────────────────────────────────────────────────────────
-        Commands::Logs { board, step } => {
+        Commands::Maint(MaintCmd::Logs { board, step }) => {
             let builds = ws.list_builds()?;
             let build = builds
                 .iter()
@@ -770,8 +776,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        // ── Doctor ──────────────────────────────────────────────────────────
-        Commands::Doctor => {
+        Commands::Maint(MaintCmd::Doctor) => {
             let mut ok = 0;
             let mut fail = 0;
 
