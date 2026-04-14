@@ -1,4 +1,4 @@
-use crossdev_stages::{board, error, image, sandbox, stage, target, workspace};
+use crossdev_stages::{board, container, error, image, sandbox, stage, target, workspace};
 
 use camino::Utf8PathBuf;
 
@@ -95,18 +95,6 @@ enum Commands {
         step: Option<String>,
     },
 
-    /// Export build artifacts to a directory.
-    Export {
-        /// Board name.
-        board: String,
-        /// Output directory (default: current directory).
-        #[arg(long, short)]
-        output: Option<Utf8PathBuf>,
-        /// Export all files, not just the final image.
-        #[arg(long)]
-        all: bool,
-    },
-
     /// Show resolved board configuration.
     Config {
         /// Board name.
@@ -177,11 +165,14 @@ enum SandboxCmd {
 
 #[derive(Subcommand)]
 enum TargetCmd {
-    /// Download a stage3 and create a target sysroot.
+    /// Create a target sysroot from a stage3 tarball (downloaded or local).
     Setup {
         /// Target name (default: arch-<timestamp>).
         #[arg(long)]
         name: Option<String>,
+        /// Use a local tarball instead of downloading (implies --arch from the file if not set).
+        #[arg(long)]
+        from: Option<Utf8PathBuf>,
     },
     /// List all target sysroots.
     List,
@@ -195,6 +186,15 @@ enum TargetCmd {
     Ldconfig,
     /// Remove a target.
     Destroy { name: String },
+    /// Pack the target rootfs as a stage3-compatible tarball.
+    Export {
+        /// Output path for the tarball (default: stage3-<arch>-<name>.tar.xz in current dir).
+        #[arg(long, short)]
+        output: Option<Utf8PathBuf>,
+        /// Compression: xz (default), gz, none.
+        #[arg(long, default_value = "xz")]
+        compression: String,
+    },
 }
 
 // ── Image subcommands ────────────────────────────────────────────────────────
@@ -219,6 +219,18 @@ enum ImageCmd {
     },
     /// Remove incomplete builds.
     Prune,
+    /// Export the final image file from a build.
+    Export {
+        /// Board name.
+        #[arg(long)]
+        board: String,
+        /// Output directory (default: current directory).
+        #[arg(long, short)]
+        output: Option<Utf8PathBuf>,
+        /// Export all build artifacts, not just the final image.
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 // ── Stages subcommands ───────────────────────────────────────────────────────
@@ -326,12 +338,19 @@ async fn main() -> anyhow::Result<()> {
                         );
                     }
                 }
-                TargetCmd::Setup { name } => {
-                    let resolved_arch = arch.ok_or_else(|| {
-                        anyhow::anyhow!("--arch is required for target setup")
-                    })?;
-                    let stage_file =
-                        stage::fetch(&ws.stages_dir(), &resolved_arch, mirror).await?;
+                TargetCmd::Setup { name, from } => {
+                    let (resolved_arch, stage_file) = if let Some(local) = from {
+                        let a = arch.ok_or_else(|| {
+                            anyhow::anyhow!("--arch is required when using --from")
+                        })?;
+                        (a, local)
+                    } else {
+                        let a = arch.ok_or_else(|| {
+                            anyhow::anyhow!("--arch is required for target setup")
+                        })?;
+                        let f = stage::fetch(&ws.stages_dir(), &a, mirror).await?;
+                        (a, f)
+                    };
                     let name = name.unwrap_or_else(|| {
                         format!(
                             "{resolved_arch}-{}",
@@ -396,6 +415,23 @@ async fn main() -> anyhow::Result<()> {
                 }
                 TargetCmd::Destroy { name } => {
                     target::destroy(&ws, &name)?;
+                }
+                TargetCmd::Export { output, compression } => {
+                    let tgt_dir = ws.resolve_target(target.as_deref())?;
+                    let tgt = target::Target::open(tgt_dir)?;
+                    let tgt_name = tgt.dir.file_name().unwrap_or("target");
+                    let ext = match compression.as_str() {
+                        "gz" | "gzip" => "tar.gz",
+                        "none" => "tar",
+                        _ => "tar.xz",
+                    };
+                    let out_path = output.unwrap_or_else(|| {
+                        Utf8PathBuf::from(format!("stage3-{}-{}.{ext}", tgt.arch, tgt_name))
+                    });
+                    println!("Packing target '{}' -> {out_path} ...", tgt_name);
+                    container::pack_tarball(&tgt.dir, &out_path, ws.base(), &compression)?;
+                    let size = std::fs::metadata(&out_path).map(|m| m.len()).unwrap_or(0);
+                    println!("Done: {out_path} ({:.1}M)", size as f64 / 1_048_576.0);
                 }
             }
         }
@@ -630,8 +666,7 @@ async fn main() -> anyhow::Result<()> {
             }
         }
 
-        // ── Export ──────────────────────────────────────────────────────────
-        Commands::Export { board: board_name, output, all } => {
+        Commands::Image(ImageCmd::Export { board: board_name, output, all }) => {
             let builds = ws.list_builds()?;
             let build = builds
                 .iter()

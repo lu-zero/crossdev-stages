@@ -264,6 +264,67 @@ pub fn unpack_tarball(stage_file: &Utf8Path, dest_dir: &Utf8Path, cache_base: &U
     check_status(command.status()?).map_err(|e| annotate_cmd(e, &cmd))
 }
 
+/// Pack a directory tree into a stage3-compatible tarball, preserving ownership and xattrs.
+///
+/// Runs inside a container rooted at the host `/` so that uid 0 inside can read files
+/// owned by portage and other system users.  Both the source directory and the output
+/// tarball are reachable via the `/cache` bind-mount.
+///
+/// `compression`: "xz" (default), "gz", or "none" (produces a `.tar`).
+pub fn pack_tarball(
+    src_dir: &Utf8Path,
+    tarball: &Utf8Path,
+    cache_base: &Utf8Path,
+    compression: &str,
+) -> Result<()> {
+    let src_in_container = format!(
+        "/cache/{}",
+        src_dir.strip_prefix(cache_base).unwrap_or(src_dir)
+    );
+    let tarball_in_container = format!(
+        "/cache/{}",
+        tarball.strip_prefix(cache_base).unwrap_or(tarball)
+    );
+
+    if let Some(parent) = tarball.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let compress_flag = match compression {
+        "gz" | "gzip" => "-z",
+        "none" => "",
+        _ => "-J", // xz
+    };
+
+    let cmd = format!(
+        "tar -cp{compress} --xattrs --xattrs-include='*.*' --numeric-owner \
+         --exclude='./dev' --exclude='./proc' --exclude='./sys' \
+         --exclude='./run' --exclude='./tmp' \
+         -f {tarball} -C {src} .",
+        compress = compress_flag,
+        tarball = tarball_in_container,
+        src = src_in_container,
+    );
+
+    let mut container = Container::new();
+    container
+        .rootfs("/")?
+        .unshare(Namespace::Ipc)
+        .unshare(Namespace::Uts)
+        .unshare(Namespace::Cgroup)
+        .devfsmount("/dev")
+        .tmpfsmount("/tmp")
+        .tmpfsmount("/dev/shm")
+        .bindmount_rw(cache_base.as_str(), "/cache")
+        .runctl(Runctl::AllowNewPrivs);
+    container.uidmaps(&uid_maps());
+    container.gidmaps(&gid_maps());
+
+    let mut command = container.command("/bin/sh");
+    command.arg("-c").arg(&cmd);
+    check_status(command.status()?).map_err(|e| annotate_cmd(e, &cmd))
+}
+
 /// Prefix a failed-command error with the command string for diagnostics.
 fn annotate_cmd(e: crate::error::Error, cmd: &str) -> crate::error::Error {
     match e {
