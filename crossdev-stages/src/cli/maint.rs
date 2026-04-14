@@ -1,5 +1,5 @@
 use camino::Utf8PathBuf;
-use crossdev_stages::{board, image, workspace::Workspace};
+use crossdev_stages::{board, container, image, workspace::Workspace};
 use crossdev_stages::error::Result;
 use crate::cli::MaintCmd;
 
@@ -26,7 +26,7 @@ fn cleanup(ws: &Workspace, all: bool, dry_run: bool) -> Result<()> {
             if dry_run {
                 println!("Would remove build: {name}");
             } else {
-                std::fs::remove_dir_all(dir)?;
+                container::destroy_dir(dir, ws.base())?;
                 println!("Removed build: {name}");
             }
             total += 1;
