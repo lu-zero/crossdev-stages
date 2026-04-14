@@ -7,7 +7,7 @@ use crate::sandbox::Sandbox;
 use crate::stage::default_cflags;
 use crate::workspace::Workspace;
 
-/// A Gentoo target sysroot: a cross-compiled base system for the target arch.
+/// A cross-compiled Gentoo stage for the target arch.
 pub struct Target {
     pub dir: Utf8PathBuf,
     pub arch: String,
@@ -82,7 +82,7 @@ impl Target {
         Ok(())
     }
 
-    /// Update the target sysroot (`@world` rebuild).
+    /// Update the target stage (`@world` rebuild).
     pub fn update(&self, sandbox: &Sandbox) -> Result<()> {
         let chost = format!("{}-unknown-linux-gnu", self.arch);
         let runner = sandbox.runner().with_target(&self.dir);
@@ -113,7 +113,7 @@ impl Target {
         portage.cross_emerge(&chost, packages)
     }
 
-    /// Run `ldconfig` inside the target sysroot.
+    /// Run `ldconfig` inside the target stage.
     pub fn update_ldconfig(&self, sandbox: &Sandbox) -> Result<()> {
         tracing::info!("Updating ldconfig in target…");
         let runner = sandbox.runner().with_target(&self.dir);

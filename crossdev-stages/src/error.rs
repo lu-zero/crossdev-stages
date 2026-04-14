@@ -33,7 +33,7 @@ pub enum Error {
 pub type Result<T> = std::result::Result<T, Error>;
 
 /// Convert a hakoniwa ExitStatus into a Result, propagating failure.
-pub fn check_status(status: hakoniwa::ExitStatus) -> crate::Result<()> {
+pub fn check_status(status: hakoniwa::ExitStatus) -> crate::error::Result<()> {
     if status.success() {
         Ok(())
     } else {
