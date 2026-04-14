@@ -2,7 +2,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use crossdev_stages::{board, image, stage, target, workspace::Workspace};
 use crossdev_stages::error::Result;
 use crate::cli::ImageCmd;
-use crate::cli::helpers::ensure_crossdev;
+use crate::cli::util::ensure_crossdev;
 
 pub async fn run(
     ws: &Workspace,

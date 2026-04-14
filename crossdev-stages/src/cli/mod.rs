@@ -2,8 +2,14 @@ use camino::Utf8PathBuf;
 use clap::builder::styling::{AnsiColor, Styles};
 use clap::{Parser, Subcommand};
 
-pub mod handlers;
-pub mod helpers;
+pub mod board;
+pub mod image;
+pub mod maint;
+pub mod sandbox;
+pub mod stages;
+pub mod status;
+pub mod target;
+pub mod util;
 
 // Saner default colored style.
 const fn cli_styles() -> Styles {

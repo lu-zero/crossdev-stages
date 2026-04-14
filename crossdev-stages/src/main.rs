@@ -3,7 +3,7 @@ mod cli;
 use camino::Utf8PathBuf;
 use clap::Parser;
 
-use cli::{Cli, Commands, handlers};
+use cli::{Cli, Commands};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -26,25 +26,25 @@ async fn main() -> anyhow::Result<()> {
 
     match cli.command {
         Commands::Stages(cmd) => {
-            handlers::stages::run(&ws, cmd, mirror).await?;
+            cli::stages::run(&ws, cmd, mirror).await?;
         }
         Commands::Sandbox(cmd) => {
-            handlers::sandbox::run(&ws, cmd, &boards_root, mirror).await?;
+            cli::sandbox::run(&ws, cmd, &boards_root, mirror).await?;
         }
         Commands::Target { arch, sandbox, target, command } => {
-            handlers::target::run(&ws, arch, sandbox, target, command, mirror).await?;
+            cli::target::run(&ws, arch, sandbox, target, command, mirror).await?;
         }
         Commands::Board(cmd) => {
-            handlers::board::run(&boards_root, cmd)?;
+            cli::board::run(&boards_root, cmd)?;
         }
         Commands::Image(cmd) => {
-            handlers::image::run(&ws, cmd, &boards_root, mirror, dry_run).await?;
+            cli::image::run(&ws, cmd, &boards_root, mirror, dry_run).await?;
         }
         Commands::Maint(cmd) => {
-            handlers::maint::run(&ws, cmd, &boards_root, dry_run)?;
+            cli::maint::run(&ws, cmd, &boards_root, dry_run)?;
         }
         Commands::Status { tsv } => {
-            handlers::status::run(&ws, &boards_root, tsv)?;
+            cli::status::run(&ws, &boards_root, tsv)?;
         }
     }
 

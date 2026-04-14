@@ -2,7 +2,7 @@ use camino::Utf8PathBuf;
 use crossdev_stages::{container, stage, target, workspace::Workspace};
 use crossdev_stages::error::Result;
 use crate::cli::TargetCmd;
-use crate::cli::helpers::{default_board_config, ensure_crossdev, ensure_target};
+use crate::cli::util::{default_board_config, ensure_crossdev, ensure_target};
 
 pub async fn run(
     ws: &Workspace,
