@@ -126,6 +126,40 @@ impl Workspace {
                 .ok_or_else(|| Error::TargetNotFound("no bootable target (missing /sbin/init)".into())),
         }
     }
+
+    /// Like `resolve_target` but filters targets whose `.arch` marker matches `arch`.
+    /// Prevents picking a foreign-arch target (e.g. aarch64) for a board built for
+    /// a different arch (e.g. riscv64), which silently produces an unbootable image.
+    pub fn resolve_target_for_arch(&self, name: Option<&str>, arch: &str) -> Result<Utf8PathBuf> {
+        match name {
+            Some(n) => {
+                let p = self.target(n);
+                if !p.is_dir() {
+                    return Err(Error::TargetNotFound(n.to_string()));
+                }
+                match read_arch(&p) {
+                    Some(a) if a == arch => Ok(p),
+                    Some(a) => Err(Error::TargetNotFound(format!(
+                        "target '{n}' has arch '{a}', expected '{arch}'"
+                    ))),
+                    None => Err(Error::TargetNotFound(format!(
+                        "target '{n}' missing .arch marker"
+                    ))),
+                }
+            }
+            None => self
+                .list_targets()?
+                .into_iter()
+                .find(|p| {
+                    read_arch(p).as_deref() == Some(arch) && p.join("sbin/init").exists()
+                })
+                .ok_or_else(|| {
+                    Error::TargetNotFound(format!(
+                        "no bootable target for arch '{arch}' (need /sbin/init and matching .arch)"
+                    ))
+                }),
+        }
+    }
 }
 
 fn dirs_next() -> Utf8PathBuf {
