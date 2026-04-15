@@ -19,11 +19,22 @@ impl<'a> MakeConf<'a> {
     pub fn write(&self, portage_dir: &Utf8Path) -> Result<()> {
         std::fs::create_dir_all(portage_dir)?;
         std::fs::create_dir_all(portage_dir.join("package.accept_keywords"))?;
+        std::fs::create_dir_all(portage_dir.join("package.mask"))?;
 
         let make_conf = portage_dir.join("make.conf");
         if !make_conf.exists() {
             std::fs::write(&make_conf, "")?;
         }
+
+        // Rust pins itself to llvm_slot_21 via REQUIRED_USE, so llvm:22 is
+        // unreachable here. Without this mask, llvm-21's `>=llvmgold-21` dep
+        // resolves to llvmgold-22 (newest), which drags in the full llvm:22
+        // chain for nothing.
+        std::fs::write(
+            portage_dir.join("package.mask/llvm-unused-slot"),
+            ">=llvm-core/llvmgold-22\n\
+             >=llvm-core/llvm-common-22\n",
+        )?;
 
         let (jobs, load) = parallelism();
         let garch = gentoo_arch(self.arch)?;
@@ -177,6 +188,8 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
     portage.webrsync()?;
     let _ = portage.getuto();
 
+    runner.run("chown -R portage:portage /etc/portage/gnupg")?;
+
     let bin_packages = ["app-arch/zstd", "app-arch/bzip2", "app-arch/xz-utils"];
     tracing::info!("Installing binary packages…");
     portage.emerge_binary(&bin_packages)?;
@@ -195,9 +208,7 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
         "sys-fs/mtools",
         "app-eselect/eselect-repository",
         "dev-lang/rust",
-        "sys-kernel/gentoo-sources",
         "dev-python/pyelftools",
-        "dev-python/pkg-resources",
     ];
     tracing::info!("Installing build dependencies…");
     portage.emerge(&packages)?;

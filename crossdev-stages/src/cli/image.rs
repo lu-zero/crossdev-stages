@@ -56,7 +56,7 @@ pub async fn run(
                 ensure_crossdev(ws, sandbox.as_deref(), &board_cfg.arch, &board_cfg, mirror)
                     .await?;
 
-            let tgt = match ws.resolve_target(target.as_deref()) {
+            let tgt = match ws.resolve_target_for_arch(target.as_deref(), &board_cfg.arch) {
                 Ok(td) => target::Target::open(td)?,
                 Err(_) => {
                     let name = target.as_deref().unwrap_or(&board_cfg.arch).to_string();
