@@ -190,7 +190,6 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
         "dev-lang/rust",
         "sys-kernel/gentoo-sources",
         "dev-python/pyelftools",
-        "dev-python/pkg-resources",
     ];
     tracing::info!("Installing build dependencies…");
     portage.emerge(&packages)?;
