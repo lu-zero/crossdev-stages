@@ -162,20 +162,60 @@ fn default_deps(
     Ok(())
 }
 
-fn default_checkout(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+fn default_checkout(
+    runner: &SandboxRunner,
+    board: &BoardConfig,
+    boards_root: &Utf8Path,
+) -> Result<()> {
     crate::bootloader::opensbi::clone(runner, board)?;
+    apply_patches(runner, boards_root, board, "opensbi", "/build/opensbi")?;
+
     crate::bootloader::uboot::clone(runner, board)?;
+    apply_patches(runner, boards_root, board, "u-boot", "/build/u-boot")?;
+
     if let Some(repo) = &board.firmware_repo {
         let tag = board.u_boot_tag.as_deref().unwrap_or("main");
         crate::source_cache::cached_clone(runner, repo, tag, "/build/firmware", "firmware")?;
+        apply_patches(runner, boards_root, board, "firmware", "/build/firmware")?;
     }
+
     crate::source_cache::cached_clone(
         runner,
         &board.kernel_repo,
         &board.kernel_tag,
         "/build/linux",
         &format!("linux-{}", board.name),
-    )
+    )?;
+    apply_patches(runner, boards_root, board, "kernel", "/build/linux")
+}
+
+/// Apply all `*.patch` files in `boards/<name>/patches/<component>/` to `srcdir`,
+/// sorted alphabetically. No-op if the directory is missing or empty.
+fn apply_patches(
+    runner: &SandboxRunner,
+    boards_root: &Utf8Path,
+    board: &BoardConfig,
+    component: &str,
+    srcdir: &str,
+) -> Result<()> {
+    let dir = boards_root.join(&board.name).join("patches").join(component);
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let mut patches: Vec<String> = std::fs::read_dir(&dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("patch"))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    patches.sort();
+    for p in &patches {
+        let src = format!("/scripts/boards/{}/patches/{component}/{p}", board.name);
+        runner.run(&format!("patch -p1 -d {srcdir} < {src}"))?;
+    }
+    if !patches.is_empty() {
+        tracing::info!("Applied {} {component} patch(es)", patches.len());
+    }
+    Ok(())
 }
 
 fn default_bootloader(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
@@ -183,7 +223,11 @@ fn default_bootloader(runner: &SandboxRunner, board: &BoardConfig) -> Result<()>
     crate::bootloader::uboot::build(runner, board)
 }
 
-fn default_kernel(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+fn default_kernel(
+    runner: &SandboxRunner,
+    board: &BoardConfig,
+    boards_root: &Utf8Path,
+) -> Result<()> {
     let karch =
         board
             .kernel_arch
@@ -192,11 +236,41 @@ fn default_kernel(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
                 file: board.name.clone(),
                 msg: "KERNEL_ARCH required for kernel build".into(),
             })?;
+    let cc = &board.cross_compile;
+    let defconfig = &board.kernel_defconfig;
+
+    // Base defconfig
     runner.run(&format!(
-        "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} {defconfig} && \
-         make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} -j$(nproc)",
-        cc = board.cross_compile,
-        defconfig = board.kernel_defconfig,
+        "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} {defconfig}"
+    ))?;
+
+    // Merge fragments from boards/<name>/kernel-config/*.config (alphabetical order)
+    let frag_dir = boards_root.join(&board.name).join("kernel-config");
+    if frag_dir.is_dir() {
+        let mut frags: Vec<String> = std::fs::read_dir(&frag_dir)?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("config"))
+            .filter_map(|e| e.file_name().into_string().ok())
+            .collect();
+        frags.sort();
+        if !frags.is_empty() {
+            let args: Vec<String> = frags
+                .iter()
+                .map(|f| format!("/scripts/boards/{}/kernel-config/{f}", board.name))
+                .collect();
+            tracing::info!("Merging {} kernel config fragment(s)", frags.len());
+            runner.run(&format!(
+                "cd /build/linux && ARCH={karch} \
+                 scripts/kconfig/merge_config.sh -m .config {frag_args} && \
+                 make ARCH={karch} CROSS_COMPILE={cc} olddefconfig",
+                frag_args = args.join(" ")
+            ))?;
+        }
+    }
+
+    // Build kernel + modules
+    runner.run(&format!(
+        "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} -j$(nproc)"
     ))
 }
 
@@ -377,11 +451,11 @@ pub fn build(
             "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board,
                 |_r| default_deps(_r, sandbox, target, board, boards_root)),
             "checkout" => run_step("checkout", "sources", &bld, &runner, boards_root, board,
-                |r| default_checkout(r, board)),
+                |r| default_checkout(r, board, boards_root)),
             "bootloader" => run_step("bootloader", "bootloader", &bld, &runner, boards_root, board,
                 |r| default_bootloader(r, board)),
             "kernel" => run_step("kernel", "kernel", &bld, &runner, boards_root, board,
-                |r| default_kernel(r, board)),
+                |r| default_kernel(r, board, boards_root)),
             "assemble" => run_step("assemble", "assembled", &bld, &runner, boards_root, board,
                 |r| default_assemble(r, board)),
             "pack" => run_step("pack", "packed", &bld, &runner, boards_root, board,
