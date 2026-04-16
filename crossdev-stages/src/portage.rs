@@ -188,7 +188,6 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
         "sys-fs/mtools",
         "app-eselect/eselect-repository",
         "dev-lang/rust",
-        "sys-kernel/gentoo-sources",
         "dev-python/pyelftools",
     ];
     tracing::info!("Installing build dependencies…");
