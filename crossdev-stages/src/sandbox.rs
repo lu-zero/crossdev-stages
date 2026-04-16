@@ -42,12 +42,24 @@ impl Sandbox {
 
     /// Configure portage and install host build dependencies.
     /// Idempotent: skips if `.prepared` marker exists.
-    pub fn prepare(&self, mirror: Option<&str>) -> Result<()> {
+    ///
+    /// `portage_overlay` is an optional ad-hoc overlay dir (`--portage-overlay`).
+    pub fn prepare(
+        &self,
+        mirror: Option<&str>,
+        portage_overlay: Option<&Utf8Path>,
+    ) -> Result<()> {
         if self.dir.join(".prepared").exists() {
             tracing::info!("Sandbox already prepared, skipping.");
             return Ok(());
         }
+
+        // Fragments first (lay down make.conf with FEATURES + drop-ins).
+        let host_portage = self.dir.join("etc/portage");
+        crate::portage::write_portage_layers(&host_portage, portage_overlay)?;
+
         tracing::info!("Configuring portage…");
+        // Then MakeConf appends/replaces dynamic vars on top.
         MakeConf {
             arch: &self.arch,
             chost: None,
@@ -55,7 +67,7 @@ impl Sandbox {
             mirror,
             binhost: None,
         }
-        .write(&self.dir.join("etc/portage"))?;
+        .write(&host_portage)?;
 
         tracing::info!("Installing host dependencies…");
         install_host_deps(&self.runner())?;
@@ -67,7 +79,12 @@ impl Sandbox {
 
     /// Set up the crossdev toolchain for `target_arch` inside this sandbox.
     /// Idempotent: skips if `.crossdev-<target_arch>` marker exists.
-    pub fn setup_crossdev(&self, target_arch: &str, board: &BoardConfig) -> Result<()> {
+    pub fn setup_crossdev(
+        &self,
+        target_arch: &str,
+        board: &BoardConfig,
+        portage_overlay: Option<&Utf8Path>,
+    ) -> Result<()> {
         let marker = self.dir.join(format!(".crossdev-{target_arch}"));
         if marker.exists() {
             tracing::info!("Crossdev for {target_arch} already set up, skipping.");
@@ -77,6 +94,7 @@ impl Sandbox {
         let chost = format!("{target_arch}-unknown-linux-gnu");
         let profile = gentoo_profile(target_arch)?;
         let cflags = board.effective_cflags();
+        let slot = crate::portage::gcc_slot();
         let runner = self.runner();
 
         tracing::info!("Creating crossdev overlay…");
@@ -88,29 +106,39 @@ impl Sandbox {
         tracing::info!("Initialising crossdev for {chost}…");
         runner.run(&format!("crossdev {chost} --init-target"))?;
 
-        // Host-side portage policy (gcc-16 accept_keywords, llvm slot mask, etc).
-        crate::portage::write_default_fragments(&self.dir.join("etc/portage"))?;
+        // Host-side portage policy (fragments + CLI overlay). Reapplies each
+        // setup_crossdev run so mid-life overlay changes take effect.
+        let host_portage = self.dir.join("etc/portage");
+        crate::portage::write_portage_layers(&host_portage, portage_overlay)?;
 
-        // rust-std acceptance is chost-specific, so write it directly.
+        // Dynamic accept_keywords: gcc slot from config/build.conf.
+        std::fs::create_dir_all(host_portage.join("package.accept_keywords"))?;
+        std::fs::write(
+            host_portage.join("package.accept_keywords/gcc"),
+            format!("<sys-devel/gcc-{slot}.0.9999:{slot} **\n"),
+        )?;
+        // rust-std acceptance is chost-specific.
         runner.run(&format!(
             "echo 'cross-{chost}/rust-std **' \
              > /etc/portage/package.accept_keywords/rust-std"
         ))?;
 
-        tracing::info!("Emerging gcc:16 (host)…");
-        runner.run("emerge -b -k sys-devel/gcc:16")?;
+        tracing::info!("Emerging gcc:{slot} (host)…");
+        runner.run(&format!("emerge -b -k sys-devel/gcc:{slot}"))?;
 
-        // Query the installed gcc-16 version and make it the default.
-        let gcc_ver =
-            runner.run_output("qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'")?;
+        // Query the installed gcc version and make it the default.
+        let gcc_ver = runner.run_output(&format!(
+            "qlist -ICev sys-devel/gcc:{slot} | head -n1 | sed 's|.*/gcc-||'"
+        ))?;
         if gcc_ver.is_empty() {
             return Err(Error::CommandFailed {
                 code: 1,
-                reason: "Could not determine gcc-16 version".into(),
+                reason: format!("Could not determine gcc-{slot} version"),
             });
         }
-        let gcc_profile =
-            runner.run_output("gcc-config -l | grep '16' | head -n1 | awk '{print $2}'")?;
+        let gcc_profile = runner.run_output(&format!(
+            "gcc-config -l | grep '{slot}' | head -n1 | awk '{{print $2}}'"
+        ))?;
         runner.run(&format!("gcc-config {gcc_profile}"))?;
         runner.run("source /etc/profile && env-update")?;
 
@@ -120,7 +148,14 @@ impl Sandbox {
         runner.run(&format!(
             "export PORTAGE_CONFIGROOT=/usr/{chost}; eselect profile set {profile}"
         ))?;
-        self.write_crossdev_portage(&crossdev_portage, target_arch, &chost, &cflags, board)?;
+        self.write_crossdev_portage(
+            &crossdev_portage,
+            target_arch,
+            &chost,
+            &cflags,
+            board,
+            portage_overlay,
+        )?;
 
         // Fix the split-usr layout created by crossdev.
         runner.run(&format!("mkdir -p /usr/{chost}/bin"))?;
@@ -137,8 +172,8 @@ impl Sandbox {
             "crossdev {chost} --gcc {gcc_ver} {extras_args}"
         ))?;
 
-        // Switch cross compiler to gcc-16.
-        runner.run(&format!("gcc-config {chost}-16 && source /etc/profile"))?;
+        // Switch cross compiler to gcc:{slot}.
+        runner.run(&format!("gcc-config {chost}-{slot} && source /etc/profile"))?;
 
         std::fs::write(&marker, "")?;
         tracing::info!("Crossdev for {chost} complete.");
@@ -179,8 +214,10 @@ impl Sandbox {
         chost: &str,
         cflags: &str,
         board: &BoardConfig,
+        portage_overlay: Option<&Utf8Path>,
     ) -> Result<()> {
-        // make.conf for the cross-sysroot
+        // Fragments first (FEATURES etc), then MakeConf dynamic vars.
+        crate::portage::write_portage_layers(portage_dir, portage_overlay)?;
         MakeConf {
             arch,
             chost: Some(chost),
@@ -189,8 +226,6 @@ impl Sandbox {
             binhost: None,
         }
         .write(portage_dir)?;
-
-        crate::portage::write_default_fragments(portage_dir)?;
 
         // Per-package CFLAGS workarounds from board.conf
         for (pkg, flags) in board

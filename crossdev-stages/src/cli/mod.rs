@@ -44,6 +44,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub binhost: Option<String>,
 
+    /// Extra portage config overlay directory applied on top of embedded defaults.
+    #[arg(long, global = true, value_name = "DIR")]
+    pub portage_overlay: Option<Utf8PathBuf>,
+
     /// Show what would be done without executing.
     #[arg(long, global = true)]
     pub dry_run: bool,

@@ -9,6 +9,7 @@ pub async fn run(
     cmd: ImageCmd,
     boards_root: &Utf8Path,
     mirror: Option<&str>,
+    portage_overlay: Option<&Utf8Path>,
     dry_run: bool,
 ) -> Result<()> {
     match cmd {
@@ -52,9 +53,15 @@ pub async fn run(
                 return Ok(());
             }
 
-            let sb =
-                ensure_crossdev(ws, sandbox.as_deref(), &board_cfg.arch, &board_cfg, mirror)
-                    .await?;
+            let sb = ensure_crossdev(
+                ws,
+                sandbox.as_deref(),
+                &board_cfg.arch,
+                &board_cfg,
+                mirror,
+                portage_overlay,
+            )
+            .await?;
 
             let tgt = match ws.resolve_target_for_arch(target.as_deref(), &board_cfg.arch) {
                 Ok(td) => target::Target::open(td)?,

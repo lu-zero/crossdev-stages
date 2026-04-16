@@ -1,8 +1,54 @@
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
 use camino::Utf8Path;
 
 use crate::container::SandboxRunner;
 use crate::error::Result;
 use crate::stage::{default_cflags, gentoo_arch, llvm_target};
+
+/// Parse a bash-style `KEY="value"` config file. `#` comments and blank lines
+/// ignored. Quotes around values (either `"` or `'`) stripped.
+pub fn parse_keyval(content: &str) -> HashMap<String, String> {
+    content
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| {
+            let (k, v) = l.split_once('=')?;
+            let v = v.trim().trim_matches('"').trim_matches('\'');
+            Some((k.trim().to_string(), v.to_string()))
+        })
+        .collect()
+}
+
+static BUILD_CONFIG: LazyLock<HashMap<String, String>> =
+    LazyLock::new(|| parse_keyval(include_str!("../config/build.conf")));
+
+/// Return the configured GCC slot (defaults to "16" if missing).
+/// Drives host + cross-sysroot `sys-devel/gcc:N` selection.
+pub fn gcc_slot() -> &'static str {
+    static SLOT: LazyLock<String> = LazyLock::new(|| {
+        BUILD_CONFIG
+            .get("GCC_SLOT")
+            .cloned()
+            .unwrap_or_else(|| "16".to_string())
+    });
+    SLOT.as_str()
+}
+
+/// Return the baseline `FEATURES` string applied via make.conf.
+/// Kept out of the fragments tree so stage3's catalyst-written make.conf
+/// content is preserved (set_make_conf_var only touches managed variables).
+pub fn features_base() -> &'static str {
+    static F: LazyLock<String> = LazyLock::new(|| {
+        BUILD_CONFIG
+            .get("FEATURES_BASE")
+            .cloned()
+            .unwrap_or_else(|| "parallel-install -merge-wait".to_string())
+    });
+    F.as_str()
+}
 
 /// Parameters for a Portage `make.conf` file.
 pub struct MakeConf<'a> {
@@ -34,7 +80,11 @@ impl<'a> MakeConf<'a> {
             "EMERGE_DEFAULT_OPTS",
             &format!("--jobs={jobs} --load-average {load}"),
         )?;
-        set_make_conf_var(&make_conf, "FEATURES", "parallel-install -merge-wait")?;
+        // FEATURES baseline from config/build.conf (getbinpkg appended below
+        // if --binhost is set).
+        set_make_conf_var(&make_conf, "FEATURES", features_base())?;
+        // ~ARCH is mandatory — our toolchain (gcc:N, rust, clang-crossdev-wrappers)
+        // is testing-only on all arches we support.
         set_make_conf_var(&make_conf, "ACCEPT_KEYWORDS", &format!("~{garch}"))?;
         set_make_conf_var(&make_conf, "PORT_LOGDIR", &format!("/var/log/portage/{garch}"))?;
 
@@ -53,8 +103,11 @@ impl<'a> MakeConf<'a> {
 
         if let Some(binhost) = self.binhost {
             set_make_conf_var(&make_conf, "PORTAGE_BINHOST", binhost)?;
-            let features = "parallel-install -merge-wait getbinpkg";
-            set_make_conf_var(&make_conf, "FEATURES", features)?;
+            set_make_conf_var(
+                &make_conf,
+                "FEATURES",
+                &format!("{} getbinpkg", features_base()),
+            )?;
         }
 
         Ok(())
@@ -68,37 +121,39 @@ fn parallelism() -> (usize, usize) {
     (jobs, load)
 }
 
-/// Static portage config fragments shared across sandbox and crossdev sysroot.
-/// Sourced from `crossdev-stages/portage/default/` as real text files so policy
-/// tweaks (extra masks, USE flags) land as diffs on text, not Rust string literals.
+/// Static portage config fragments embedded from `crossdev-stages/config/portage/default/`.
+/// Copied verbatim into the sandbox / cross-sysroot / target `/etc/portage/`
+/// so policy tweaks (USE flags etc.) are diffs on real text files.
+///
+/// NOT included here:
+/// - `make.conf` — managed in-place by [`MakeConf::write`] (preserves stage3's
+///   catalyst-written content; only our managed vars are appended/replaced).
+/// - `package.accept_keywords/gcc` — GCC_SLOT-dependent, written dynamically
+///   in [`sandbox::Sandbox::setup_crossdev`].
 const DEFAULT_FRAGMENTS: &[(&str, &str)] = &[
     (
         "env/plain.conf",
-        include_str!("../portage/default/env/plain.conf"),
+        include_str!("../config/portage/default/env/plain.conf"),
     ),
     (
         "package.env/rust",
-        include_str!("../portage/default/package.env/rust"),
+        include_str!("../config/portage/default/package.env/rust"),
     ),
     (
         "package.use/busybox",
-        include_str!("../portage/default/package.use/busybox"),
+        include_str!("../config/portage/default/package.use/busybox"),
     ),
     (
         "package.use/clang",
-        include_str!("../portage/default/package.use/clang"),
+        include_str!("../config/portage/default/package.use/clang"),
     ),
     (
         "package.use/git",
-        include_str!("../portage/default/package.use/git"),
+        include_str!("../config/portage/default/package.use/git"),
     ),
     (
         "package.use/rust",
-        include_str!("../portage/default/package.use/rust"),
-    ),
-    (
-        "package.accept_keywords/gcc",
-        include_str!("../portage/default/package.accept_keywords/gcc"),
+        include_str!("../config/portage/default/package.use/rust"),
     ),
 ];
 
@@ -111,6 +166,49 @@ pub fn write_default_fragments(portage_dir: &Utf8Path) -> Result<()> {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(path, content)?;
+    }
+    Ok(())
+}
+
+/// Copy every regular file from `src` into `dst`, preserving directory layout.
+/// Existing files at the destination are overwritten.
+fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let src_path = entry.path();
+        let dst_path = dst.as_std_path().join(entry.file_name());
+        if src_path.is_dir() {
+            std::fs::create_dir_all(&dst_path)?;
+            let src_utf8 = camino::Utf8PathBuf::try_from(src_path)
+                .expect("portage overlay path is not UTF-8");
+            let dst_utf8 = camino::Utf8PathBuf::try_from(dst_path)
+                .expect("portage overlay path is not UTF-8");
+            copy_tree(&src_utf8, &dst_utf8)?;
+        } else if src_path.is_file() {
+            if let Some(parent) = dst_path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(&src_path, &dst_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Write the portage config layers into `portage_dir`, applied in order so
+/// later layers overwrite earlier ones on filename match:
+///
+///   1. embedded defaults (`config/portage/default/*`)
+///   2. user-supplied overlay (`--portage-overlay <dir>`, optional)
+pub fn write_portage_layers(
+    portage_dir: &Utf8Path,
+    user_overlay: Option<&Utf8Path>,
+) -> Result<()> {
+    write_default_fragments(portage_dir)?;
+    if let Some(overlay) = user_overlay {
+        if overlay.is_dir() {
+            tracing::info!("Applying --portage-overlay {overlay}");
+            copy_tree(overlay, portage_dir)?;
+        }
     }
     Ok(())
 }
@@ -208,11 +306,11 @@ impl<'a> Portage<'a> {
 }
 
 /// Embedded default package lists. Kept as text files so adjusting
-/// the host toolchain policy is a line-diff on `portage/default/*.txt`.
-pub const HOST_BIN_PACKAGES: &str = include_str!("../portage/default/host-bin-packages.txt");
-pub const HOST_PACKAGES: &str = include_str!("../portage/default/host-packages.txt");
+/// the host toolchain policy is a line-diff on `config/*.txt`.
+pub const HOST_BIN_PACKAGES: &str = include_str!("../config/host-bin-packages.txt");
+pub const HOST_PACKAGES: &str = include_str!("../config/host-packages.txt");
 pub const CROSSDEV_EXTRA_PACKAGES: &str =
-    include_str!("../portage/default/crossdev-extra-packages.txt");
+    include_str!("../config/crossdev-extra-packages.txt");
 
 /// Parse a package-list file: one atom per line, `#` comments and blank lines ignored.
 pub fn parse_package_list(content: &str) -> Vec<&str> {

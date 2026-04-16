@@ -8,6 +8,7 @@ pub async fn run(
     cmd: SandboxCmd,
     boards_root: &camino::Utf8Path,
     mirror: Option<&str>,
+    portage_overlay: Option<&camino::Utf8Path>,
 ) -> Result<()> {
     match cmd {
         SandboxCmd::List => {
@@ -27,7 +28,7 @@ pub async fn run(
         SandboxCmd::Prepare { name } => {
             let dir = ws.resolve_sandbox(name.as_deref())?;
             let sb = sandbox::Sandbox::open(dir)?;
-            sb.prepare(mirror)?;
+            sb.prepare(mirror, portage_overlay)?;
         }
         SandboxCmd::Crossdev { arch, board, name } => {
             let board_cfg = if let Some(b) = &board {
@@ -35,7 +36,15 @@ pub async fn run(
             } else {
                 default_board_config(&arch)
             };
-            ensure_crossdev(ws, name.as_deref(), &arch, &board_cfg, mirror).await?;
+            ensure_crossdev(
+                ws,
+                name.as_deref(),
+                &arch,
+                &board_cfg,
+                mirror,
+                portage_overlay,
+            )
+            .await?;
         }
         SandboxCmd::Enter { name } => {
             let dir = ws.resolve_sandbox(name.as_deref())?;

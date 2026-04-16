@@ -1,4 +1,4 @@
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use crossdev_stages::{container, stage, target, workspace::Workspace};
 use crossdev_stages::error::Result;
 use crate::cli::TargetCmd;
@@ -11,6 +11,7 @@ pub async fn run(
     target_name: Option<String>,
     cmd: TargetCmd,
     mirror: Option<&str>,
+    portage_overlay: Option<&Utf8Path>,
 ) -> Result<()> {
     match cmd {
         TargetCmd::List => {
@@ -52,6 +53,7 @@ pub async fn run(
                 &resolved_arch,
                 &default_board_config(&resolved_arch),
                 mirror,
+                portage_overlay,
             )
             .await?;
         }
@@ -62,6 +64,7 @@ pub async fn run(
                 arch.as_deref(),
                 sandbox.as_deref(),
                 mirror,
+                portage_overlay,
             )
             .await?;
             tgt.build_stage1(&sb)?;
@@ -73,6 +76,7 @@ pub async fn run(
                 arch.as_deref(),
                 sandbox.as_deref(),
                 mirror,
+                portage_overlay,
             )
             .await?;
             tgt.update(&sb)?;
@@ -84,6 +88,7 @@ pub async fn run(
                 arch.as_deref(),
                 sandbox.as_deref(),
                 mirror,
+                portage_overlay,
             )
             .await?;
             let pkgs: Vec<&str> = packages.iter().map(String::as_str).collect();
@@ -96,6 +101,7 @@ pub async fn run(
                 arch.as_deref(),
                 sandbox.as_deref(),
                 mirror,
+                portage_overlay,
             )
             .await?;
             tgt.update_ldconfig(&sb)?;

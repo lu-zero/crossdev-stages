@@ -1,3 +1,4 @@
+use camino::Utf8Path;
 use crossdev_stages::{board, error, sandbox, stage, target};
 use crossdev_stages::workspace::Workspace;
 use crossdev_stages::error::Result;
@@ -10,6 +11,7 @@ pub async fn ensure_crossdev(
     arch: &str,
     board_cfg: &board::BoardConfig,
     mirror: Option<&str>,
+    portage_overlay: Option<&Utf8Path>,
 ) -> Result<sandbox::Sandbox> {
     let sd = match ws.resolve_sandbox(sandbox_name) {
         Ok(p) => p,
@@ -24,8 +26,8 @@ pub async fn ensure_crossdev(
         }
     };
     let sb = sandbox::Sandbox::open(sd)?;
-    sb.prepare(mirror)?;
-    sb.setup_crossdev(arch, board_cfg)?;
+    sb.prepare(mirror, portage_overlay)?;
+    sb.setup_crossdev(arch, board_cfg, portage_overlay)?;
     Ok(sb)
 }
 
@@ -37,6 +39,7 @@ pub async fn ensure_target(
     arch_override: Option<&str>,
     sandbox_name: Option<&str>,
     mirror: Option<&str>,
+    portage_overlay: Option<&Utf8Path>,
 ) -> Result<(target::Target, sandbox::Sandbox)> {
     let (tgt, resolved_arch) = match ws.resolve_target(target_name) {
         Ok(td) => {
@@ -67,6 +70,7 @@ pub async fn ensure_target(
         &resolved_arch,
         &default_board_config(&resolved_arch),
         mirror,
+        portage_overlay,
     )
     .await?;
     Ok((tgt, sb))

@@ -127,6 +127,8 @@ impl Target {
         let portage_dir = self.dir.join("etc/portage");
         std::fs::create_dir_all(&portage_dir)?;
 
+        // Fragments first (FEATURES etc), then MakeConf dynamic vars.
+        crate::portage::write_default_fragments(&portage_dir)?;
         MakeConf {
             arch: &self.arch,
             chost: Some(chost),

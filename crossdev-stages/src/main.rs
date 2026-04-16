@@ -22,6 +22,7 @@ async fn main() -> anyhow::Result<()> {
         Utf8PathBuf::try_from(p).expect("boards path is not UTF-8")
     };
     let mirror = cli.mirror.as_deref();
+    let portage_overlay = cli.portage_overlay.as_deref();
     let dry_run = cli.dry_run;
 
     match cli.command {
@@ -29,16 +30,16 @@ async fn main() -> anyhow::Result<()> {
             cli::stages::run(&ws, cmd, mirror).await?;
         }
         Commands::Sandbox(cmd) => {
-            cli::sandbox::run(&ws, cmd, &boards_root, mirror).await?;
+            cli::sandbox::run(&ws, cmd, &boards_root, mirror, portage_overlay).await?;
         }
         Commands::Target { arch, sandbox, target, command } => {
-            cli::target::run(&ws, arch, sandbox, target, command, mirror).await?;
+            cli::target::run(&ws, arch, sandbox, target, command, mirror, portage_overlay).await?;
         }
         Commands::Board(cmd) => {
             cli::board::run(&boards_root, cmd)?;
         }
         Commands::Image(cmd) => {
-            cli::image::run(&ws, cmd, &boards_root, mirror, dry_run).await?;
+            cli::image::run(&ws, cmd, &boards_root, mirror, portage_overlay, dry_run).await?;
         }
         Commands::Maint(cmd) => {
             cli::maint::run(&ws, cmd, &boards_root, dry_run)?;
