@@ -127,11 +127,14 @@ impl Sandbox {
         runner.run(&format!("merge-usr --root /usr/{chost}"))?;
 
         tracing::info!("Running crossdev (this takes a while)…");
+        let extras = crate::portage::parse_package_list(crate::portage::CROSSDEV_EXTRA_PACKAGES);
+        let extras_args: String = extras
+            .iter()
+            .map(|p| format!("--ex-pkg {p}"))
+            .collect::<Vec<_>>()
+            .join(" ");
         runner.run(&format!(
-            "crossdev {chost} \
-             --gcc {gcc_ver} \
-             --ex-pkg sys-devel/clang-crossdev-wrappers \
-             --ex-pkg sys-devel/rust-std"
+            "crossdev {chost} --gcc {gcc_ver} {extras_args}"
         ))?;
 
         // Switch cross compiler to gcc-16.

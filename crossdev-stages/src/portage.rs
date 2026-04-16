@@ -207,6 +207,22 @@ impl<'a> Portage<'a> {
     }
 }
 
+/// Embedded default package lists. Kept as text files so adjusting
+/// the host toolchain policy is a line-diff on `portage/default/*.txt`.
+pub const HOST_BIN_PACKAGES: &str = include_str!("../portage/default/host-bin-packages.txt");
+pub const HOST_PACKAGES: &str = include_str!("../portage/default/host-packages.txt");
+pub const CROSSDEV_EXTRA_PACKAGES: &str =
+    include_str!("../portage/default/crossdev-extra-packages.txt");
+
+/// Parse a package-list file: one atom per line, `#` comments and blank lines ignored.
+pub fn parse_package_list(content: &str) -> Vec<&str> {
+    content
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect()
+}
+
 /// Install all host-side dependencies required for cross-compilation.
 pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
     let portage = Portage::new(runner);
@@ -217,25 +233,11 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
 
     runner.run("chown -R portage:portage /etc/portage/gnupg")?;
 
-    let bin_packages = ["app-arch/zstd", "app-arch/bzip2", "app-arch/xz-utils"];
+    let bin_packages = parse_package_list(HOST_BIN_PACKAGES);
     tracing::info!("Installing binary packages…");
     portage.emerge_binary(&bin_packages)?;
 
-    let packages = [
-        "sys-devel/crossdev",
-        "sys-apps/merge-usr",
-        "dev-vcs/git",
-        "dev-embedded/u-boot-tools",
-        "sys-apps/dtc",
-        "sys-kernel/dracut",
-        "sys-apps/busybox",
-        "sys-fs/genimage",
-        "sys-fs/dosfstools",
-        "sys-fs/mtools",
-        "app-eselect/eselect-repository",
-        "dev-lang/rust",
-        "dev-python/pyelftools",
-    ];
+    let packages = parse_package_list(HOST_PACKAGES);
     tracing::info!("Installing build dependencies…");
     portage.emerge(&packages)?;
 

@@ -1,0 +1,16 @@
+# Host build dependencies (emerge -b -k — use binpkg if available, else build).
+# Per-board additions go in boards/<name>/sandbox-packages.txt (installed at
+# image-build deps step, idempotent).
+sys-devel/crossdev
+sys-apps/merge-usr
+dev-vcs/git
+dev-embedded/u-boot-tools
+sys-apps/dtc
+sys-kernel/dracut
+sys-apps/busybox
+sys-fs/genimage
+sys-fs/dosfstools
+sys-fs/mtools
+app-eselect/eselect-repository
+dev-lang/rust
+dev-python/pyelftools

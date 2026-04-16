@@ -1,0 +1,4 @@
+# Additional packages installed into the crossdev sysroot alongside gcc/binutils.
+# Passed as `--ex-pkg` args to the `crossdev` command.
+sys-devel/clang-crossdev-wrappers
+sys-devel/rust-std

@@ -1,0 +1,4 @@
+# Binary-only fast install (emerge -G) — compression tools used during prepare.
+app-arch/zstd
+app-arch/bzip2
+app-arch/xz-utils
