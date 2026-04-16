@@ -129,6 +129,14 @@ fn default_deps(
     board: &BoardConfig,
     boards_root: &Utf8Path,
 ) -> Result<()> {
+    // Apply per-board make.conf to the target portage config before cross-emerging
+    // target packages. Strips the previous board's block if switching boards.
+    crate::portage::apply_board_make_conf(
+        &target.dir.join("etc/portage"),
+        &board.name,
+        boards_root,
+    )?;
+
     let sandbox_pkgs = boards_root.join(&board.name).join("sandbox-packages.txt");
     if sandbox_pkgs.exists() {
         let host_runner = board_runner(sandbox, board);

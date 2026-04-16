@@ -223,6 +223,55 @@ pub fn parse_package_list(content: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Append per-board `make.conf` into `target_portage/make.conf`, wrapped in
+/// markers so switching boards strips the previous board's block cleanly.
+///
+/// Boards should only set NEW variables here (USE, VIDEO_CARDS, ACCEPT_LICENSE).
+/// Variables managed by [`MakeConf`] (FEATURES, MAKEOPTS, CHOST, CFLAGS, etc.)
+/// are overwritten on stage1 re-runs; put those in `board.conf` workarounds instead.
+pub fn apply_board_make_conf(
+    target_portage: &Utf8Path,
+    board_name: &str,
+    boards_root: &Utf8Path,
+) -> Result<()> {
+    let make_conf = target_portage.join("make.conf");
+    let existing = std::fs::read_to_string(&make_conf).unwrap_or_default();
+
+    // Strip any previously injected board block.
+    let mut stripped = String::new();
+    let mut in_block = false;
+    for line in existing.lines() {
+        if line.starts_with("# [crossdev-stages: begin ") {
+            in_block = true;
+            continue;
+        }
+        if line.starts_with("# [crossdev-stages: end ") {
+            in_block = false;
+            continue;
+        }
+        if !in_block {
+            stripped.push_str(line);
+            stripped.push('\n');
+        }
+    }
+
+    let board_file = boards_root.join(board_name).join("make.conf");
+    if board_file.is_file() {
+        let content = std::fs::read_to_string(&board_file)?;
+        stripped.push_str(&format!(
+            "# [crossdev-stages: begin boards/{board_name}/make.conf]\n"
+        ));
+        stripped.push_str(content.trim_end_matches('\n'));
+        stripped.push('\n');
+        stripped.push_str(&format!(
+            "# [crossdev-stages: end boards/{board_name}/make.conf]\n"
+        ));
+    }
+
+    std::fs::write(&make_conf, stripped)?;
+    Ok(())
+}
+
 /// Install all host-side dependencies required for cross-compilation.
 pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
     let portage = Portage::new(runner);
