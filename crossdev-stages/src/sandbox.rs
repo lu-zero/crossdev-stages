@@ -88,15 +88,14 @@ impl Sandbox {
         tracing::info!("Initialising crossdev for {chost}…");
         runner.run(&format!("crossdev {chost} --init-target"))?;
 
-        // Allow unstable rust-std and gcc-16 prerelease.
+        // Host-side portage policy (gcc-16 accept_keywords, llvm slot mask, etc).
+        crate::portage::write_default_fragments(&self.dir.join("etc/portage"))?;
+
+        // rust-std acceptance is chost-specific, so write it directly.
         runner.run(&format!(
             "echo 'cross-{chost}/rust-std **' \
              > /etc/portage/package.accept_keywords/rust-std"
         ))?;
-        runner.run(
-            "echo '<sys-devel/gcc-16.0.9999:16 **' \
-             > /etc/portage/package.accept_keywords/gcc",
-        )?;
 
         tracing::info!("Emerging gcc:16 (host)…");
         runner.run("emerge -b -k sys-devel/gcc:16")?;
@@ -188,49 +187,7 @@ impl Sandbox {
         }
         .write(portage_dir)?;
 
-        for sub in [
-            "env",
-            "package.env",
-            "package.use",
-            "package.accept_keywords",
-        ] {
-            std::fs::create_dir_all(portage_dir.join(sub))?;
-        }
-
-        // env/plain.conf: strip arch-specific flags (used for rust, etc.)
-        std::fs::write(
-            portage_dir.join("env/plain.conf"),
-            "CFLAGS=\"-O3 -pipe\"\nCXXFLAGS=\"-O3 -pipe\"\n",
-        )?;
-
-        // package.env
-        std::fs::write(
-            portage_dir.join("package.env/rust"),
-            "dev-lang/rust plain.conf\n",
-        )?;
-
-        // package.use
-        std::fs::write(
-            portage_dir.join("package.use/busybox"),
-            ">=virtual/libcrypt-2-r1 static-libs\n\
-             >=sys-libs/libxcrypt-4.4.36-r3 static-libs\n\
-             >=sys-apps/busybox-1.36.1-r3 -pam static\n",
-        )?;
-        std::fs::write(
-            portage_dir.join("package.use/clang"),
-            "llvm-core/clang -extra\n",
-        )?;
-        std::fs::write(
-            portage_dir.join("package.use/rust"),
-            "dev-lang/rust rustfmt -system-llvm\n",
-        )?;
-        std::fs::write(portage_dir.join("package.use/git"), "dev-vcs/git -iconv\n")?;
-
-        // package.accept_keywords
-        std::fs::write(
-            portage_dir.join("package.accept_keywords/gcc"),
-            "<sys-devel/gcc-16.0.9999:16 **\n",
-        )?;
+        crate::portage::write_default_fragments(portage_dir)?;
 
         // Per-package CFLAGS workarounds from board.conf
         for (pkg, flags) in board

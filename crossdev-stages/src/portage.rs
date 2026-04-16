@@ -18,23 +18,11 @@ impl<'a> MakeConf<'a> {
     /// Updates variables in-place; preserves any existing content not managed here.
     pub fn write(&self, portage_dir: &Utf8Path) -> Result<()> {
         std::fs::create_dir_all(portage_dir)?;
-        std::fs::create_dir_all(portage_dir.join("package.accept_keywords"))?;
-        std::fs::create_dir_all(portage_dir.join("package.mask"))?;
 
         let make_conf = portage_dir.join("make.conf");
         if !make_conf.exists() {
             std::fs::write(&make_conf, "")?;
         }
-
-        // Rust pins itself to llvm_slot_21 via REQUIRED_USE, so llvm:22 is
-        // unreachable here. Without this mask, llvm-21's `>=llvmgold-21` dep
-        // resolves to llvmgold-22 (newest), which drags in the full llvm:22
-        // chain for nothing.
-        std::fs::write(
-            portage_dir.join("package.mask/llvm-unused-slot"),
-            ">=llvm-core/llvmgold-22\n\
-             >=llvm-core/llvm-common-22\n",
-        )?;
 
         let (jobs, load) = parallelism();
         let garch = gentoo_arch(self.arch)?;
@@ -78,6 +66,53 @@ fn parallelism() -> (usize, usize) {
     let jobs = n / 2 + 1;
     let load = n;
     (jobs, load)
+}
+
+/// Static portage config fragments shared across sandbox and crossdev sysroot.
+/// Sourced from `crossdev-stages/portage/default/` as real text files so policy
+/// tweaks (extra masks, USE flags) land as diffs on text, not Rust string literals.
+const DEFAULT_FRAGMENTS: &[(&str, &str)] = &[
+    (
+        "env/plain.conf",
+        include_str!("../portage/default/env/plain.conf"),
+    ),
+    (
+        "package.env/rust",
+        include_str!("../portage/default/package.env/rust"),
+    ),
+    (
+        "package.use/busybox",
+        include_str!("../portage/default/package.use/busybox"),
+    ),
+    (
+        "package.use/clang",
+        include_str!("../portage/default/package.use/clang"),
+    ),
+    (
+        "package.use/git",
+        include_str!("../portage/default/package.use/git"),
+    ),
+    (
+        "package.use/rust",
+        include_str!("../portage/default/package.use/rust"),
+    ),
+    (
+        "package.accept_keywords/gcc",
+        include_str!("../portage/default/package.accept_keywords/gcc"),
+    ),
+];
+
+/// Write the default portage config fragments into `portage_dir`.
+/// Creates parent directories as needed; overwrites existing files.
+pub fn write_default_fragments(portage_dir: &Utf8Path) -> Result<()> {
+    for (rel, content) in DEFAULT_FRAGMENTS {
+        let path = portage_dir.join(rel);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, content)?;
+    }
+    Ok(())
 }
 
 /// Set or replace a variable in a make.conf file.
