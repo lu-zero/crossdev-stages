@@ -1,21 +1,51 @@
 # crossdev-stages
-Build Gentoo stages leveraging crossdev
+
+Build bootable Gentoo images for RISC-V and aarch64 SBCs using crossdev in
+hakoniwa user-namespace sandboxes — no root, no chroot, no distro lock-in.
 
 ## Status
 
-- [x] Build and assemble packages to a stage1 [catalyst](https://wiki.gentoo.org/wiki/Catalyst) can leverage
-- [x] Update a compatible stage3 image
-- [x] Build opensbi + u-boot images and linux kernel + modules
-- [x] Assemble bootable images
-- [x] Per-CFLAGS sysroot isolation (glibc-only rebuild)
-- [x] Rust CLI using [hakoniwa](https://github.com/souk4711/hakoniwa) for sandboxing
-- [x] Modular bootloader (opensbi, u-boot, tfa, rkbin)
-- [x] File-convention hooks (pre/post/override scripts per build step)
+- [x] Cross-compiled stage1 + update cycle
+- [x] OpenSBI / U-Boot / TF-A / rkbin bootloaders (modular)
+- [x] Kernel + modules + DTB + initramfs
+- [x] Bootable image assembly (genimage → ext4/FAT/MBR/GPT)
+- [x] hakoniwa user-namespace sandboxing (no root)
+- [x] Per-step hooks (`pre-/post-/override-<step>.sh`)
 - [x] Git source cache (bare repo references)
+- [x] Declarative config layout ([docs/configuration.md](docs/configuration.md))
+- [x] Auto-applied kernel patches and config fragments per board
 
 ## Platforms
-- riscv64 (BPI-F3, Milk-V Jupiter, DC Roma II, OrangePi RV2, K230, Blackhole P100/P150)
-- aarch64 (Odroid M2 -- testing)
+
+- **riscv64** — BPI-F3 (k1), Milk-V Jupiter, DC Roma II, OrangePi RV2,
+  Canaan K230, Kickyard KY-X1, Tenstorrent Blackhole P100/P150
+- **aarch64** — Odroid M2 (testing)
+
+## Quick start
+
+```sh
+# One-shot: sets up sandbox + target + builds image
+crossdev-stages image build --board k230
+
+# Export the artifact
+crossdev-stages image export k230 -o /tmp/
+```
+
+Under the hood, `image build` auto-creates the host sandbox (downloads stage3
+if needed), prepares it (emerges host deps, runs crossdev), creates a target
+stage1, then runs the 6-step pipeline (`deps → checkout → bootloader →
+kernel → assemble → pack`).
+
+For finer control, each step has its own subcommand:
+
+```sh
+crossdev-stages sandbox setup --arch x86_64      # download + unpack stage3
+crossdev-stages sandbox prepare                  # emerge host deps + crossdev
+crossdev-stages sandbox crossdev --arch riscv64  # set up cross-toolchain
+crossdev-stages target stage1 --arch riscv64     # cross-emerge @system
+crossdev-stages image build --board blackhole
+crossdev-stages status                           # overview of all artefacts
+```
 
 ## CLI
 
@@ -23,111 +53,48 @@ Build Gentoo stages leveraging crossdev
 crossdev-stages [OPTIONS] <COMMAND>
 
 Commands:
-  sandbox   Manage host build sandboxes
-  target    Manage target sysroots
-  sysroot   Manage cross-compilation sysroots
-  image     Build board images
-  stages    List or download Gentoo stage3 tarballs
-  cleanup   Clean up stale builds, orphan sysroots, and old stages
-  status    Show overview of sandboxes, sysroots, builds, boards
-  logs      Show build step timestamps
-  export    Export build artifacts
-  config    Show resolved board configuration
-  doctor    Check environment for common issues
+  sandbox  Manage host build sandboxes
+  target   Manage cross-compiled target stages
+  board    Manage and inspect boards
+  image    Build board images
+  stages   List or download Gentoo stage3 tarballs
+  maint    Maintenance: cleanup, logs, diagnostics
+  status   Show overview of sandboxes, targets, builds, and boards
 
 Options:
-  --project-dir <DIR>     Project root (where boards/ lives) [default: .]
-  --mirror <URL>          Gentoo mirror URL
-  --sysroot-override <N>  Override board's SYSROOT
-  --dry-run               Show what would be done
+  --project-dir <DIR>       Project root where boards/ lives [default: .]
+  --mirror <URL>            Gentoo mirror URL
+  --binhost <URL>           Binary package host URL (PORTAGE_BINHOST)
+  --portage-overlay <DIR>   Extra /etc/portage fragments on top of defaults
+  --dry-run                 Show what would be done
 ```
 
-### Quick start
+## Configuration
 
-```sh
-# Set up host sandbox
-crossdev-stages sandbox setup
-crossdev-stages sandbox prepare
-crossdev-stages sandbox crossdev --arch riscv64 --board k1
+Everything is file-driven: embedded defaults in
+`crossdev-stages/config/` plus optional per-board files under
+`boards/<name>/`. Full reference: [docs/configuration.md](docs/configuration.md).
 
-# Create per-CFLAGS sysroot (only rebuilds glibc)
-crossdev-stages sysroot create rv64gcv_zvl256b k1
+Adding a new board = drop a `boards/<name>/board.conf` + `genimage.cfg`,
+optionally a kernel patch and config fragment. No Rust changes needed.
 
-# Build an image
-crossdev-stages image build --board k1
+## Host requirements
 
-# Check status
-crossdev-stages status
+- Linux with user namespaces enabled (`CONFIG_USER_NS=y`) and an unprivileged
+  sub-UID range (see `/etc/subuid`)
+- [hakoniwa](https://github.com/souk4711/hakoniwa) installed on the host
+- Rust toolchain (for building crossdev-stages itself)
 
-# Export the image
-crossdev-stages export k1 -o /tmp/
+crossdev-stages emerges its own Gentoo dependencies (crossdev, dracut,
+busybox, genimage, etc.) inside the sandbox, so the host doesn't need
+Gentoo — any Linux distro with the above works.
 
-# Clean up stale builds and old stages
-crossdev-stages cleanup
-```
+## Roadmap
 
-### Sysroot isolation
+See [docs/cli-roadmap.md](docs/cli-roadmap.md) for the CLI-level roadmap and
+this session's [plan file](.claude/plans) for the ongoing config/library
+refactor.
 
-Boards with different CFLAGS get separate sysroots. Only glibc is rebuilt
-with board-specific flags (the only ABI-critical package). Other libraries
-in the sysroot are generic -- the target rootfs gets its own copies via
-cross-emerge.
-
-Boards that share the same CFLAGS share a sysroot and its binary package
-cache (`PKGDIR`). For example, K1 and KY-X1 both use `rv64gcv_zvl256b`.
-
-### Source cache
-
-Git repos are cached as bare repositories at `~/.cache/crossdev-stages/sources/`.
-First clone fetches from upstream; subsequent builds use `--reference` for
-near-instant checkout.
-
-## Dependencies
-```sh
-emerge crossdev merge-usr git
-emerge u-boot-tools dtc dracut busybox
-emerge genimage xz-utils
-```
-
-**crossdev** requires a minimum amount of [setup](https://wiki.gentoo.org/wiki/Crossdev#eselect_creation):
-```
-emerge app-eselect/eselect-repository
-eselect repository create crossdev
-```
-
-## Board configuration
-
-Each board lives in `boards/<name>/` with:
-- `board.conf` -- variables read by Rust and bash scripts
-- `genimage.cfg` -- disk image layout
-- `pre-{step}.sh` -- runs before Rust default (optional)
-- `post-{step}.sh` -- runs after Rust default (optional)
-- `override-{step}.sh` -- replaces Rust default entirely (optional)
-
-Steps: `deps`, `checkout`, `bootloader`, `kernel`, `assemble`, `pack`
-
-### Build step execution
-
-```
-1. override-{step}.sh exists?  -> run it, done
-2. pre-{step}.sh exists?       -> run it
-3. Rust module default
-4. post-{step}.sh exists?      -> run it
-```
-
-### board.conf variables
-
-| Variable | Required | Description |
-|---|---|---|
-| `BOARD_ARCH` | yes | Target architecture (`riscv64`, `aarch64`) |
-| `BOARD_CFLAGS` | no | Board-specific CFLAGS (default: arch default) |
-| `SYSROOT` | yes | Sysroot name (boards with same value share a sysroot) |
-| `BUILD_STEPS` | no | Build pipeline steps |
-| `OPENSBI_FW_TYPE` | no | OpenSBI firmware type: `dynamic` (default), `jump`, `payload` |
-| `OPENSBI_MAKE_FLAGS` | no | Extra opensbi make arguments |
-| `U_BOOT_MAKE_FLAGS` | no | Extra u-boot make arguments |
-| `COMPRESSION` | no | Image compression: `xz` (default), `gz`, `none` |
-
-## Limitations
-
-- Some packages are cross-compilation unfriendly and rely on runtime checks (e.g. git iconv checks)
+Longer-term: overlayfs-based sandbox layering (share base stage3 +
+host-deps across boards), standalone crate API (`crossdev-stages` as a
+cross-rs replacement for Rust projects), and Rust 2024 edition migration.
