@@ -56,8 +56,8 @@ pub async fn ensure_target(
                 )
             })?;
             let name = target_name
-                .unwrap_or(&format!("{arch}-stage1"))
-                .to_string();
+                .map(String::from)
+                .unwrap_or_else(|| format!("{arch}-stage1"));
             tracing::info!("Target '{name}' not found, creating from stage3…");
             let stage_file = stage::fetch(&ws.stages_dir(), arch, mirror).await?;
             let tgt = target::Target::create(ws, &name, arch, &stage_file)?;
@@ -81,42 +81,8 @@ pub fn default_board_config(arch: &str) -> board::BoardConfig {
     board::BoardConfig {
         name: arch.to_string(),
         arch: arch.to_string(),
-        cflags: None,
-        ldflags: None,
-        rustflags: None,
         cross_compile: format!("{arch}-unknown-linux-gnu-"),
-        kernel_arch: None,
-        opensbi_repo: None,
-        opensbi_tag: None,
-        opensbi_platform: None,
-        opensbi_fw_type: None,
-        opensbi_make_flags: None,
-        u_boot_repo: None,
-        u_boot_tag: None,
-        u_boot_defconfig: None,
-        u_boot_make_flags: None,
-        firmware_repo: None,
-        firmware_overlay: None,
-        host_firmware_paths: vec![],
-        kernel_repo: String::new(),
-        kernel_tag: String::new(),
-        kernel_defconfig: String::new(),
-        kernel_dtb_glob: None,
-        dracut_modules: None,
-        root_dev: None,
-        console: None,
         hostname: "gentoo".into(),
-        serial_tty: None,
-        serial_baud: None,
-        kernel_name: None,
-        ramdisk_name: None,
-        loglevel: None,
-        services: vec![],
-        build_steps: vec![],
-        workaround_pkgs: vec![],
-        workaround_cflags: vec![],
-        image_name: None,
-        compression: None,
-        testing: false,
+        ..Default::default()
     }
 }

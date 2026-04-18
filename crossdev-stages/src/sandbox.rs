@@ -111,17 +111,19 @@ impl Sandbox {
         let host_portage = self.dir.join("etc/portage");
         crate::portage::write_portage_layers(&host_portage, portage_overlay)?;
 
-        // Dynamic accept_keywords: gcc slot from config/build.conf.
-        std::fs::create_dir_all(host_portage.join("package.accept_keywords"))?;
+        // Dynamic accept_keywords (gcc slot from config/build.conf; rust-std
+        // chost-specific). Written on the host fs so they're visible to the
+        // very next container process.
+        let accept = host_portage.join("package.accept_keywords");
+        std::fs::create_dir_all(&accept)?;
         std::fs::write(
-            host_portage.join("package.accept_keywords/gcc"),
+            accept.join("gcc"),
             format!("<sys-devel/gcc-{slot}.0.9999:{slot} **\n"),
         )?;
-        // rust-std acceptance is chost-specific.
-        runner.run(&format!(
-            "echo 'cross-{chost}/rust-std **' \
-             > /etc/portage/package.accept_keywords/rust-std"
-        ))?;
+        std::fs::write(
+            accept.join("rust-std"),
+            format!("cross-{chost}/rust-std **\n"),
+        )?;
 
         tracing::info!("Emerging gcc:{slot} (host)…");
         runner.run(&format!("emerge -b -k sys-devel/gcc:{slot}"))?;

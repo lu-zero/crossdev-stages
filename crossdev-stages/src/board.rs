@@ -3,7 +3,7 @@ use camino::Utf8Path;
 use crate::error::{Error, Result};
 
 /// Board configuration loaded from `boards/<name>/board.conf`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 #[allow(dead_code)]
 pub struct BoardConfig {
     pub name: String,

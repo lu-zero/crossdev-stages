@@ -26,19 +26,8 @@ static ARCH_CONFIGS: LazyLock<HashMap<&'static str, ArchConfig>> = LazyLock::new
     m
 });
 
-/// Parse a bash-style KEY="value" config file. `#` comments and blank lines ignored.
-/// Quotes (either `"` or `'`) around values are stripped.
 fn parse_arch_conf(content: &'static str) -> ArchConfig {
-    let map: HashMap<&str, &str> = content
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .filter_map(|l| {
-            let (k, v) = l.split_once('=')?;
-            let v = v.trim().trim_matches('"').trim_matches('\'');
-            Some((k.trim(), v))
-        })
-        .collect();
+    let map = crate::portage::parse_keyval(content);
     let get = |k: &str| *map.get(k).unwrap_or(&"");
     ArchConfig {
         gentoo_arch: get("GENTOO_ARCH"),
@@ -116,22 +105,24 @@ pub fn stage_variant(arch: &str) -> &'static str {
         .unwrap_or("openrc")
 }
 
-/// Download the stage3 for `arch` into the stages cache directory.
-/// Returns the local path to the downloaded tarball.
-pub async fn fetch(stages_dir: &Utf8Path, arch: &str, mirror: Option<&str>) -> Result<Utf8PathBuf> {
+fn build_client(stages_dir: &Utf8Path, arch: &str, mirror: Option<&str>) -> Result<Client> {
     let gentoo_arch = parse_arch(arch)?;
     let cache = Cache::Path(stages_dir.as_std_path().to_path_buf());
-    let client = match mirror {
+    // The builder's type changes on `.mirror_url()`, so match instead of if-let.
+    Ok(match mirror {
         Some(m) => Client::builder()
             .arch(gentoo_arch)
             .cache_dir(cache)
             .mirror_url(m)
             .build()?,
-        None => Client::builder()
-            .arch(gentoo_arch)
-            .cache_dir(cache)
-            .build()?,
-    };
+        None => Client::builder().arch(gentoo_arch).cache_dir(cache).build()?,
+    })
+}
+
+/// Download the stage3 for `arch` into the stages cache directory.
+/// Returns the local path to the downloaded tarball.
+pub async fn fetch(stages_dir: &Utf8Path, arch: &str, mirror: Option<&str>) -> Result<Utf8PathBuf> {
+    let client = build_client(stages_dir, arch, mirror)?;
     let stage = client.get(stage_variant(arch)).await?;
     let path = stage.file_path();
     Utf8PathBuf::try_from(path)
@@ -140,19 +131,7 @@ pub async fn fetch(stages_dir: &Utf8Path, arch: &str, mirror: Option<&str>) -> R
 
 /// List available stage3 images for the given arch.
 pub async fn list(stages_dir: &Utf8Path, arch: &str, mirror: Option<&str>) -> Result<Vec<String>> {
-    let gentoo_arch = parse_arch(arch)?;
-    let cache = Cache::Path(stages_dir.as_std_path().to_path_buf());
-    let client = match mirror {
-        Some(m) => Client::builder()
-            .arch(gentoo_arch)
-            .cache_dir(cache)
-            .mirror_url(m)
-            .build()?,
-        None => Client::builder()
-            .arch(gentoo_arch)
-            .cache_dir(cache)
-            .build()?,
-    };
+    let client = build_client(stages_dir, arch, mirror)?;
     let stages = client.list().await?;
     Ok(stages
         .into_iter()

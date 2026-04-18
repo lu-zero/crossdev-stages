@@ -197,6 +197,21 @@ fn default_checkout(
     apply_patches(runner, boards_root, board, "kernel", "/build/linux")
 }
 
+/// List files in `dir` with extension `ext`, sorted alphabetically.
+/// Returns an empty vec if `dir` is missing or has no matching files.
+fn list_files_by_ext(dir: &Utf8Path, ext: &str) -> Result<Vec<String>> {
+    if !dir.is_dir() {
+        return Ok(vec![]);
+    }
+    let mut out: Vec<String> = std::fs::read_dir(dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some(ext))
+        .filter_map(|e| e.file_name().into_string().ok())
+        .collect();
+    out.sort();
+    Ok(out)
+}
+
 /// Apply all `*.patch` files in `boards/<name>/patches/<component>/` to `srcdir`,
 /// sorted alphabetically. No-op if the directory is missing or empty.
 fn apply_patches(
@@ -207,15 +222,7 @@ fn apply_patches(
     srcdir: &str,
 ) -> Result<()> {
     let dir = boards_root.join(&board.name).join("patches").join(component);
-    if !dir.is_dir() {
-        return Ok(());
-    }
-    let mut patches: Vec<String> = std::fs::read_dir(&dir)?
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("patch"))
-        .filter_map(|e| e.file_name().into_string().ok())
-        .collect();
-    patches.sort();
+    let patches = list_files_by_ext(&dir, "patch")?;
     for p in &patches {
         let src = format!("/scripts/boards/{}/patches/{component}/{p}", board.name);
         runner.run(&format!("patch -p1 -d {srcdir} < {src}"))?;
@@ -254,26 +261,19 @@ fn default_kernel(
 
     // Merge fragments from boards/<name>/kernel-config/*.config (alphabetical order)
     let frag_dir = boards_root.join(&board.name).join("kernel-config");
-    if frag_dir.is_dir() {
-        let mut frags: Vec<String> = std::fs::read_dir(&frag_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.path().extension().and_then(|s| s.to_str()) == Some("config"))
-            .filter_map(|e| e.file_name().into_string().ok())
+    let frags = list_files_by_ext(&frag_dir, "config")?;
+    if !frags.is_empty() {
+        let args: Vec<String> = frags
+            .iter()
+            .map(|f| format!("/scripts/boards/{}/kernel-config/{f}", board.name))
             .collect();
-        frags.sort();
-        if !frags.is_empty() {
-            let args: Vec<String> = frags
-                .iter()
-                .map(|f| format!("/scripts/boards/{}/kernel-config/{f}", board.name))
-                .collect();
-            tracing::info!("Merging {} kernel config fragment(s)", frags.len());
-            runner.run(&format!(
-                "cd /build/linux && ARCH={karch} \
-                 scripts/kconfig/merge_config.sh -m .config {frag_args} && \
-                 make ARCH={karch} CROSS_COMPILE={cc} olddefconfig",
-                frag_args = args.join(" ")
-            ))?;
-        }
+        tracing::info!("Merging {} kernel config fragment(s)", frags.len());
+        runner.run(&format!(
+            "cd /build/linux && ARCH={karch} \
+             scripts/kconfig/merge_config.sh -m .config {frag_args} && \
+             make ARCH={karch} CROSS_COMPILE={cc} olddefconfig",
+            frag_args = args.join(" ")
+        ))?;
     }
 
     // Build kernel + modules

@@ -8,8 +8,9 @@ use crate::error::Result;
 use crate::stage::{all_llvm_targets, default_cflags, gentoo_arch, llvm_target};
 
 /// Parse a bash-style `KEY="value"` config file. `#` comments and blank lines
-/// ignored. Quotes around values (either `"` or `'`) stripped.
-pub fn parse_keyval(content: &str) -> HashMap<String, String> {
+/// ignored. Quotes around values (either `"` or `'`) stripped. Returned keys
+/// and values borrow from `content`.
+pub fn parse_keyval(content: &str) -> HashMap<&str, &str> {
     content
         .lines()
         .map(str::trim)
@@ -17,37 +18,34 @@ pub fn parse_keyval(content: &str) -> HashMap<String, String> {
         .filter_map(|l| {
             let (k, v) = l.split_once('=')?;
             let v = v.trim().trim_matches('"').trim_matches('\'');
-            Some((k.trim().to_string(), v.to_string()))
+            Some((k.trim(), v))
         })
         .collect()
 }
 
-static BUILD_CONFIG: LazyLock<HashMap<String, String>> =
+static BUILD_CONFIG: LazyLock<HashMap<&'static str, &'static str>> =
     LazyLock::new(|| parse_keyval(include_str!("../config/build.conf")));
+
+/// Look up a key in `BUILD_CONFIG`, returning `fallback` if absent or empty.
+fn build_config(key: &str, fallback: &'static str) -> &'static str {
+    BUILD_CONFIG
+        .get(key)
+        .copied()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(fallback)
+}
 
 /// Return the configured GCC slot (defaults to "16" if missing).
 /// Drives host + cross-sysroot `sys-devel/gcc:N` selection.
 pub fn gcc_slot() -> &'static str {
-    static SLOT: LazyLock<String> = LazyLock::new(|| {
-        BUILD_CONFIG
-            .get("GCC_SLOT")
-            .cloned()
-            .unwrap_or_else(|| "16".to_string())
-    });
-    SLOT.as_str()
+    build_config("GCC_SLOT", "16")
 }
 
 /// Return the baseline `FEATURES` string applied via make.conf.
 /// Kept out of the fragments tree so stage3's catalyst-written make.conf
 /// content is preserved (set_make_conf_var only touches managed variables).
 pub fn features_base() -> &'static str {
-    static F: LazyLock<String> = LazyLock::new(|| {
-        BUILD_CONFIG
-            .get("FEATURES_BASE")
-            .cloned()
-            .unwrap_or_else(|| "parallel-install -merge-wait".to_string())
-    });
-    F.as_str()
+    build_config("FEATURES_BASE", "parallel-install -merge-wait")
 }
 
 /// Parameters for a Portage `make.conf` file.
@@ -194,17 +192,17 @@ pub fn write_default_fragments(portage_dir: &Utf8Path) -> Result<()> {
 /// Copy every regular file from `src` into `dst`, preserving directory layout.
 /// Existing files at the destination are overwritten.
 fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
+    copy_tree_std(src.as_std_path(), dst.as_std_path())
+}
+
+fn copy_tree_std(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
         let src_path = entry.path();
-        let dst_path = dst.as_std_path().join(entry.file_name());
+        let dst_path = dst.join(entry.file_name());
         if src_path.is_dir() {
             std::fs::create_dir_all(&dst_path)?;
-            let src_utf8 = camino::Utf8PathBuf::try_from(src_path)
-                .expect("portage overlay path is not UTF-8");
-            let dst_utf8 = camino::Utf8PathBuf::try_from(dst_path)
-                .expect("portage overlay path is not UTF-8");
-            copy_tree(&src_utf8, &dst_utf8)?;
+            copy_tree_std(&src_path, &dst_path)?;
         } else if src_path.is_file() {
             if let Some(parent) = dst_path.parent() {
                 std::fs::create_dir_all(parent)?;
