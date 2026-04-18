@@ -114,10 +114,23 @@ impl<'a> MakeConf<'a> {
     }
 }
 
+/// Return (jobs, load-average) for MAKEOPTS / EMERGE_DEFAULT_OPTS.
+///
+/// Defaults to (nproc, nproc * 3 / 2) — full CPU saturation with a little
+/// headroom for I/O-bound tasks. Override via `MAKEOPTS_JOBS` / `MAKEOPTS_LOAD`
+/// in `config/build.conf` (integers, 0 or empty = auto).
 fn parallelism() -> (usize, usize) {
     let n = num_cpus::get();
-    let jobs = n / 2 + 1;
-    let load = n;
+    let jobs = BUILD_CONFIG
+        .get("MAKEOPTS_JOBS")
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(n);
+    let load = BUILD_CONFIG
+        .get("MAKEOPTS_LOAD")
+        .and_then(|s| s.parse::<usize>().ok())
+        .filter(|&v| v > 0)
+        .unwrap_or(n * 3 / 2);
     (jobs, load)
 }
 
