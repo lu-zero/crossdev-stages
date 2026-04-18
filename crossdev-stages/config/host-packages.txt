@@ -14,3 +14,4 @@ sys-fs/mtools
 app-eselect/eselect-repository
 dev-lang/rust
 dev-python/pyelftools
+sys-devel/bc
