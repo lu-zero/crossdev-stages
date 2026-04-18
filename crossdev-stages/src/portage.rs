@@ -2,7 +2,7 @@ use camino::Utf8Path;
 
 use crate::container::SandboxRunner;
 use crate::error::Result;
-use crate::stage::{default_cflags, gentoo_arch, llvm_target};
+use crate::stage::{all_llvm_targets, default_cflags, gentoo_arch, llvm_target};
 
 /// Parameters for a Portage `make.conf` file.
 pub struct MakeConf<'a> {
@@ -50,13 +50,21 @@ impl<'a> MakeConf<'a> {
         set_make_conf_var(&make_conf, "ACCEPT_KEYWORDS", &format!("~{garch}"))?;
         set_make_conf_var(&make_conf, "PORT_LOGDIR", &format!("/var/log/portage/{garch}"))?;
 
+        // LLVM_TARGETS: host gets the union of every supported arch (so the
+        // bundled LLVM inside dev-lang/rust can bootstrap any cross-std);
+        // cross-sysroots get only their own arch target.
+        let llvm_targets = match self.chost {
+            Some(_) => llvm_target(self.arch).map(str::to_string),
+            None => Some(all_llvm_targets()),
+        };
+        if let Some(targets) = llvm_targets.filter(|s| !s.is_empty()) {
+            set_make_conf_var(&make_conf, "LLVM_TARGETS", &targets)?;
+        }
+
         if let Some(chost) = self.chost {
             set_make_conf_var(&make_conf, "CHOST", chost)?;
             set_make_conf_var(&make_conf, "CFLAGS", cflags)?;
             set_make_conf_var(&make_conf, "CXXFLAGS", cflags)?;
-            if let Some(llvm) = llvm_target(self.arch) {
-                set_make_conf_var(&make_conf, "LLVM_TARGETS", llvm)?;
-            }
         }
 
         if let Some(mirror) = self.mirror {
