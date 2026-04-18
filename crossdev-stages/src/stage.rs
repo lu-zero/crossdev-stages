@@ -84,6 +84,21 @@ pub fn default_cflags(arch: &str) -> &'static str {
     ARCH_CONFIGS.get(arch).map(|c| c.cflags).unwrap_or("-O3 -pipe")
 }
 
+/// Space-separated union of every supported arch's LLVM target name.
+/// Used for the host sandbox's make.conf so the bundled LLVM inside
+/// `dev-lang/rust` (the crossdev bootstrap compiler) can target any
+/// arch we know how to cross-build for.
+pub fn all_llvm_targets() -> String {
+    let mut targets: Vec<&str> = ARCH_CONFIGS
+        .values()
+        .map(|c| c.llvm_target)
+        .filter(|t| !t.is_empty())
+        .collect();
+    targets.sort();
+    targets.dedup();
+    targets.join(" ")
+}
+
 /// Map an OS arch to the LLVM target name for `LLVM_TARGETS`.
 pub fn llvm_target(arch: &str) -> Option<&'static str> {
     ARCH_CONFIGS
