@@ -61,9 +61,9 @@ pub async fn run(
                 Err(_) => {
                     let name = target.as_deref().unwrap_or(&board_cfg.arch).to_string();
                     tracing::info!("Target '{name}' not found, creating from stage3…");
-                    let stage_file =
+                    let source_stage =
                         stage::fetch(&ws.stages_dir(), &board_cfg.arch, mirror).await?;
-                    target::Target::create(ws, &name, &board_cfg.arch, &stage_file)?
+                    target::Target::create(ws, &name, &board_cfg.arch, &source_stage)?
                 }
             };
 

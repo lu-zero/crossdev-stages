@@ -22,16 +22,16 @@ impl Sandbox {
         Ok(Self { dir, arch })
     }
 
-    /// Create a new sandbox by unpacking a stage3 tarball.
+    /// Create a new sandbox by unpacking a stage3 source tarball (catalyst: `source_path`).
     /// Writes a `.arch` marker on success.
-    pub fn create(ws: &Workspace, name: &str, arch: &str, stage_file: &Utf8Path) -> Result<Self> {
+    pub fn create(ws: &Workspace, name: &str, arch: &str, source_stage: &Utf8Path) -> Result<Self> {
         let dir = ws.sandbox(name);
         if dir.is_dir() {
             tracing::info!("Sandbox {} already exists, skipping unpack.", name);
             return Self::open(dir);
         }
         tracing::info!("Unpacking stage3 into {}…", dir);
-        unpack_tarball(stage_file, &dir, ws.base())?;
+        unpack_tarball(source_stage, &dir, ws.base())?;
         std::fs::write(dir.join(".arch"), arch)?;
         tracing::info!("Sandbox {} created.", name);
         Ok(Self {
@@ -115,7 +115,7 @@ impl Sandbox {
         runner.run(&format!("gcc-config {gcc_profile}"))?;
         runner.run("source /etc/profile && env-update")?;
 
-        // Configure the cross-sysroot portage settings (written on the host fs).
+        // Configure the crossdev prefix portage settings (written on the host fs).
         let crossdev_root = self.dir.join(format!("usr/{chost}"));
         let crossdev_portage = crossdev_root.join("etc/portage");
         runner.run(&format!(
@@ -169,7 +169,7 @@ impl Sandbox {
 
     // ── Private helpers ──────────────────────────────────────────────────────
 
-    /// Write portage config files for the cross-sysroot directly on the host fs.
+    /// Write portage config files for the crossdev prefix directly on the host fs.
     fn write_crossdev_portage(
         &self,
         portage_dir: &Utf8Path,
@@ -178,7 +178,7 @@ impl Sandbox {
         cflags: &str,
         board: &BoardConfig,
     ) -> Result<()> {
-        // make.conf for the cross-sysroot
+        // make.conf for the crossdev prefix
         MakeConf {
             arch,
             chost: Some(chost),
