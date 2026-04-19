@@ -24,7 +24,7 @@ pub async fn run(
             }
         }
         TargetCmd::Setup { name, from } => {
-            let (resolved_arch, stage_file) = if let Some(local) = from {
+            let (resolved_arch, source_stage) = if let Some(local) = from {
                 let a = arch.ok_or_else(|| crate::error::Error::CommandFailed {
                     code: 1,
                     reason: "--arch is required when using --from".into(),
@@ -44,7 +44,7 @@ pub async fn run(
                     chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
                 )
             });
-            target::Target::create(ws, &name, &resolved_arch, &stage_file)?;
+            target::Target::create(ws, &name, &resolved_arch, &source_stage)?;
             println!("Target '{name}' created.");
             ensure_crossdev(
                 ws,

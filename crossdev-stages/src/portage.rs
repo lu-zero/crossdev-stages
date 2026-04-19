@@ -14,7 +14,7 @@ pub struct MakeConf<'a> {
 }
 
 impl<'a> MakeConf<'a> {
-    /// Write `make.conf` into `portage_dir` (i.e. `/etc/portage` of a sandbox or sysroot).
+    /// Write `make.conf` into `portage_dir` (i.e. `/etc/portage` of a sandbox or target stage).
     /// Updates variables in-place; preserves any existing content not managed here.
     pub fn write(&self, portage_dir: &Utf8Path) -> Result<()> {
         std::fs::create_dir_all(portage_dir)?;
@@ -156,7 +156,7 @@ impl<'a> Portage<'a> {
         self.runner.run("emerge -b -k -e @world")
     }
 
-    /// Cross-emerge packages into a target sysroot (mounted at `/target`).
+    /// Cross-emerge packages into the target stage (mounted at `/target`).
     /// Uses `{chost}-emerge` which crossdev installs.
     pub fn cross_emerge(&self, chost: &str, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
@@ -172,9 +172,9 @@ impl<'a> Portage<'a> {
     }
 
     /// Run `{chost}-emerge` without overriding ROOT, so packages install into
-    /// the crossdev sysroot (`/usr/{chost}`) rather than `/target`.
+    /// the crossdev prefix (`/usr/{chost}`) rather than `/target`.
     /// Used for updating the cross-toolchain itself (gcc, binutils-libs, @system).
-    pub fn cross_emerge_sysroot(&self, chost: &str, packages: &[&str]) -> Result<()> {
+    pub fn cross_emerge_crossdev(&self, chost: &str, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
         self.runner.run(&format!("{chost}-emerge -b -k {pkgs}"))
     }
