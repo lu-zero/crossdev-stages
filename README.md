@@ -1,5 +1,5 @@
 # crossdev-stages
-Build Gentoo stages leveraging crossdev
+Rootless cross-compilation of Gentoo stages using crossdev and hakoniwa
 
 ## Status
 

@@ -2,11 +2,19 @@
 
 ## Overview
 
-`crossdev-stages` builds bootable Gentoo images for embedded targets via
-rootless cross-compilation.  It replaces a 1700-line bash script
-(`sandbox-stage.sh`) with a typed Rust CLI that wraps
+`crossdev-stages` cross-compiles Gentoo stages for foreign architectures,
+running entirely as an unprivileged user.  It replaces a 1700-line bash
+script (`sandbox-stage.sh`) with a typed Rust CLI that wraps
 [hakoniwa](https://github.com/souk4711/hakoniwa) (Linux user-namespace
 containers) and [crossdev](https://wiki.gentoo.org/wiki/Crossdev).
+
+The primary outputs are:
+
+- **A target stage** — a cross-compiled Gentoo root that can be exported as
+  a standard stage3-compatible tarball for use with
+  [catalyst](https://wiki.gentoo.org/wiki/Catalyst) or native bootstrapping.
+- **A bootable image** — kernel, bootloader, and disk image built on top of
+  the target stage for a specific board.
 
 The key property is **rootless**: the entire build runs as an unprivileged
 user.  No `sudo`, no root chroot — hakoniwa user-namespace containers provide
@@ -54,7 +62,8 @@ The project directory (where `boards/` lives) is separate and passed via
 
 ### `Sandbox`
 
-An amd64 Gentoo root unpacked from a source stage.  Provides:
+A Gentoo root for the host arch unpacked from a source stage, used as the
+build environment for cross-compilation.  Provides:
 
 - `create(ws, name, arch, source_stage)` — unpack a stage3, write `.arch` marker.
 - `prepare(mirror)` — run `emerge-webrsync`, install host build dependencies
@@ -152,8 +161,8 @@ outside the container.
 ## Relationship to catalyst
 
 catalyst builds Gentoo stages natively (same arch) using a real chroot.
-`crossdev-stages` targets cross-compilation to embedded arches and uses
-rootless containers instead.  The vocabulary intentionally mirrors catalyst
+`crossdev-stages` cross-compiles to foreign arches and uses rootless
+containers instead.  The vocabulary intentionally mirrors catalyst
 where the concepts overlap:
 
 - **source stage** ↔ catalyst `source_path` (seed tarball)
