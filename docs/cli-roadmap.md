@@ -5,23 +5,19 @@
 ```
 crossdev-stages
   sandbox   setup|list|prepare|crossdev|enter|run|destroy
-  target    setup|list|stage1|update|install|ldconfig|destroy
-  sysroot   list|create|destroy
-  image     list-boards|build|prune
+  target    setup|list|stage1|update|install|ldconfig|destroy|export
+  image     build|prune|export
   stages    list|fetch
-  cleanup   [--all] [--dry-run]
-  logs      <board> [--step]
-  export    <board> [-o dir] [--all]
-  config    <board>
-  doctor
+  board     list|info
+  maint     cleanup|logs|doctor
+  status
 ```
 
 ## TODO
 
 ### CLI
-- [ ] `status` -- overview of sandboxes, sysroots, builds, boards
-- [ ] `enter <board>` -- shell with sysroot + build mounted
-- [ ] `cache list|size|clean` -- PKGDIR binary package management
+- [ ] `enter <board>` -- shell with target stage + build mounted
+- [ ] `maint cache list|size|clean` -- PKGDIR binary package management
 - [ ] `sandbox clone` -- cp -al for parallel builds
 - [ ] `logs --follow` -- tail -f style
 - [ ] `export --format raw` -- decompress before export
