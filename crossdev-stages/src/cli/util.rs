@@ -16,10 +16,10 @@ pub async fn ensure_crossdev(
         Err(_) => {
             let host_arch = std::env::consts::ARCH;
             tracing::info!("No sandbox found, creating one for {host_arch}…");
-            let stage_file = stage::fetch(&ws.stages_dir(), host_arch, mirror).await?;
+            let source_stage = stage::fetch(&ws.stages_dir(), host_arch, mirror).await?;
             let name =
                 format!("{host_arch}-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"));
-            sandbox::Sandbox::create(ws, &name, host_arch, &stage_file)?;
+            sandbox::Sandbox::create(ws, &name, host_arch, &source_stage)?;
             ws.resolve_sandbox(None)?
         }
     };
@@ -56,8 +56,8 @@ pub async fn ensure_target(
                 .unwrap_or(&format!("{arch}-stage1"))
                 .to_string();
             tracing::info!("Target '{name}' not found, creating from stage3…");
-            let stage_file = stage::fetch(&ws.stages_dir(), arch, mirror).await?;
-            let tgt = target::Target::create(ws, &name, arch, &stage_file)?;
+            let source_stage = stage::fetch(&ws.stages_dir(), arch, mirror).await?;
+            let tgt = target::Target::create(ws, &name, arch, &source_stage)?;
             (tgt, arch.to_string())
         }
     };

@@ -215,19 +215,20 @@ pub fn destroy_dir(dir: &Utf8Path, cache_base: &Utf8Path) -> Result<()> {
     check_status(command.status()?).map_err(|e| annotate_cmd(e, &cmd))
 }
 
-/// Unpack a stage3 tarball into `dest_dir`, preserving ownership and xattrs.
+/// Unpack a stage3 source tarball into `dest_dir`, preserving ownership and xattrs.
 ///
+/// `source_stage` is the seed stage3 tarball (catalyst: `source_path`).
 /// Runs inside a container rooted at the host `/` (so that tar, bash, etc.
 /// are available from the host system).  The entire cache base directory is
 /// bind-mounted read-write at `/cache` so that both the source tarball and
 /// the destination directory are reachable inside the container.
-pub fn unpack_tarball(stage_file: &Utf8Path, dest_dir: &Utf8Path, cache_base: &Utf8Path) -> Result<()> {
+pub fn unpack_tarball(source_stage: &Utf8Path, dest_dir: &Utf8Path, cache_base: &Utf8Path) -> Result<()> {
     std::fs::create_dir_all(dest_dir)?;
 
     // Paths inside the container: /cache/<relative_to_cache_base>
     let stage_in_container = format!(
         "/cache/{}",
-        stage_file.strip_prefix(cache_base).unwrap_or(stage_file)
+        source_stage.strip_prefix(cache_base).unwrap_or(source_stage)
     );
     let dest_in_container = format!(
         "/cache/{}",

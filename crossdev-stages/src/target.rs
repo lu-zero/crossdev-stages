@@ -21,16 +21,16 @@ impl Target {
         Ok(Self { dir, arch })
     }
 
-    /// Create a new target by unpacking a stage3 into the targets directory.
+    /// Create a new target stage by unpacking a stage3 source tarball (catalyst: `source_path`).
     /// Writes a `.arch` marker on success.
-    pub fn create(ws: &Workspace, name: &str, arch: &str, stage_file: &Utf8Path) -> Result<Self> {
+    pub fn create(ws: &Workspace, name: &str, arch: &str, source_stage: &Utf8Path) -> Result<Self> {
         let dir = ws.target(name);
         if dir.is_dir() {
             tracing::info!("Target {} already exists, skipping unpack.", name);
             return Self::open(dir);
         }
         tracing::info!("Unpacking stage3 into target {}…", dir);
-        unpack_tarball(stage_file, &dir, ws.base())?;
+        unpack_tarball(source_stage, &dir, ws.base())?;
         std::fs::write(dir.join(".arch"), arch)?;
         tracing::info!("Target {} created.", name);
         Ok(Self {
@@ -88,11 +88,11 @@ impl Target {
         let runner = sandbox.runner().with_target(&self.dir);
         let portage = Portage::new(&runner);
 
-        // Update the cross-toolchain in the crossdev sysroot first (no ROOT=/target).
-        tracing::info!("Updating crossdev sysroot: gcc, binutils-libs, @system…");
-        portage.cross_emerge_sysroot(&chost, &["sys-devel/gcc"])?;
-        portage.cross_emerge_sysroot(&chost, &["sys-libs/binutils-libs"])?;
-        portage.cross_emerge_sysroot(&chost, &["-u", "system"])?;
+        // Update the cross-toolchain in the crossdev prefix first (no ROOT=/target).
+        tracing::info!("Updating crossdev prefix: gcc, binutils-libs, @system…");
+        portage.cross_emerge_crossdev(&chost, &["sys-devel/gcc"])?;
+        portage.cross_emerge_crossdev(&chost, &["sys-libs/binutils-libs"])?;
+        portage.cross_emerge_crossdev(&chost, &["-u", "system"])?;
 
         // Rebuild @world in the target.
         tracing::info!("Rebuilding @world in target…");
@@ -121,7 +121,7 @@ impl Target {
     }
 
     /// Write target portage make.conf and copy the profile link from the
-    /// crossdev sysroot in the sandbox — mirrors `prepare_target_portage` in
+    /// crossdev prefix in the sandbox — mirrors `prepare_target_portage` in
     /// the bash script.
     fn prepare_portage(&self, sandbox: &Sandbox, chost: &str) -> Result<()> {
         let portage_dir = self.dir.join("etc/portage");
@@ -137,7 +137,7 @@ impl Target {
         .write(&portage_dir)?;
 
         // Copy the profile directory and make.profile symlink from the
-        // crossdev sysroot so the target uses the correct Gentoo profile.
+        // crossdev prefix so the target stage uses the correct Gentoo profile.
         let src_portage = sandbox.dir.join(format!("usr/{chost}/etc/portage"));
 
         let src_profile_dir = src_portage.join("profile");
