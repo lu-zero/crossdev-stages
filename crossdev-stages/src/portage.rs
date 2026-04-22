@@ -196,6 +196,7 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
 
     let packages = [
         "sys-devel/crossdev",
+        "sys-devel/bc",
         "sys-apps/merge-usr",
         "dev-vcs/git",
         "dev-embedded/u-boot-tools",
