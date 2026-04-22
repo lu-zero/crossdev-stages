@@ -1,9 +1,5 @@
 set -e
 
-# DTBs into nested directory
-mkdir -p /build/gen/boot/dtbs
-cp /build/linux/${BOARD_DTB_GLOB} /build/gen/boot/dtbs/
-
 # Extlinux boot config
 mkdir -p /build/gen/boot/extlinux
 kver=$(ls /build/gen/root/lib/modules/ | head -1)
@@ -15,18 +11,18 @@ TIMEOUT 30
 LABEL canmv
     MENU LABEL CanMV K230 V1.1 (512MB)
     LINUX /vmlinuz-$kver
-    FDT /dtbs/k230_canmv.dtb
+    FDT /k230_canmv.dtb
     APPEND root=${BOOT_ROOT_DEV} rw rootwait rootfstype=ext4 console=${BOOT_CONSOLE} earlycon=sbi
 
 LABEL 01studio
     MENU LABEL 01Studio CanMV K230 (1GB)
     LINUX /vmlinuz-$kver
-    FDT /dtbs/k230_canmv_01studio.dtb
+    FDT /k230_canmv_01studio.dtb
     APPEND root=${BOOT_ROOT_DEV} rw rootwait rootfstype=ext4 console=${BOOT_CONSOLE} earlycon=sbi
 EXTEOF
 
 # K230 firmware header for u-boot SPL
-python3 /scripts/boards/k230/make-k230-firmware.py \
+bash /scripts/boards/k230/make-k230-firmware.sh \
     -i /build/u-boot/spl/u-boot-spl.bin \
     -o /build/u-boot/fn_u-boot-spl.bin
 

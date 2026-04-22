@@ -226,9 +226,7 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     ))?;
 
     if let Some(dtb_glob) = &board.kernel_dtb_glob {
-        runner.run(&format!(
-            "cp /build/linux/{dtb_glob} /build/gen/boot/"
-        ))?;
+        runner.run(&format!("cp /build/linux/{dtb_glob} /build/gen/boot/"))?;
     }
 
     if let Some(kname) = &board.kernel_name {
