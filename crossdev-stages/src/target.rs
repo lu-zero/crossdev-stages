@@ -22,7 +22,7 @@ impl Target {
     }
 
     /// Create a new target stage by unpacking a stage3 source tarball (catalyst: `source_path`).
-    /// Writes a `.arch` marker on success.
+    /// Writes a `.arch` marker and a `.stage3` marker (file name only, for manifest).
     pub fn create(ws: &Workspace, name: &str, arch: &str, source_stage: &Utf8Path) -> Result<Self> {
         let dir = ws.target(name);
         if dir.is_dir() {
@@ -32,6 +32,9 @@ impl Target {
         tracing::info!("Unpacking stage3 into target {}…", dir);
         unpack_tarball(source_stage, &dir, ws.base())?;
         std::fs::write(dir.join(".arch"), arch)?;
+        if let Some(fname) = source_stage.file_name() {
+            std::fs::write(dir.join(".stage3"), fname)?;
+        }
         tracing::info!("Target {} created.", name);
         Ok(Self {
             dir,
