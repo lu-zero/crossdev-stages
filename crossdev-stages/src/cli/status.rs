@@ -29,7 +29,8 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
                 let image = std::fs::read_to_string(b.dir.join(".image"))
                     .map(|s| format!(" ({})", s.trim()))
                     .unwrap_or_default();
-                println!("  {:<40} {}{image}", dir.file_name().unwrap_or("?"), status);
+                let ts = dir.file_name().unwrap_or("?");
+                println!("  {:<40} {}{image}", format!("{}/{}", b.board, ts), status);
             }
         }
     } else {
@@ -49,7 +50,8 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
                     .map(|s| s.trim().to_string())
                     .unwrap_or_else(|_| "-".into());
                 println!(
-                    "build\t{}\t{}\t{}\t{}",
+                    "build\t{}/{}\t{}\t{}\t{}",
+                    b.board,
                     dir.file_name().unwrap_or("?"),
                     b.board,
                     status,

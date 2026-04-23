@@ -85,8 +85,31 @@ impl Workspace {
     }
 
     /// Return all build directories, newest first (by mtime).
+    /// Layout is `builds/<board>/<timestamp>/`; we walk one level of
+    /// per-board subdirs and flatten.
     pub fn list_builds(&self) -> Result<Vec<Utf8PathBuf>> {
-        list_dirs_by_mtime(&self.builds_dir())
+        let root = self.builds_dir();
+        if !root.exists() {
+            return Ok(vec![]);
+        }
+        let mut all = Vec::new();
+        for board_entry in std::fs::read_dir(&root)? {
+            let board_entry = board_entry?;
+            let board_dir = match Utf8PathBuf::try_from(board_entry.path()) {
+                Ok(p) if p.is_dir() => p,
+                _ => continue,
+            };
+            all.extend(list_dirs_by_mtime(&board_dir)?);
+        }
+        all.sort_by(|a, b| {
+            let m = |p: &Utf8PathBuf| {
+                std::fs::metadata(p)
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+            };
+            m(b).cmp(&m(a))
+        });
+        Ok(all)
     }
 
     /// Resolve a sandbox by name or fall back to the most recently modified one.

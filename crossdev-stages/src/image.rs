@@ -36,9 +36,8 @@ impl Build {
                 }
             }
         }
-        let ts = Utc::now().format("%Y%m%dT%H%M%SZ");
-        let name = format!("{board}-{ts}");
-        let dir = ws.builds_dir().join(&name);
+        let ts = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        let dir = ws.builds_dir().join(board).join(&ts);
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join(".board"), board)?;
         Ok(Self {
