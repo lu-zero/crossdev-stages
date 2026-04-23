@@ -5,6 +5,7 @@ mod cli;
 mod container;
 mod error;
 mod image;
+mod manifest;
 mod package_list;
 mod portage;
 mod sandbox;
