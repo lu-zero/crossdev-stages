@@ -23,20 +23,28 @@ pub struct Build {
 
 impl Build {
     pub fn create(ws: &Workspace, board: &str) -> Result<Self> {
-        // One build directory per board.  Reuse it across re-runs: the
-        // timestamp written at first create stays put, so a re-pack
-        // overwrites the same `*-<ts>.img.xz` instead of accumulating
-        // copies.  To start over (and pick up a fresh timestamp), prune
-        // the board's build dir first.
-        let dir = ws.builds_dir().join(board);
-        if let Some(b) = Self::open(dir.clone()) {
-            tracing::info!("Reusing build: {}", dir);
-            return Ok(b);
+        // Layout is builds/<board>/<timestamp>/, one fresh leaf per build.
+        // A flat pre-nesting dir (builds/<board>/ carrying the .board
+        // marker itself) would swallow new leaves, so migrate it into a
+        // nested leaf first.
+        migrate_legacy_build(ws, board)?;
+
+        // Resume the newest unpacked leaf for this board; steps resume
+        // via the .{step} markers inside the leaf.
+        if let Ok(builds) = ws.list_builds() {
+            for dir in builds {
+                if let Some(b) = Self::open(dir.clone()) {
+                    if b.board == board && !b.is_done("packed") {
+                        tracing::info!("Resuming build: {}", dir);
+                        return Ok(b);
+                    }
+                }
+            }
         }
+        let ts = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        let dir = ws.builds_dir().join(board).join(&ts);
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join(".board"), board)?;
-        let ts = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-        std::fs::write(dir.join(".timestamp"), &ts)?;
         Ok(Self {
             dir,
             board: board.to_string(),
@@ -50,12 +58,13 @@ impl Build {
         Some(Self { dir, board })
     }
 
-    /// Wall-clock build timestamp embedded in the produced image filename
-    /// (stable across resume — written once at create).
+    /// Wall-clock build timestamp embedded in the produced image filename.
+    /// The leaf directory name is the timestamp (builds/<board>/<ts>/) —
+    /// single source of truth, stable across resume.
     pub fn timestamp(&self) -> String {
-        std::fs::read_to_string(self.dir.join(".timestamp"))
-            .ok()
-            .map(|s| s.trim().to_string())
+        self.dir
+            .file_name()
+            .map(str::to_string)
             .unwrap_or_else(|| Utc::now().format("%Y%m%dT%H%M%SZ").to_string())
     }
 
@@ -71,6 +80,30 @@ impl Build {
         std::fs::write(self.marker(step), Utc::now().to_rfc3339())?;
         Ok(())
     }
+}
+
+/// Move a flat pre-nesting build (builds/<board>/ containing .board) into
+/// the nested layout: builds/<board>/<ts>/.  The timestamp comes from the
+/// legacy .timestamp file when present.  Without this, a new leaf created
+/// under the legacy dir would be invisible to list_builds(), which treats
+/// any first-level dir with a .board marker as an opaque legacy leaf.
+fn migrate_legacy_build(ws: &Workspace, board: &str) -> Result<()> {
+    let board_dir = ws.builds_dir().join(board);
+    if !board_dir.join(".board").exists() {
+        return Ok(());
+    }
+    let ts = std::fs::read_to_string(board_dir.join(".timestamp"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "legacy".to_string());
+    let staging = ws.builds_dir().join(format!(".migrate-{board}"));
+    std::fs::rename(&board_dir, &staging)?;
+    std::fs::create_dir_all(&board_dir)?;
+    let leaf = board_dir.join(&ts);
+    std::fs::rename(&staging, &leaf)?;
+    // Leaf name is the timestamp now; the marker file is retired.
+    let _ = std::fs::remove_file(leaf.join(".timestamp"));
+    tracing::info!("Migrated legacy build dir to {}", leaf);
+    Ok(())
 }
 
 // ── Step runner with file-convention hooks ───────────────────────────────────

@@ -2,6 +2,14 @@ use crate::error::Result;
 use crate::{board, image, sandbox, workspace::Workspace};
 use camino::Utf8Path;
 
+/// Build dir shown relative to builds/: `<board>/<timestamp>` for the
+/// nested layout, just `<board>` for a legacy flat build.
+fn build_id(ws: &Workspace, dir: &Utf8Path) -> String {
+    dir.strip_prefix(ws.builds_dir())
+        .map(|p| p.to_string())
+        .unwrap_or_else(|_| dir.to_string())
+}
+
 pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
     let tty = !tsv;
 
@@ -43,7 +51,7 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
                 let image = std::fs::read_to_string(b.dir.join(".image"))
                     .map(|s| format!(" ({})", s.trim()))
                     .unwrap_or_default();
-                println!("  {:<40} {}{image}", dir.file_name().unwrap_or("?"), status);
+                println!("  {:<40} {}{image}", build_id(ws, dir), status);
             }
         }
     } else {
@@ -74,7 +82,7 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
                     .unwrap_or_else(|_| "-".into());
                 println!(
                     "build\t{}\t{}\t{}\t{}",
-                    dir.file_name().unwrap_or("?"),
+                    build_id(ws, dir),
                     b.board,
                     status,
                     image
