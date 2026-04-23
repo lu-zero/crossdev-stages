@@ -9,8 +9,9 @@ use crate::error::Result;
 /// component name (e.g. K1 opensbi vs K230 opensbi).
 ///
 /// 1. Bare cache missing -> `git clone --bare`
-/// 2. Bare cache exists -> `git fetch`
-/// 3. `git clone --reference cache --depth=1 --branch tag repo dest`
+/// 2. Bare cache exists -> `git fetch` (best-effort; tolerated if offline)
+/// 3. If cache has the tag/branch -> clone from `file://cache` (offline-safe)
+///    Else -> clone from remote with cache as `--reference`
 pub fn cached_clone(
     runner: &SandboxRunner,
     repo: &str,
@@ -30,7 +31,12 @@ pub fn cached_clone(
     ))?;
 
     runner.run(&format!(
-        "git clone --reference {cache} --depth=1 --branch {tag} {repo} {dest}"
+        "if git -C {cache} show-ref --verify --quiet refs/tags/{tag} \
+            || git -C {cache} show-ref --verify --quiet refs/heads/{tag}; then \
+             git clone --depth=1 --branch {tag} file://{cache} {dest}; \
+         else \
+             git clone --reference {cache} --depth=1 --branch {tag} {repo} {dest}; \
+         fi"
     ))
 }
 
