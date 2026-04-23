@@ -27,8 +27,19 @@ pub struct BoardConfig {
     pub u_boot_defconfig: Option<String>,
     pub u_boot_make_flags: Option<String>,   // extra make args
 
+    // ARM Trusted Firmware (Rockchip / Amlogic BL31)
+    pub tfa_repo: Option<String>,
+    pub tfa_tag: Option<String>,
+    pub tfa_plat: Option<String>,
+
+    // Rockchip closed-source blob repo (DDR init, etc.)
+    pub rkbin_repo: Option<String>,
+    pub rkbin_tag: Option<String>,
+    pub rkbin_ddr: Option<String>,  // glob pattern for the DDR init blob
+
     // Firmware overlay
     pub firmware_repo: Option<String>,
+    pub firmware_tag: Option<String>,     // FIRMWARE_TAG; defaults to master
     pub firmware_overlay: Option<String>, // path inside firmware repo
     pub host_firmware_paths: Vec<String>, // host paths to copy into image
 
@@ -153,7 +164,16 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         u_boot_defconfig: kv.get("U_BOOT_DEFCONFIG").cloned(),
         u_boot_make_flags: kv.get("U_BOOT_MAKE_FLAGS").cloned(),
 
+        tfa_repo: kv.get("TFA_REPO").cloned(),
+        tfa_tag: kv.get("TFA_TAG").or_else(|| kv.get("TAG")).cloned(),
+        tfa_plat: kv.get("TFA_PLAT").cloned(),
+
+        rkbin_repo: kv.get("RKBIN_REPO").cloned(),
+        rkbin_tag: kv.get("RKBIN_TAG").cloned(),
+        rkbin_ddr: kv.get("RKBIN_DDR").cloned(),
+
         firmware_repo: kv.get("FIRMWARE_REPO").cloned(),
+        firmware_tag: kv.get("FIRMWARE_TAG").or_else(|| kv.get("TAG")).cloned(),
         firmware_overlay: kv.get("BOARD_FIRMWARE_OVERLAY").cloned(),
         host_firmware_paths: arrays
             .get("HOST_FIRMWARE_PATHS")
