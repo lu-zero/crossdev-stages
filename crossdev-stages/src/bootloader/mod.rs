@@ -5,8 +5,6 @@
 //! the override check lives in image.rs, not here.
 
 pub mod opensbi;
+pub mod rkbin;
+pub mod tfa;
 pub mod uboot;
-
-// Future ARM bootloader components:
-// pub mod tfa;    // ARM Trusted Firmware-A
-// pub mod rkbin;  // Rockchip DDR init blob
