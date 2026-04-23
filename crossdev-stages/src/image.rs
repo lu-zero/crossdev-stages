@@ -165,8 +165,10 @@ fn default_deps(
 fn default_checkout(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     crate::bootloader::opensbi::clone(runner, board)?;
     crate::bootloader::uboot::clone(runner, board)?;
+    crate::bootloader::tfa::clone(runner, board)?;
+    crate::bootloader::rkbin::clone(runner, board)?;
     if let Some(repo) = &board.firmware_repo {
-        let tag = board.u_boot_tag.as_deref().unwrap_or("main");
+        let tag = board.firmware_tag.as_deref().unwrap_or("master");
         crate::source_cache::cached_clone(runner, repo, tag, "/build/firmware", "firmware")?;
     }
     crate::source_cache::cached_clone(
@@ -180,6 +182,7 @@ fn default_checkout(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
 
 fn default_bootloader(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     crate::bootloader::opensbi::build(runner, board)?;
+    crate::bootloader::tfa::build(runner, board)?;
     crate::bootloader::uboot::build(runner, board)
 }
 
