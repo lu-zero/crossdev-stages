@@ -4,7 +4,6 @@ use clap::{Parser, Subcommand};
 
 pub mod board;
 pub mod image;
-pub mod maint;
 pub mod sandbox;
 pub mod stages;
 pub mod status;
@@ -84,10 +83,6 @@ pub enum Commands {
     /// List or download Gentoo stage3 tarballs.
     #[command(subcommand)]
     Stages(StagesCmd),
-
-    /// Maintenance: cleanup, logs, diagnostics.
-    #[command(subcommand)]
-    Maint(MaintCmd),
 
     /// Show overview of sandboxes, targets, builds, and boards.
     Status {
@@ -245,24 +240,3 @@ pub enum StagesCmd {
     },
 }
 
-// ── Maint subcommands ────────────────────────────────────────────────────────
-
-#[derive(Subcommand)]
-pub enum MaintCmd {
-    /// Clean up stale builds and old stage3 tarballs.
-    Cleanup {
-        /// Remove everything (all builds, stages).
-        #[arg(long)]
-        all: bool,
-    },
-    /// Show build output and logs.
-    Logs {
-        /// Board name (shows latest build).
-        board: String,
-        /// Show only a specific step's output.
-        #[arg(long)]
-        step: Option<String>,
-    },
-    /// Check environment for common issues.
-    Doctor,
-}

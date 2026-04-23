@@ -52,9 +52,6 @@ async fn main() -> anyhow::Result<()> {
         Commands::Image(cmd) => {
             cli::image::run(&ws, cmd, &boards_root, mirror, dry_run).await?;
         }
-        Commands::Maint(cmd) => {
-            cli::maint::run(&ws, cmd, &boards_root, dry_run)?;
-        }
         Commands::Status { tsv } => {
             cli::status::run(&ws, &boards_root, tsv)?;
         }
