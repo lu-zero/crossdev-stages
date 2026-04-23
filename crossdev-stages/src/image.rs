@@ -340,6 +340,7 @@ pub fn build(
     steps: Option<&[String]>,
 ) -> Result<()> {
     let bld = Build::create(ws, &board.name)?;
+    let mut manifest = crate::manifest::ManifestBuilder::new(board);
 
     let default_steps = if board.build_steps.is_empty() {
         vec!["deps", "checkout", "bootloader", "kernel", "assemble", "pack"]
@@ -384,8 +385,61 @@ pub fn build(
         result?;
     }
 
+    // Collect and write manifest before returning. Build fails if manifest
+    // collection fails -- but every probe is best-effort so this should only
+    // fire on pathological runtime issues.
+    let runner = board_runner(sandbox, board)
+        .with_target(&target.dir)
+        .with_build(&bld.dir, &project_root(boards_root))
+        .with_cache(ws.base());
+    record_sources(&runner, &mut manifest, board)?;
+    if manifest.has_resolved_source() {
+        let manifest_path = bld.dir.join("build.lock.toml");
+        manifest.write(&runner, &manifest_path)?;
+        tracing::info!("Manifest written: {manifest_path}");
+    } else {
+        // Partial builds (e.g. `--steps deps`) leave every source as
+        // kind=missing because checkout hasn't run.  Skipping the lock
+        // write here keeps `crossdev-stages update` from picking up a
+        // useless lock as the newest one for the board.
+        tracing::info!("Skipping manifest write: no resolved git sources yet");
+    }
+
     let total_elapsed = build_start.elapsed();
     println!("\nBuild complete: {}", format_duration(total_elapsed));
+    Ok(())
+}
+
+fn record_sources(
+    runner: &SandboxRunner,
+    manifest: &mut crate::manifest::ManifestBuilder,
+    board: &BoardConfig,
+) -> Result<()> {
+    if let (Some(repo), Some(tag)) = (&board.opensbi_repo, &board.opensbi_tag) {
+        manifest.record_source(runner, "opensbi", repo, tag, "/build/opensbi")?;
+    }
+    if let (Some(repo), Some(tag)) = (&board.u_boot_repo, &board.u_boot_tag) {
+        manifest.record_source(runner, "uboot", repo, tag, "/build/u-boot")?;
+    }
+    if let Some(repo) = &board.tfa_repo {
+        let tag = board.tfa_tag.as_deref().unwrap_or("master");
+        manifest.record_source(runner, "tfa", repo, tag, "/build/tfa")?;
+    }
+    if let Some(repo) = &board.rkbin_repo {
+        let tag = board.rkbin_tag.as_deref().unwrap_or("master");
+        manifest.record_source(runner, "rkbin", repo, tag, "/build/rkbin")?;
+    }
+    if let Some(repo) = &board.firmware_repo {
+        let tag = board.firmware_tag.as_deref().unwrap_or("master");
+        manifest.record_source(runner, "firmware", repo, tag, "/build/firmware")?;
+    }
+    manifest.record_source(
+        runner,
+        "kernel",
+        &board.kernel_repo,
+        &board.kernel_tag,
+        "/build/linux",
+    )?;
     Ok(())
 }
 

@@ -4,6 +4,7 @@ mod cli;
 mod container;
 mod error;
 mod image;
+mod manifest;
 mod portage;
 mod sandbox;
 mod source_cache;
