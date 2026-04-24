@@ -340,6 +340,7 @@ pub fn build(
 ) -> Result<()> {
     let bld = Build::create(ws, &board.name)?;
     let mut manifest = crate::manifest::ManifestBuilder::new(board);
+    warn_unpinned_sources(board);
 
     let default_steps = if board.build_steps.is_empty() {
         vec!["deps", "checkout", "bootloader", "kernel", "assemble", "pack"]
@@ -407,6 +408,31 @@ pub fn build(
     let total_elapsed = build_start.elapsed();
     println!("\nBuild complete: {}", format_duration(total_elapsed));
     Ok(())
+}
+
+/// Flag sources that follow a default branch instead of a named tag, so
+/// stale sysroots and silent upstream drifts stand out in build output.
+/// Phase 4 turns this into a proper `status` command; for now it's a warn
+/// at the top of every `image build`.
+fn warn_unpinned_sources(board: &BoardConfig) {
+    let check = |name: &str, repo: Option<&str>, tag: Option<&str>| {
+        if let Some(repo) = repo {
+            let t = tag.unwrap_or("master");
+            if matches!(t, "master" | "main" | "trunk" | "HEAD") {
+                tracing::warn!(
+                    "source '{name}' ({repo}) tracks branch '{t}' -- no pin. \
+                     Build is reproducible only against the resolved commit in \
+                     build.lock.toml, not against the board.conf TAG field."
+                );
+            }
+        }
+    };
+    check("opensbi", board.opensbi_repo.as_deref(), board.opensbi_tag.as_deref());
+    check("uboot", board.u_boot_repo.as_deref(), board.u_boot_tag.as_deref());
+    check("tfa", board.tfa_repo.as_deref(), board.tfa_tag.as_deref());
+    check("rkbin", board.rkbin_repo.as_deref(), board.rkbin_tag.as_deref());
+    check("firmware", board.firmware_repo.as_deref(), board.firmware_tag.as_deref());
+    check("kernel", Some(&board.kernel_repo), Some(&board.kernel_tag));
 }
 
 fn record_sources(
