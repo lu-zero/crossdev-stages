@@ -79,6 +79,15 @@ impl Sandbox {
         let cflags = board.effective_cflags();
         let runner = self.runner();
 
+        // Clean up the repos.conf entry `eselect repository` wrote pointing
+        // at a project overlay that may not exist yet. Portage nags about
+        // the missing directory on every emerge otherwise. When project/
+        // board overlays actually arrive in Phase 2, we'll regenerate this
+        // entry with the correct target.
+        runner.run(
+            "rm -f /etc/portage/repos.conf/crossdev-stages.conf",
+        )?;
+
         tracing::info!("Creating crossdev overlay…");
         runner.run(
             "eselect repository list -i | grep -q crossdev \
