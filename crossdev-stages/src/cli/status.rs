@@ -1,6 +1,29 @@
 use camino::Utf8Path;
+use serde::Deserialize;
+use std::collections::BTreeMap;
+
 use crate::{board, image, sandbox, workspace::Workspace};
 use crate::error::Result;
+
+/// Subset of `build.lock.toml` that status reads; wider fields ignored.
+#[derive(Debug, Deserialize)]
+struct LockSummary {
+    sources: Option<BTreeMap<String, LockSource>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct LockSource {
+    tag: String,
+    commit: String,
+    #[serde(default)]
+    kind: Option<String>,
+}
+
+fn read_lock(build_dir: &Utf8Path) -> Option<LockSummary> {
+    let path = build_dir.join("build.lock.toml");
+    let body = std::fs::read_to_string(path).ok()?;
+    toml::from_str(&body).ok()
+}
 
 pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
     let tty = !tsv;
@@ -31,6 +54,9 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
                     .unwrap_or_default();
                 let ts = dir.file_name().unwrap_or("?");
                 println!("  {:<40} {}{image}", format!("{}/{}", b.board, ts), status);
+                if let Some(lock) = read_lock(&b.dir) {
+                    print_sources_tty(&lock);
+                }
             }
         }
     } else {
@@ -49,16 +75,37 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
                 let image = std::fs::read_to_string(b.dir.join(".image"))
                     .map(|s| s.trim().to_string())
                     .unwrap_or_else(|_| "-".into());
-                println!(
-                    "build\t{}/{}\t{}\t{}\t{}",
-                    b.board,
-                    dir.file_name().unwrap_or("?"),
-                    b.board,
-                    status,
-                    image
-                );
+                let build_id = format!("{}/{}", b.board, dir.file_name().unwrap_or("?"));
+                println!("build\t{build_id}\t{}\t{status}\t{image}", b.board);
+                if let Some(lock) = read_lock(&b.dir) {
+                    print_sources_tsv(&build_id, &lock);
+                }
             }
         }
     }
     Ok(())
 }
+
+fn print_sources_tty(lock: &LockSummary) {
+    let Some(sources) = &lock.sources else { return };
+    let mut parts = Vec::new();
+    for (name, src) in sources {
+        let short = src.commit.chars().take(8).collect::<String>();
+        let unpinned = matches!(src.tag.as_str(), "master" | "main" | "trunk" | "HEAD");
+        let marker = if unpinned { "*" } else { "" };
+        parts.push(format!("{name} {}@{short}{marker}", src.tag));
+    }
+    println!("      sources: {}", parts.join(" | "));
+}
+
+fn print_sources_tsv(build_id: &str, lock: &LockSummary) {
+    let Some(sources) = &lock.sources else { return };
+    for (name, src) in sources {
+        let kind = src.kind.as_deref().unwrap_or("unknown");
+        println!(
+            "source\t{build_id}\t{name}\t{}\t{}\t{kind}",
+            src.tag, src.commit
+        );
+    }
+}
+
