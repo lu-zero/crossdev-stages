@@ -6,11 +6,6 @@ use sokgi::{Dialect, FlagSet};
 /// digest of the canonical bytes — independent of rustc version, platform
 /// and sokgi release, so it is safe as a persistent content-addressed
 /// store key.
-///
-/// No call sites yet; this is the foundation Phase 3 uses to key the
-/// content-addressed crossdev prefix store and per-(chost, cflags-hash)
-/// binpkg cache.
-#[allow(dead_code)]
 pub fn canonicalize(cflags: &str) -> (String, String) {
     match FlagSet::parse(cflags, Dialect::C) {
         Ok((set, _warnings)) => (set.canonical(), set.stable_hash_hex()),
