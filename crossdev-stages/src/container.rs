@@ -54,6 +54,25 @@ impl SandboxRunner {
         }
     }
 
+    /// Add an overlayfs mount to perform inside the sandbox.  Lower is
+    /// bind-mounted read-only; upper/work are created inside the sandbox
+    /// rootfs (see [`OverlaySpec`]).  `mount_at` is created if needed.
+    /// Multiple overlays may be added; they are performed in
+    /// registration order.
+    pub fn with_overlay(mut self, spec: OverlaySpec) -> Self {
+        self.overlays.push(spec);
+        self
+    }
+
+    /// Add an arbitrary read-write bind mount.  Used by setup_crossdev
+    /// to plant the workspace store dir at `/usr/<chost>/` while the
+    /// crossdev wizard runs.
+    pub fn with_extra_rw(mut self, host_path: &Utf8Path, container_path: &str) -> Self {
+        self.extra_rw
+            .push((host_path.to_path_buf(), container_path.to_string()));
+        self
+    }
+
     pub fn log_dir(&self) -> &Utf8Path {
         &self.log_dir
     }
@@ -78,14 +97,6 @@ impl SandboxRunner {
     pub fn with_cache(mut self, cache_dir: &Utf8Path) -> Self {
         self.extra_rw
             .push((cache_dir.to_path_buf(), "/cache".into()));
-        self
-    }
-
-    /// Add an overlayfs mount, performed in registration order before every
-    /// command (see [`OverlaySpec`]).  `mount_at` is created if needed.
-    #[allow(dead_code)] // wired up by the content-addressed store commit
-    pub fn with_overlay(mut self, spec: OverlaySpec) -> Self {
-        self.overlays.push(spec);
         self
     }
 

@@ -53,8 +53,8 @@ impl Workspace {
         self.base.join(LOGS)
     }
 
-    /// Content-addressed crossdev prefix store.  Keyed by `(chost,
-    /// cflags-hash)`; populated by Phase 3.
+    /// Content-addressed crossdev prefix store.  Keyed by [`store_key`]
+    /// (`<chost>/<cflags-hash>-gcc<spec>`).
     pub fn store_dir(&self) -> Utf8PathBuf {
         self.base.join(STORE)
     }
@@ -210,6 +210,20 @@ impl Workspace {
     }
 }
 
+/// Store key for one crossdev prefix: `<chost>/<cflags-hash>-gcc<spec>`.
+///
+/// The gcc spec is part of the key: two boards with the same chost and
+/// CFLAGS but different `BOARD_GCC_VERSION` must not share a prefix --
+/// keying on (chost, cflags-hash) alone made them ping-pong full crossdev
+/// rebuilds inside one dir while its `.complete` marker stayed set.  The
+/// spec is whatever is known host-side before entering the sandbox: the
+/// CLI/board version string verbatim when set, otherwise the auto-detected
+/// highest installed gcc slot.  Both the cflags-hash and the spec are
+/// opaque path segments; nothing may assume their width or format.
+pub fn store_key(chost: &str, cflags_hash: &str, gcc_spec: &str) -> Utf8PathBuf {
+    Utf8PathBuf::from(chost).join(format!("{cflags_hash}-gcc{gcc_spec}"))
+}
+
 fn dirs_next() -> Utf8PathBuf {
     // ~/.cache
     if let Ok(cache) = std::env::var("XDG_CACHE_HOME") {
@@ -311,5 +325,33 @@ mod tests {
     fn empty_container_yields_nothing() {
         let leaves = build_leaves(Utf8PathBuf::from("/builds/k1"), |_| false, |_| vec![]);
         assert!(leaves.is_empty());
+    }
+
+    #[test]
+    fn store_key_differs_on_gcc_spec() {
+        // Same chost + CFLAGS, different BOARD_GCC_VERSION -> distinct dirs.
+        let a = store_key("riscv64-unknown-linux-gnu", "0123456789abcdef", "14");
+        let b = store_key("riscv64-unknown-linux-gnu", "0123456789abcdef", "15");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn store_key_differs_on_cflags_hash() {
+        let a = store_key("riscv64-unknown-linux-gnu", "0123456789abcdef", "15");
+        let b = store_key("riscv64-unknown-linux-gnu", "fedcba9876543210", "15");
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn store_key_is_stable() {
+        assert_eq!(
+            store_key("riscv64-unknown-linux-gnu", "0123456789abcdef", "15"),
+            Utf8PathBuf::from("riscv64-unknown-linux-gnu/0123456789abcdef-gcc15"),
+        );
+        // Version-prefix specs key verbatim.
+        assert_eq!(
+            store_key("aarch64-unknown-linux-gnu", "00ff00ff00ff00ff", "15.2.1_p20260214"),
+            Utf8PathBuf::from("aarch64-unknown-linux-gnu/00ff00ff00ff00ff-gcc15.2.1_p20260214"),
+        );
     }
 }

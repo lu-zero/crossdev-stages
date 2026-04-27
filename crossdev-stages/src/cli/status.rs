@@ -38,6 +38,7 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
     let sandboxes = sandbox::list(ws)?;
     let boards = board::list(boards_root)?;
     let builds = ws.list_builds()?;
+    let stores = list_stores(ws);
 
     if tty {
         println!("Sandboxes ({}):", sandboxes.len());
@@ -56,6 +57,13 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
             if let Ok(b) = board::load(boards_root, name) {
                 let tag = if b.testing { " [TESTING]" } else { "" };
                 println!("  {:<16} {:<10}{tag}", name, b.arch);
+            }
+        }
+        if !stores.is_empty() {
+            println!("\nStore ({}):", stores.len());
+            for s in &stores {
+                let state = if s.complete { "complete" } else { "partial" };
+                println!("  {:<28} {:<30} {state}", s.chost, s.key);
             }
         }
         println!(
@@ -95,6 +103,10 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
                 println!("board\t{}\t{}\t{}", name, b.arch, b.testing);
             }
         }
+        for s in &stores {
+            let state = if s.complete { "complete" } else { "partial" };
+            println!("store\t{}\t{}\t{state}", s.chost, s.key);
+        }
         for dir in builds.iter().take(10) {
             if let Some(b) = image::Build::open((*dir).clone()) {
                 let status = if b.dir.join(".packed").exists() {
@@ -114,6 +126,46 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+struct StoreEntry {
+    chost: String,
+    /// Store key leaf: `<cflags-hash>-gcc<spec>` (opaque dir name).
+    key: String,
+    complete: bool,
+}
+
+/// Walk `store/<chost>/<cflags-hash>-gcc<spec>/` for every present prefix;
+/// flag whether each carries a `.complete` marker.  Phase 3 makes drift
+/// impossible by construction (each (chost, cflags-hash, gcc-spec) lives
+/// in its own dir), so this simply reports what's available.
+fn list_stores(ws: &Workspace) -> Vec<StoreEntry> {
+    let root = ws.store_dir();
+    let Ok(chost_iter) = std::fs::read_dir(&root) else {
+        return vec![];
+    };
+    let mut entries = Vec::new();
+    for chost_entry in chost_iter.flatten() {
+        let Some(chost) = chost_entry.file_name().to_str().map(String::from) else {
+            continue;
+        };
+        let Ok(key_iter) = std::fs::read_dir(chost_entry.path()) else {
+            continue;
+        };
+        for key_entry in key_iter.flatten() {
+            let Some(key) = key_entry.file_name().to_str().map(String::from) else {
+                continue;
+            };
+            let complete = key_entry.path().join(".complete").exists();
+            entries.push(StoreEntry {
+                chost: chost.clone(),
+                key,
+                complete,
+            });
+        }
+    }
+    entries.sort_by(|a, b| (a.chost.as_str(), a.key.as_str()).cmp(&(b.chost.as_str(), b.key.as_str())));
+    entries
 }
 
 fn print_sources_tty(lock: &LockSummary) {

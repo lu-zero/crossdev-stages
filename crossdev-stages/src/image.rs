@@ -162,6 +162,7 @@ fn run_board_script(board_name: &str, script: &str) -> String {
 
 fn default_deps(
     _runner: &SandboxRunner,
+    ws: &Workspace,
     sandbox: &Sandbox,
     target: &Target,
     board: &BoardConfig,
@@ -185,7 +186,9 @@ fn default_deps(
             &board_dir.join("sandbox-packages.use"),
             &portage_dir,
         )?;
-        let host_runner = board_runner(sandbox, board);
+        // Host-side packages don't touch the cross toolchain; plain
+        // sandbox runner is enough.
+        let host_runner = sandbox.runner();
         let portage = Portage::new(&host_runner);
         portage.emerge(&crate::package_list::atoms(&board_sandbox))?;
     }
@@ -196,7 +199,9 @@ fn default_deps(
         crate::package_list::read_optional(&board_dir.join("target-packages.txt"))?,
     );
     if !target_pkgs.is_empty() {
-        let target_runner = board_runner(sandbox, board).with_target(&target.dir);
+        let target_runner = sandbox
+            .runner_for_board(ws, &board.arch, board)?
+            .with_target(&target.dir);
         let portage = Portage::new(&target_runner);
         portage.cross_emerge(&board.chost(), &crate::package_list::atoms(&target_pkgs))?;
     }
@@ -405,13 +410,6 @@ fn default_pack(
     Ok(())
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-fn board_runner(sandbox: &Sandbox, board: &BoardConfig) -> SandboxRunner {
-    let _ = board; // arch available if needed later
-    sandbox.runner()
-}
-
 // ── Pipeline ────────────────────────────────────────────────────────────────
 
 pub fn build(
@@ -432,11 +430,10 @@ pub fn build(
     // same flags the board declares.  Cheap and idempotent; recovers from
     // targets unpacked elsewhere or built against a different board.
     let board_cflags = board.effective_cflags();
-    target.prepare_portage_with_cflags(sandbox, &board.chost(), &board_cflags)?;
+    let gcc_spec = sandbox.gcc_spec_for(board, None)?;
+    target.prepare_portage_with_cflags(ws, &board.chost(), &board_cflags, &gcc_spec)?;
     let (canonical, hash) = crate::cflags::canonicalize(&board_cflags);
-    tracing::info!(
-        "Target make.conf CFLAGS={canonical:?} (hash {hash})",
-    );
+    tracing::info!("Target make.conf CFLAGS={canonical:?} (hash {hash})");
 
     let default_steps = if board.build_steps.is_empty() {
         vec![
@@ -462,14 +459,20 @@ pub fn build(
         let step_start = std::time::Instant::now();
         println!("==> [{}/{}] {}...", i + 1, total, step);
 
-        let runner = board_runner(sandbox, board)
+        // Steps that invoke the cross toolchain (deps cross-emerge,
+        // bootloader, kernel) need the store overlay-mounted at
+        // /usr/<chost>/.  Pure-userspace steps (checkout, assemble, pack)
+        // don't, but the overlay costs nothing to mount, so always use
+        // runner_for_board for consistency.
+        let runner = sandbox
+            .runner_for_board(ws, &board.arch, board)?
             .with_target(&target.dir)
             .with_build(&bld.dir, &project_root(boards_root))
             .with_cache(ws.base());
 
         let result = match *step {
             "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board, |_r| {
-                default_deps(_r, sandbox, target, board, boards_root, defaults_root)
+                default_deps(_r, ws, sandbox, target, board, boards_root, defaults_root)
             }),
             "checkout" => run_step(
                 "checkout",
@@ -517,8 +520,12 @@ pub fn build(
 
     // Collect and write manifest before returning. Build fails if manifest
     // collection fails -- but every probe is best-effort so this should only
-    // fire on pathological runtime issues.
-    let runner = board_runner(sandbox, board)
+    // fire on pathological runtime issues.  Use the overlay-mounted
+    // runner so /usr/<chost>/etc/portage/make.conf resolves to the
+    // store-resident prefix this build actually used, not whatever
+    // legacy content the sandbox happens to carry.
+    let runner = sandbox
+        .runner_for_board(ws, &board.arch, board)?
         .with_target(&target.dir)
         .with_build(&bld.dir, &project_root(boards_root))
         .with_cache(ws.base());
