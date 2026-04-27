@@ -8,6 +8,7 @@ pub mod maint;
 pub mod sandbox;
 pub mod stages;
 pub mod status;
+pub mod store;
 pub mod target;
 pub mod update;
 pub mod util;
@@ -96,6 +97,10 @@ pub enum Commands {
         #[arg(long)]
         tsv: bool,
     },
+
+    /// Manage the content-addressed crossdev prefix store.
+    #[command(subcommand)]
+    Store(StoreCmd),
 
     /// Compare a board's most recent build.lock.toml against upstream
     /// HEAD of each pinned source -- shows what would change on a fresh
@@ -321,4 +326,18 @@ pub enum MaintCmd {
     Doctor,
     /// Unmount stale hakoniwa bind mounts left after a crashed sandbox session.
     Recover,
+}
+
+// ── Store subcommands ────────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+pub enum StoreCmd {
+    /// List crossdev prefixes in the workspace store.
+    List,
+    /// Show prefixes no current board would build into.
+    Gc {
+        /// Delete instead of just listing.
+        #[arg(long)]
+        force: bool,
+    },
 }
