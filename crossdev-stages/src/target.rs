@@ -52,8 +52,11 @@ impl Target {
         let chost = format!("{}-unknown-linux-gnu", self.arch);
 
         // Write target portage config and copy profile before first emerge.
+        // Standalone `target stage1` has no board context, so use generic
+        // arch defaults; image builds override later via
+        // `prepare_portage_with_cflags(..., board.effective_cflags())`.
         tracing::info!("Preparing target portage configuration…");
-        self.prepare_portage(sandbox, &chost)?;
+        self.prepare_portage_with_cflags(sandbox, &chost, default_cflags(&self.arch))?;
 
         let runner = sandbox.runner().with_target(&self.dir);
         tracing::info!("Logs at: {}", runner.log_dir());
@@ -123,17 +126,24 @@ impl Target {
         runner.run("ldconfig -v -r /target")
     }
 
-    /// Write target portage make.conf and copy the profile link from the
-    /// crossdev prefix in the sandbox — mirrors `prepare_target_portage` in
-    /// the bash script.
-    fn prepare_portage(&self, sandbox: &Sandbox, chost: &str) -> Result<()> {
+    /// Write target portage make.conf with explicit CFLAGS and copy the
+    /// profile link from the crossdev prefix in the sandbox — mirrors
+    /// `prepare_target_portage` in the bash script.  Idempotent: re-writes
+    /// make.conf each call so callers can refresh CFLAGS when a board's
+    /// values change.
+    pub fn prepare_portage_with_cflags(
+        &self,
+        sandbox: &Sandbox,
+        chost: &str,
+        cflags: &str,
+    ) -> Result<()> {
         let portage_dir = self.dir.join("etc/portage");
         std::fs::create_dir_all(&portage_dir)?;
 
         MakeConf {
             arch: &self.arch,
             chost: Some(chost),
-            cflags: Some(default_cflags(&self.arch)),
+            cflags: Some(cflags),
             mirror: None,
             binhost: None,
         }

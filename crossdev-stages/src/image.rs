@@ -342,6 +342,17 @@ pub fn build(
     let mut manifest = crate::manifest::ManifestBuilder::new(board);
     warn_unpinned_sources(board);
 
+    // Refresh the target's make.conf with the board's CFLAGS before any
+    // step runs so cross-emerges in `deps`, `kernel`, etc. all see the
+    // same flags the board declares.  Cheap and idempotent; recovers from
+    // targets unpacked elsewhere or built against a different board.
+    let board_cflags = board.effective_cflags();
+    target.prepare_portage_with_cflags(sandbox, &board.chost(), &board_cflags)?;
+    let (canonical, hash) = crate::cflags::canonicalize(&board_cflags);
+    tracing::info!(
+        "Target make.conf CFLAGS={canonical:?} (hash {hash})",
+    );
+
     let default_steps = if board.build_steps.is_empty() {
         vec!["deps", "checkout", "bootloader", "kernel", "assemble", "pack"]
     } else {

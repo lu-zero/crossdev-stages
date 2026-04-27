@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 hakoniwa      = "1.4"
 gentoo-stages = "0.4"
+sokgi         = { git = "https://github.com/OctopusET/sokgi" }
 camino        = "1"
 clap         = { version = "4", features = ["derive", "color"] }
 tokio        = { version = "1", features = ["full"] }
