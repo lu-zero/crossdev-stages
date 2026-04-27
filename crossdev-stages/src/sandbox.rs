@@ -54,6 +54,7 @@ impl Sandbox {
             cflags: None,
             mirror,
             binhost: None,
+            pkgdir: None,
         }
         .write(&self.dir.join("etc/portage"))?;
 
@@ -194,6 +195,7 @@ impl Sandbox {
             cflags: Some(cflags),
             mirror: None,
             binhost: None,
+            pkgdir: None,
         }
         .write(portage_dir)?;
 

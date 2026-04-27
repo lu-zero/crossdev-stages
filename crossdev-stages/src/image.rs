@@ -127,10 +127,11 @@ fn default_deps(
     target: &Target,
     board: &BoardConfig,
     boards_root: &Utf8Path,
+    binpkgs_dir: &Utf8Path,
 ) -> Result<()> {
     let sandbox_pkgs = boards_root.join(&board.name).join("sandbox-packages.txt");
     if sandbox_pkgs.exists() {
-        let host_runner = board_runner(sandbox, board);
+        let host_runner = board_runner(sandbox, board).with_binpkgs(binpkgs_dir);
         let portage = Portage::new(&host_runner);
         let content = std::fs::read_to_string(&sandbox_pkgs)?;
         let pkgs: Vec<&str> = content
@@ -152,7 +153,9 @@ fn default_deps(
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .collect();
         if !pkgs.is_empty() {
-            let target_runner = board_runner(sandbox, board).with_target(&target.dir);
+            let target_runner = board_runner(sandbox, board)
+                .with_target(&target.dir)
+                .with_binpkgs(binpkgs_dir);
             let portage = Portage::new(&target_runner);
             portage.cross_emerge(&board.chost(), &pkgs)?;
         }
@@ -347,11 +350,22 @@ pub fn build(
     // same flags the board declares.  Cheap and idempotent; recovers from
     // targets unpacked elsewhere or built against a different board.
     let board_cflags = board.effective_cflags();
-    target.prepare_portage_with_cflags(sandbox, &board.chost(), &board_cflags)?;
     let (canonical, hash) = crate::cflags::canonicalize(&board_cflags);
     tracing::info!(
         "Target make.conf CFLAGS={canonical:?} (hash {hash})",
     );
+
+    // Per-(chost, cflags-hash) binpkg dir bind-mounted at /binpkgs.
+    // Same host path for both sandbox-side host emerges and target-side
+    // cross-emerges so produced binpkgs are reused on subsequent runs.
+    let binpkgs_dir = ws.binpkgs_dir().join(&board.chost()).join(&hash);
+    std::fs::create_dir_all(&binpkgs_dir)?;
+    target.prepare_portage_with_cflags(
+        sandbox,
+        &board.chost(),
+        &board_cflags,
+        Some("/binpkgs"),
+    )?;
 
     let default_steps = if board.build_steps.is_empty() {
         vec!["deps", "checkout", "bootloader", "kernel", "assemble", "pack"]
@@ -373,11 +387,12 @@ pub fn build(
         let runner = board_runner(sandbox, board)
             .with_target(&target.dir)
             .with_build(&bld.dir, &project_root(boards_root))
-            .with_cache(ws.base());
+            .with_cache(ws.base())
+            .with_binpkgs(&binpkgs_dir);
 
         let result = match *step {
             "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board,
-                |_r| default_deps(_r, sandbox, target, board, boards_root)),
+                |_r| default_deps(_r, sandbox, target, board, boards_root, &binpkgs_dir)),
             "checkout" => run_step("checkout", "sources", &bld, &runner, boards_root, board,
                 |r| default_checkout(r, board)),
             "bootloader" => run_step("bootloader", "bootloader", &bld, &runner, boards_root, board,

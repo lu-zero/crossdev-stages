@@ -53,10 +53,10 @@ impl Target {
 
         // Write target portage config and copy profile before first emerge.
         // Standalone `target stage1` has no board context, so use generic
-        // arch defaults; image builds override later via
-        // `prepare_portage_with_cflags(..., board.effective_cflags())`.
+        // arch defaults and no shared binpkg cache; image builds override
+        // later via `prepare_portage_with_cflags(..., board.effective_cflags(), Some("/binpkgs"))`.
         tracing::info!("Preparing target portage configuration…");
-        self.prepare_portage_with_cflags(sandbox, &chost, default_cflags(&self.arch))?;
+        self.prepare_portage_with_cflags(sandbox, &chost, default_cflags(&self.arch), None)?;
 
         let runner = sandbox.runner().with_target(&self.dir);
         tracing::info!("Logs at: {}", runner.log_dir());
@@ -131,11 +131,15 @@ impl Target {
     /// `prepare_target_portage` in the bash script.  Idempotent: re-writes
     /// make.conf each call so callers can refresh CFLAGS when a board's
     /// values change.
+    ///
+    /// `pkgdir` is the in-container path of a binpkg cache; when set,
+    /// `FEATURES` includes `buildpkg` and `PKGDIR` is pointed at it.
     pub fn prepare_portage_with_cflags(
         &self,
         sandbox: &Sandbox,
         chost: &str,
         cflags: &str,
+        pkgdir: Option<&str>,
     ) -> Result<()> {
         let portage_dir = self.dir.join("etc/portage");
         std::fs::create_dir_all(&portage_dir)?;
@@ -146,6 +150,7 @@ impl Target {
             cflags: Some(cflags),
             mirror: None,
             binhost: None,
+            pkgdir,
         }
         .write(&portage_dir)?;
 

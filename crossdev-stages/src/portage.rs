@@ -11,6 +11,10 @@ pub struct MakeConf<'a> {
     pub cflags: Option<&'a str>,
     pub mirror: Option<&'a str>,
     pub binhost: Option<&'a str>,
+    /// In-container path of a writable bind-mount where binpkgs should
+    /// land.  When set, `FEATURES` gains `buildpkg` and `PKGDIR` is
+    /// pointed at it.  `None` keeps portage defaults.
+    pub pkgdir: Option<&'a str>,
 }
 
 impl<'a> MakeConf<'a> {
@@ -46,9 +50,17 @@ impl<'a> MakeConf<'a> {
             "EMERGE_DEFAULT_OPTS",
             &format!("--jobs={jobs} --load-average {load}"),
         )?;
-        set_make_conf_var(&make_conf, "FEATURES", "parallel-install -merge-wait")?;
+        let features = if self.pkgdir.is_some() {
+            "parallel-install -merge-wait buildpkg"
+        } else {
+            "parallel-install -merge-wait"
+        };
+        set_make_conf_var(&make_conf, "FEATURES", features)?;
         set_make_conf_var(&make_conf, "ACCEPT_KEYWORDS", &format!("~{garch}"))?;
         set_make_conf_var(&make_conf, "PORT_LOGDIR", &format!("/var/log/portage/{garch}"))?;
+        if let Some(pkgdir) = self.pkgdir {
+            set_make_conf_var(&make_conf, "PKGDIR", pkgdir)?;
+        }
 
         // LLVM_TARGETS: host gets the union of every supported arch (so the
         // bundled LLVM inside dev-lang/rust can bootstrap any cross-std);
@@ -73,7 +85,11 @@ impl<'a> MakeConf<'a> {
 
         if let Some(binhost) = self.binhost {
             set_make_conf_var(&make_conf, "PORTAGE_BINHOST", binhost)?;
-            let features = "parallel-install -merge-wait getbinpkg";
+            let features = if self.pkgdir.is_some() {
+                "parallel-install -merge-wait buildpkg getbinpkg"
+            } else {
+                "parallel-install -merge-wait getbinpkg"
+            };
             set_make_conf_var(&make_conf, "FEATURES", features)?;
         }
 

@@ -82,6 +82,17 @@ impl SandboxRunner {
         self
     }
 
+    /// Bind-mount `binpkgs_dir` read-write at `/binpkgs` so portage's
+    /// `PKGDIR=/binpkgs` reads/writes a shared host cache.  Caller is
+    /// expected to segment by (chost, cflags-hash) on the host side so
+    /// boards with different toolchains don't share incompatible
+    /// binaries.
+    pub fn with_binpkgs(mut self, binpkgs_dir: &Utf8Path) -> Self {
+        self.extra_rw
+            .push((binpkgs_dir.to_path_buf(), "/binpkgs".into()));
+        self
+    }
+
     /// Run a shell command (via `bash --login -c`) inside the sandbox.
     pub fn run(&self, cmd: &str) -> Result<()> {
         let container = self.build_container();
