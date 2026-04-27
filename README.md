@@ -74,6 +74,13 @@ Everything lives under `~/.cache/crossdev-stages/`:
 
 CFLAGS are canonicalized via [sokgi](https://github.com/OctopusET/sokgi) before hashing, so semantically equivalent flag strings (different token order, last-wins overrides) share a store entry.
 
+## Requirements
+
+Linux 5.11 or newer with unprivileged user-namespace overlayfs enabled
+(`unprivileged_userns_clone=1` on Debian/Ubuntu kernels; default on most
+others).  The store is mounted as overlayfs inside a hakoniwa user
+namespace; macOS/BSD are not supported.
+
 ## Dependencies
 ```sh
 emerge crossdev merge-usr git
