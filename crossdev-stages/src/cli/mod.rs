@@ -218,6 +218,11 @@ pub enum ImageCmd {
         /// Compression: xz (default), gz, none.
         #[arg(long)]
         compression: Option<String>,
+        /// Use commits from the most recent build.lock.toml for this
+        /// board instead of the board.conf TAG fields.  Reproduces a
+        /// known-good build even if upstream branches have moved.
+        #[arg(long)]
+        pinned: bool,
         /// Specific steps to run (default: all steps from board.conf).
         steps: Vec<String>,
     },
