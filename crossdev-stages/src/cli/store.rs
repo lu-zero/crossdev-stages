@@ -31,24 +31,39 @@ fn list(ws: &Workspace) -> Result<()> {
 
 fn gc(ws: &Workspace, boards_root: &Utf8Path, force: bool) -> Result<()> {
     let entries = walk_store(ws);
+    let binpkgs_entries = walk_binpkgs(ws);
     let live = live_set(ws, boards_root)?;
 
-    let unused = unused_entries(entries, &live);
+    let unused = unused_entries(entries, &live.store);
+    let unused_binpkgs = unused_entries(binpkgs_entries, &live.binpkgs);
 
-    if unused.is_empty() {
-        println!("No unused store entries.");
+    if unused.is_empty() && unused_binpkgs.is_empty() {
+        println!("No unused store or binpkg entries.");
         return Ok(());
     }
 
-    println!(
-        "{} unused store entr{}:",
-        unused.len(),
-        if unused.len() == 1 { "y" } else { "ies" }
-    );
-    for e in &unused {
-        let state = if e.complete { "complete" } else { "partial" };
-        let size = dir_size_human(&e.path);
-        println!("  {:<32} {:<34} {state:<8} {size}", e.chost, e.key);
+    if !unused.is_empty() {
+        println!(
+            "{} unused store entr{}:",
+            unused.len(),
+            if unused.len() == 1 { "y" } else { "ies" }
+        );
+        for e in &unused {
+            let state = if e.complete { "complete" } else { "partial" };
+            let size = dir_size_human(&e.path);
+            println!("  {:<32} {:<34} {state:<8} {size}", e.chost, e.key);
+        }
+    }
+    if !unused_binpkgs.is_empty() {
+        println!(
+            "{} unused binpkg cache{}:",
+            unused_binpkgs.len(),
+            if unused_binpkgs.len() == 1 { "" } else { "s" },
+        );
+        for e in &unused_binpkgs {
+            let size = dir_size_human(&e.path);
+            println!("  {:<32} {:<34} {size}", e.chost, e.key);
+        }
     }
     if !force {
         println!("\nRe-run with --force to delete.");
@@ -56,7 +71,8 @@ fn gc(ws: &Workspace, boards_root: &Utf8Path, force: bool) -> Result<()> {
     }
 
     let mut removed = 0;
-    for e in &unused {
+    let total = unused.len() + unused_binpkgs.len();
+    for e in unused.iter().chain(unused_binpkgs.iter()) {
         match crate::container::destroy_dir(&e.path, ws.base()) {
             Ok(()) => {
                 println!("Removed {}/{}", e.chost, e.key);
@@ -65,20 +81,22 @@ fn gc(ws: &Workspace, boards_root: &Utf8Path, force: bool) -> Result<()> {
             Err(err) => println!("Failed to remove {}/{}: {err}", e.chost, e.key),
         }
     }
-    println!("\nRemoved {removed}/{} entries.", unused.len());
+    println!("\nRemoved {removed}/{total} entries.");
     Ok(())
 }
 
 struct StoreEntry {
     chost: String,
-    /// Store key leaf: `<cflags-hash>-gcc<spec>` (opaque dir name).
+    /// Dir name under the chost level: `<cflags-hash>-gcc<spec>` for the
+    /// store, bare `<cflags-hash>` for the binpkg cache (PKGDIR is shared
+    /// across gcc specs).  Opaque either way.
     key: String,
     complete: bool,
     path: Utf8PathBuf,
 }
 
 impl StoreEntry {
-    /// Path relative to the store root; comparable to [`store_key`] output.
+    /// Path relative to the walked root; comparable to [`store_key`] output.
     fn rel_key(&self) -> Utf8PathBuf {
         Utf8PathBuf::from(&self.chost).join(&self.key)
     }
@@ -93,8 +111,15 @@ fn unused_entries(entries: Vec<StoreEntry>, live: &BTreeSet<Utf8PathBuf>) -> Vec
 }
 
 fn walk_store(ws: &Workspace) -> Vec<StoreEntry> {
-    let root = ws.store_dir();
-    let Ok(chost_iter) = std::fs::read_dir(&root) else {
+    walk_two_level(&ws.store_dir(), |path| path.join(".complete").exists())
+}
+
+fn walk_binpkgs(ws: &Workspace) -> Vec<StoreEntry> {
+    walk_two_level(&ws.binpkgs_dir(), |_| false)
+}
+
+fn walk_two_level(root: &Utf8Path, mark_complete: impl Fn(&Utf8Path) -> bool) -> Vec<StoreEntry> {
+    let Ok(chost_iter) = std::fs::read_dir(root) else {
         return vec![];
     };
     let mut out = Vec::new();
@@ -117,7 +142,7 @@ fn walk_store(ws: &Workspace) -> Vec<StoreEntry> {
                 Ok(p) => p,
                 Err(_) => continue,
             };
-            let complete = path.join(".complete").exists();
+            let complete = mark_complete(&path);
             out.push(StoreEntry {
                 chost: chost.clone(),
                 key,
@@ -166,10 +191,18 @@ pub fn board_store_keys(board: &BoardConfig, default_specs: &[String]) -> Vec<Ut
         .collect()
 }
 
-/// Store keys every known board (and the per-arch default-CFLAGS flows:
-/// `target stage1 / update / install` without a board context) would
-/// resolve to.  A store entry NOT in this set is unreachable from the
-/// project's boards and a candidate for GC.
+/// Everything the project's boards can still reach: store keys
+/// (`<chost>/<cflags-hash>-gcc<spec>`) and binpkg cache dirs
+/// (`<chost>/<cflags-hash>`, gcc-spec independent).
+struct LiveSet {
+    store: BTreeSet<Utf8PathBuf>,
+    binpkgs: BTreeSet<Utf8PathBuf>,
+}
+
+/// Store keys and binpkg dirs every known board (and the per-arch
+/// default-CFLAGS flows: `target stage1 / update / install` without a
+/// board context) would resolve to.  An entry NOT in this set is
+/// unreachable from the project's boards and a candidate for GC.
 ///
 /// Keys are derived through the same [`store_key`] fn the builders use;
 /// deriving them any other way would classify live entries as garbage.
@@ -177,7 +210,7 @@ pub fn board_store_keys(board: &BoardConfig, default_specs: &[String]) -> Vec<Ut
 /// `BOARD_GCC_VERSION` verbatim, else the sandbox default.  Without any
 /// sandbox the default spec is unknowable, so gc refuses rather than
 /// guess.
-fn live_set(ws: &Workspace, boards_root: &Utf8Path) -> Result<BTreeSet<Utf8PathBuf>> {
+fn live_set(ws: &Workspace, boards_root: &Utf8Path) -> Result<LiveSet> {
     let default_specs = sandbox_default_specs(ws);
     if default_specs.is_empty() {
         return Err(Error::CommandFailed {
@@ -187,13 +220,18 @@ fn live_set(ws: &Workspace, boards_root: &Utf8Path) -> Result<BTreeSet<Utf8PathB
                 .into(),
         });
     }
-    let mut live = BTreeSet::new();
+    let mut live = LiveSet {
+        store: BTreeSet::new(),
+        binpkgs: BTreeSet::new(),
+    };
     let mut arches = BTreeSet::new();
     for name in crate::board::list(boards_root)? {
         let Ok(b) = crate::board::load(boards_root, &name) else {
             continue;
         };
-        live.extend(board_store_keys(&b, &default_specs));
+        live.store.extend(board_store_keys(&b, &default_specs));
+        let (_, hash) = crate::cflags::canonicalize(&b.effective_cflags());
+        live.binpkgs.insert(Utf8PathBuf::from(b.chost()).join(hash));
         arches.insert(b.arch.clone());
     }
     // Default-cflags entries: what `target stage1 / update / install`
@@ -203,8 +241,9 @@ fn live_set(ws: &Workspace, boards_root: &Utf8Path) -> Result<BTreeSet<Utf8PathB
             .unwrap_or_else(|_| format!("{arch}-unknown-linux-gnu"));
         let (_, hash) = crate::cflags::canonicalize(crate::stage::default_cflags(&arch));
         for spec in &default_specs {
-            live.insert(store_key(&chost, &hash, spec));
+            live.store.insert(store_key(&chost, &hash, spec));
         }
+        live.binpkgs.insert(Utf8PathBuf::from(chost).join(hash));
     }
     Ok(live)
 }
@@ -278,6 +317,27 @@ mod tests {
                 Utf8PathBuf::from(chost).join("0123456789abcdef-gcc14"),
                 Utf8PathBuf::from(chost).join("fedcba9876543210-gcc15"),
             ]
+        );
+    }
+
+    #[test]
+    fn binpkg_dirs_classify_without_gcc_spec() {
+        // binpkgs/<chost>/<hash> is shared across gcc specs; live-ness is
+        // (chost, cflags-hash) only.
+        let chost = "riscv64-unknown-linux-gnu";
+        let live: BTreeSet<Utf8PathBuf> = [Utf8PathBuf::from(chost).join("0123456789abcdef")]
+            .into_iter()
+            .collect();
+
+        let entries = vec![
+            entry(chost, "0123456789abcdef"), // live
+            entry(chost, "fedcba9876543210"), // stale
+        ];
+        let unused = unused_entries(entries, &live);
+        let keys: Vec<_> = unused.iter().map(|e| e.rel_key()).collect();
+        assert_eq!(
+            keys,
+            vec![Utf8PathBuf::from(chost).join("fedcba9876543210")]
         );
     }
 
