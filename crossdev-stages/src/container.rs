@@ -3,6 +3,21 @@ use hakoniwa::{Container, Namespace, Runctl};
 
 use crate::error::{check_status, Result};
 
+/// One overlayfs mount to perform inside the sandbox before the user
+/// command runs.  Phase 3 uses this to overlay a content-addressed
+/// crossdev prefix (`store/<chost>/<cflags-hash>/`) at `/usr/<chost>/`.
+///
+/// All three host directories are bind-mounted into the container at
+/// hidden paths and then `mount -t overlay` is invoked from inside the
+/// userns (where uid 0 has CAP_SYS_ADMIN).
+#[derive(Clone, Debug)]
+pub struct OverlaySpec {
+    pub lower: Utf8PathBuf,
+    pub upper: Utf8PathBuf,
+    pub work: Utf8PathBuf,
+    pub mount_at: String,
+}
+
 /// Abstraction over the hakoniwa container API, modeling the four
 /// `run*` variants from `sandbox-stage.sh`.
 pub struct SandboxRunner {
@@ -15,6 +30,8 @@ pub struct SandboxRunner {
     extra_ro: Vec<(Utf8PathBuf, String)>,
     /// Absolute path to the project directory, mounted read-only at /scripts.
     scripts_dir: Option<Utf8PathBuf>,
+    /// Overlayfs mounts performed inside the container before each command.
+    overlays: Vec<OverlaySpec>,
 }
 
 impl SandboxRunner {
@@ -25,7 +42,17 @@ impl SandboxRunner {
             extra_rw: vec![],
             extra_ro: vec![],
             scripts_dir: None,
+            overlays: vec![],
         }
+    }
+
+    /// Add an overlayfs mount to perform inside the sandbox.  Lower is
+    /// bind-mounted read-only, upper/work read-write.  `mount_at` is
+    /// created if needed.  Multiple overlays may be added; they are
+    /// performed in registration order.
+    pub fn with_overlay(mut self, spec: OverlaySpec) -> Self {
+        self.overlays.push(spec);
+        self
     }
 
     pub fn log_dir(&self) -> &Utf8Path {
@@ -58,11 +85,12 @@ impl SandboxRunner {
     /// Run a shell command (via `bash --login -c`) inside the sandbox.
     pub fn run(&self, cmd: &str) -> Result<()> {
         let container = self.build_container();
+        let full = format!("{}{}", self.overlay_prefix(), cmd);
         let mut command = container.command("/bin/bash");
         command
             .arg("--login")
             .arg("-c")
-            .arg(cmd)
+            .arg(&full)
             .env("HOME", "/root")
             .env(
                 "TERM",
@@ -76,11 +104,12 @@ impl SandboxRunner {
     /// Run a shell command and capture its trimmed stdout.
     pub fn run_output(&self, cmd: &str) -> Result<String> {
         let container = self.build_container();
+        let full = format!("{}{}", self.overlay_prefix(), cmd);
         let mut command = container.command("/bin/bash");
         command
             .arg("--login")
             .arg("-c")
-            .arg(cmd)
+            .arg(&full)
             .env("HOME", "/root")
             .stdout(hakoniwa::Stdio::piped());
         let output = command.output()?;
@@ -97,8 +126,15 @@ impl SandboxRunner {
     pub fn shell(&self) -> Result<()> {
         let container = self.build_container();
         let mut command = container.command("/bin/bash");
+        let overlay = self.overlay_prefix();
+        if overlay.is_empty() {
+            command.arg("--login");
+        } else {
+            command
+                .arg("-c")
+                .arg(format!("{overlay}exec bash --login").as_str());
+        }
         command
-            .arg("--login")
             .env("HOME", "/root")
             .env(
                 "TERM",
@@ -142,9 +178,47 @@ impl SandboxRunner {
         if let Some(ref scripts) = self.scripts_dir {
             c.bindmount_ro(scripts.as_str(), "/scripts");
         }
+
+        // Bind in each overlay's host dirs at hidden container paths.
+        // The actual `mount -t overlay` happens inside the container via
+        // overlay_prefix() since hakoniwa drops privileges before its
+        // own bindmounts are visible.
+        for (i, ovl) in self.overlays.iter().enumerate() {
+            let _ = std::fs::create_dir_all(&ovl.lower);
+            let _ = std::fs::create_dir_all(&ovl.upper);
+            let _ = std::fs::create_dir_all(&ovl.work);
+            c.bindmount_ro(ovl.lower.as_str(), &overlay_lower_path(i));
+            c.bindmount_rw(ovl.upper.as_str(), &overlay_upper_path(i));
+            c.bindmount_rw(ovl.work.as_str(), &overlay_work_path(i));
+        }
         c
     }
+
+    /// Shell prefix that mounts each registered overlay before the user
+    /// command runs.  Empty when no overlays are configured.
+    fn overlay_prefix(&self) -> String {
+        if self.overlays.is_empty() {
+            return String::new();
+        }
+        let mut parts = Vec::with_capacity(self.overlays.len());
+        for (i, ovl) in self.overlays.iter().enumerate() {
+            parts.push(format!(
+                "mkdir -p {mp} && mount -t overlay overlay \
+                 -o lowerdir={lo},upperdir={up},workdir={wk} {mp}",
+                mp = ovl.mount_at,
+                lo = overlay_lower_path(i),
+                up = overlay_upper_path(i),
+                wk = overlay_work_path(i),
+            ));
+        }
+        // `set -e` so a failed overlay aborts before user code runs.
+        format!("set -e; {}; ", parts.join("; "))
+    }
 }
+
+fn overlay_lower_path(i: usize) -> String { format!("/.overlay/{i}/lower") }
+fn overlay_upper_path(i: usize) -> String { format!("/.overlay/{i}/upper") }
+fn overlay_work_path(i: usize) -> String { format!("/.overlay/{i}/work") }
 
 /// Build UID maps: caller → root + subordinate range. Mirrors hakoniwa CLI `--userns=auto`.
 fn uid_maps() -> Vec<(u32, u32, u32)> {
