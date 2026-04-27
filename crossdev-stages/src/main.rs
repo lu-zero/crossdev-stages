@@ -56,6 +56,9 @@ async fn main() -> anyhow::Result<()> {
         Commands::Status { tsv } => {
             cli::status::run(&ws, &boards_root, tsv)?;
         }
+        Commands::Store(cmd) => {
+            cli::store::run(&ws, &boards_root, cmd)?;
+        }
         Commands::Update { board, all } => {
             cli::update::run(&ws, board.as_deref(), all)?;
         }
