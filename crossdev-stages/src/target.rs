@@ -56,13 +56,16 @@ impl Target {
         let cflags = default_cflags(&self.arch);
         let (_, hash) = crate::cflags::canonicalize(cflags);
         let gcc_spec = sandbox.default_gcc_spec()?;
+        let binpkgs_dir = ws.binpkgs_dir().join(&chost).join(&hash);
+        std::fs::create_dir_all(&binpkgs_dir)?;
 
         tracing::info!("Preparing target portage configuration…");
         self.prepare_portage_with_cflags(ws, &chost, cflags, &gcc_spec)?;
 
         let runner = sandbox
             .runner_for_chost(ws, &self.arch, &hash, &gcc_spec)?
-            .with_target(&self.dir);
+            .with_target(&self.dir)
+            .with_binpkgs(&binpkgs_dir);
         tracing::info!("Logs at: {}", runner.log_dir());
         let portage = Portage::new(&runner);
 
@@ -87,9 +90,12 @@ impl Target {
         let chost = chost_for_arch(&self.arch)?;
         let (_, hash) = crate::cflags::canonicalize(default_cflags(&self.arch));
         let gcc_spec = sandbox.default_gcc_spec()?;
+        let binpkgs_dir = ws.binpkgs_dir().join(&chost).join(&hash);
+        std::fs::create_dir_all(&binpkgs_dir)?;
         let runner = sandbox
             .runner_for_chost(ws, &self.arch, &hash, &gcc_spec)?
-            .with_target(&self.dir);
+            .with_target(&self.dir)
+            .with_binpkgs(&binpkgs_dir);
         let portage = Portage::new(&runner);
 
         // Update the cross-toolchain in the crossdev prefix first (no ROOT=/target).
@@ -112,9 +118,12 @@ impl Target {
         let chost = chost_for_arch(&self.arch)?;
         let (_, hash) = crate::cflags::canonicalize(default_cflags(&self.arch));
         let gcc_spec = sandbox.default_gcc_spec()?;
+        let binpkgs_dir = ws.binpkgs_dir().join(&chost).join(&hash);
+        std::fs::create_dir_all(&binpkgs_dir)?;
         let runner = sandbox
             .runner_for_chost(ws, &self.arch, &hash, &gcc_spec)?
-            .with_target(&self.dir);
+            .with_target(&self.dir)
+            .with_binpkgs(&binpkgs_dir);
         let portage = Portage::new(&runner);
         portage.cross_emerge(&chost, packages)
     }
@@ -145,12 +154,17 @@ impl Target {
         let portage_dir = self.dir.join("etc/portage");
         std::fs::create_dir_all(&portage_dir)?;
 
+        // pkgdir is deliberately None: this make.conf ships into the image
+        // via `cp -a /target/. /build/gen/root/`.  FEATURES=buildpkg +
+        // PKGDIR=/binpkgs belong in the crossdev prefix config, which is
+        // what {chost}-emerge (PORTAGE_CONFIGROOT=/usr/<chost>) reads.
         MakeConf {
             arch: &self.arch,
             chost: Some(chost),
             cflags: Some(cflags),
             mirror: None,
             binhost: None,
+            pkgdir: None,
         }
         .write(&portage_dir)?;
 

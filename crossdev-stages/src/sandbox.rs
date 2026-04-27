@@ -66,6 +66,7 @@ impl Sandbox {
             cflags: None,
             mirror,
             binhost: None,
+            pkgdir: None,
         }
         .write(&self.dir.join("etc/portage"))?;
 
@@ -210,6 +211,11 @@ impl Sandbox {
         let store_dir = ws.store_dir().join(store_key(&chost, &hash, &gcc_spec));
         let complete_marker = store_dir.join(".complete");
         let sandbox_marker = self.dir.join(format!(".crossdev-{target_arch}"));
+        // Shared target binpkg cache: the crossdev prefix make.conf sets
+        // PKGDIR=/binpkgs, so every runner that executes {chost}-emerge
+        // must bind this dir there.
+        let binpkgs_dir = ws.binpkgs_dir().join(&chost).join(&hash);
+        std::fs::create_dir_all(&binpkgs_dir)?;
 
         // Idempotency: `.complete` in a (chost, cflags-hash, gcc-spec) keyed
         // dir means this exact toolchain is built.  Only per-sandbox glue is
@@ -221,7 +227,7 @@ impl Sandbox {
             tracing::info!("Crossdev prefix at {store_dir} complete (gcc-{existing}), skipping.");
             std::fs::write(&sandbox_marker, &existing)?;
             // Ensure any board-required ex-pkgs are present even on the skip path.
-            self.ensure_grub_ex_pkg(board, &chost, &store_dir)?;
+            self.ensure_grub_ex_pkg(board, &chost, &store_dir, &binpkgs_dir)?;
             return Ok(());
         }
 
@@ -236,7 +242,8 @@ impl Sandbox {
         // sandbox contents at that path stay invisible during the build.
         let runner = self
             .runner()
-            .with_extra_rw(&store_dir, &format!("/usr/{chost}"));
+            .with_extra_rw(&store_dir, &format!("/usr/{chost}"))
+            .with_binpkgs(&binpkgs_dir);
 
         let portage = Portage::new(&runner);
 
@@ -411,6 +418,7 @@ impl Sandbox {
         board: &BoardConfig,
         chost: &str,
         store_dir: &Utf8Path,
+        binpkgs_dir: &Utf8Path,
     ) -> Result<()> {
         let Some(ref platforms) = board.grub_platforms else {
             return Ok(());
@@ -441,7 +449,8 @@ impl Sandbox {
         // itself and is visible to every sandbox that mounts it.
         let runner = self
             .runner()
-            .with_extra_rw(store_dir, &format!("/usr/{chost}"));
+            .with_extra_rw(store_dir, &format!("/usr/{chost}"))
+            .with_binpkgs(binpkgs_dir);
         Portage::new(&runner).cross_emerge_crossdev(chost, &["sys-boot/grub"])?;
         if let Some(v) = recorded {
             std::fs::write(&complete_marker, v)?;
@@ -459,13 +468,18 @@ impl Sandbox {
         board: &BoardConfig,
         gcc_keyword_line: &str,
     ) -> Result<()> {
-        // make.conf for the crossdev prefix
+        // make.conf for the crossdev prefix.  {chost}-emerge runs with
+        // PORTAGE_CONFIGROOT=/usr/<chost> and reads THIS make.conf, not
+        // the target's -- FEATURES=buildpkg + PKGDIR must live here or
+        // they never take effect.  /binpkgs is the in-sandbox bind of
+        // the shared binpkgs/<chost>/<cflags-hash>/ cache.
         MakeConf {
             arch,
             chost: Some(chost),
             cflags: Some(cflags),
             mirror: None,
             binhost: None,
+            pkgdir: Some("/binpkgs"),
         }
         .write(portage_dir)?;
 
