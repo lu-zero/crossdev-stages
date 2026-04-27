@@ -209,6 +209,7 @@ impl Sandbox {
 
         let store_dir = ws.store_dir().join(store_key(&chost, &hash, &gcc_spec));
         let complete_marker = store_dir.join(".complete");
+        let portage_db_dir = store_dir.join(".portage-db");
         let sandbox_marker = self.dir.join(format!(".crossdev-{target_arch}"));
         // Shared target binpkg cache: the crossdev prefix make.conf sets
         // PKGDIR=/binpkgs, so every runner that executes {chost}-emerge
@@ -218,30 +219,58 @@ impl Sandbox {
 
         // Idempotency: `.complete` in a (chost, cflags-hash, gcc-spec) keyed
         // dir means this exact toolchain is built.  Only per-sandbox glue is
-        // (re-)ensured here; the store itself is not touched.
+        // (re-)ensured here; the store itself is not touched.  Exception:
+        // a bare `.complete` without a populated `.portage-db` predates db
+        // isolation -- treat it as stale, clear the marker, rebuild.
         if complete_marker.exists() {
-            let existing = std::fs::read_to_string(&complete_marker)
-                .map(|s| s.trim().to_string())
-                .unwrap_or_default();
-            tracing::info!("Crossdev prefix at {store_dir} complete (gcc-{existing}), skipping.");
-            std::fs::write(&sandbox_marker, &existing)?;
-            // Ensure any board-required ex-pkgs are present even on the skip path.
-            self.ensure_grub_ex_pkg(board, &chost, &store_dir, &binpkgs_dir)?;
-            return Ok(());
+            let db_populated = portage_db_dir.exists()
+                && std::fs::read_dir(&portage_db_dir)
+                    .map(|mut it| it.next().is_some())
+                    .unwrap_or(false);
+            if !db_populated {
+                tracing::warn!("Store {store_dir} predates db isolation; rebuilding");
+                std::fs::remove_file(&complete_marker).ok();
+            } else {
+                let existing = std::fs::read_to_string(&complete_marker)
+                    .map(|s| s.trim().to_string())
+                    .unwrap_or_default();
+                tracing::info!(
+                    "Crossdev prefix at {store_dir} complete (gcc-{existing}), skipping."
+                );
+                std::fs::write(&sandbox_marker, &existing)?;
+                // Ensure any board-required ex-pkgs are present even on the skip path.
+                self.ensure_grub_ex_pkg(board, &chost, &store_dir, &binpkgs_dir)?;
+                return Ok(());
+            }
         }
 
         // From here the dir is partial (no `.complete`): building into it
         // is safe, and a crash leaves it partial, never half-complete.
         std::fs::create_dir_all(&store_dir)?;
+        let binpkgs_cross_dir = store_dir.join(".binpkgs-cross");
+        std::fs::create_dir_all(&portage_db_dir)?;
+        std::fs::create_dir_all(&binpkgs_cross_dir)?;
         tracing::info!("Building crossdev prefix into {store_dir}…");
 
         let profile = gentoo_profile(target_arch)?;
         // Bind-mount the store dir RW at /usr/<chost>/ so the crossdev
-        // wizard's writes land directly in the workspace store.  Hidden
-        // sandbox contents at that path stay invisible during the build.
+        // wizard's writes land directly in the workspace store.  Also
+        // bind the per-(chost, hash) portage db dir at
+        // /var/db/pkg/cross-<chost>/ and the matching cross-toolchain
+        // binpkg cache at /var/cache/binpkgs/cross-<chost>/, so portage's
+        // installed-packages record AND the cached cross-gcc/glibc
+        // tarballs stay in sync with the store contents.  Without this,
+        // the host sandbox's shared db/binpkgs let one (chost, hash)
+        // install shadow another's, and the wizard either fast-paths to
+        // a no-op or merges binaries built for a different cflags-hash.
         let runner = self
             .runner()
             .with_extra_rw(&store_dir, &format!("/usr/{chost}"))
+            .with_extra_rw(&portage_db_dir, &format!("/var/db/pkg/cross-{chost}"))
+            .with_extra_rw(
+                &binpkgs_cross_dir,
+                &format!("/var/cache/binpkgs/cross-{chost}"),
+            )
             .with_binpkgs(&binpkgs_dir);
 
         tracing::info!("Creating crossdev overlay…");
@@ -388,6 +417,10 @@ impl Sandbox {
                 reason: format!("store {store_dir} is not complete; run setup_crossdev first"),
             });
         }
+        let portage_db_dir = store_dir.join(".portage-db");
+        let binpkgs_cross_dir = store_dir.join(".binpkgs-cross");
+        std::fs::create_dir_all(&portage_db_dir)?;
+        std::fs::create_dir_all(&binpkgs_cross_dir)?;
         // Upper/work are keyed by the full store key so two stores that
         // share chost+cflags but differ in gcc never mix upper layers.
         let leaf = store_dir.file_name().unwrap_or(cflags_hash);
@@ -395,12 +428,19 @@ impl Sandbox {
         let work_in_sandbox = format!(".overlay-work-{chost}-{leaf}");
         std::fs::create_dir_all(self.dir.join(&upper_in_sandbox))?;
         std::fs::create_dir_all(self.dir.join(&work_in_sandbox))?;
-        Ok(self.runner().with_overlay(OverlaySpec {
-            lower: store_dir,
-            upper_in_container: format!("/{upper_in_sandbox}"),
-            work_in_container: format!("/{work_in_sandbox}"),
-            mount_at: format!("/usr/{chost}"),
-        }))
+        Ok(self
+            .runner()
+            .with_overlay(OverlaySpec {
+                lower: store_dir,
+                upper_in_container: format!("/{upper_in_sandbox}"),
+                work_in_container: format!("/{work_in_sandbox}"),
+                mount_at: format!("/usr/{chost}"),
+            })
+            .with_extra_rw(&portage_db_dir, &format!("/var/db/pkg/cross-{chost}"))
+            .with_extra_rw(
+                &binpkgs_cross_dir,
+                &format!("/var/cache/binpkgs/cross-{chost}"),
+            ))
     }
 
     /// Return a `SandboxRunner` for running commands inside this sandbox.
