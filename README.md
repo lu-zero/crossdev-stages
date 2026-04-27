@@ -124,6 +124,13 @@ Git repos are cached as bare repositories at `~/.cache/crossdev-stages/sources/`
 First clone fetches from upstream; subsequent builds use `--reference` for
 near-instant checkout.
 
+## Requirements
+
+Linux 5.11 or newer with unprivileged user-namespace overlayfs enabled
+(`unprivileged_userns_clone=1` on Debian/Ubuntu kernels; default on most
+others).  The store is mounted as overlayfs inside a hakoniwa user
+namespace; macOS/BSD are not supported.
+
 ## Dependencies
 ```sh
 emerge crossdev merge-usr git
