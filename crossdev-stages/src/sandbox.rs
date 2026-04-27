@@ -86,26 +86,58 @@ impl Sandbox {
 
         let store_dir = ws.store_dir().join(&chost).join(&hash);
         let complete_marker = store_dir.join(".complete");
+        let portage_db_dir = store_dir.join(".portage-db");
         let sandbox_marker = self.dir.join(format!(".crossdev-{target_arch}"));
 
         if complete_marker.exists() {
-            tracing::info!(
-                "Crossdev prefix at {store_dir} already complete (cflags hash {hash}), skipping."
-            );
-            std::fs::write(&sandbox_marker, &hash)?;
-            return Ok(());
+            // Stores produced before db isolation have .complete but no
+            // .portage-db.  The empty bind-mount would trick subsequent
+            // cross-emerges into thinking nothing is installed and
+            // refusing to operate; force a rebuild instead.
+            let needs_rebuild = !portage_db_dir.exists()
+                || std::fs::read_dir(&portage_db_dir)
+                    .map(|mut it| it.next().is_none())
+                    .unwrap_or(true);
+            if needs_rebuild {
+                tracing::warn!(
+                    "Store {store_dir} predates db isolation; rebuilding"
+                );
+                std::fs::remove_file(&complete_marker).ok();
+            } else {
+                tracing::info!(
+                    "Crossdev prefix at {store_dir} already complete (cflags hash {hash}), skipping."
+                );
+                std::fs::write(&sandbox_marker, &hash)?;
+                return Ok(());
+            }
         }
 
         std::fs::create_dir_all(&store_dir)?;
+        let portage_db_dir = store_dir.join(".portage-db");
+        let binpkgs_cross_dir = store_dir.join(".binpkgs-cross");
+        std::fs::create_dir_all(&portage_db_dir)?;
+        std::fs::create_dir_all(&binpkgs_cross_dir)?;
         tracing::info!("Building crossdev prefix into {store_dir}…");
 
         let profile = gentoo_profile(target_arch)?;
         // Bind-mount the store dir RW at /usr/<chost>/ so the crossdev
-        // wizard's writes land directly in the workspace store.  Hidden
-        // sandbox contents at that path stay invisible during the build.
+        // wizard's writes land directly in the workspace store.  Also
+        // bind the per-(chost, hash) portage db dir at
+        // /var/db/pkg/cross-<chost>/ and the matching cross-toolchain
+        // binpkg cache at /var/cache/binpkgs/cross-<chost>/, so portage's
+        // installed-packages record AND the cached cross-gcc/glibc
+        // tarballs stay in sync with the store contents.  Without this,
+        // the host sandbox's shared db/binpkgs let one (chost, hash)
+        // install shadow another's, and the wizard either fast-paths to
+        // a no-op or merges binaries built for a different cflags-hash.
         let runner = self
             .runner()
-            .with_extra_rw(&store_dir, &format!("/usr/{chost}"));
+            .with_extra_rw(&store_dir, &format!("/usr/{chost}"))
+            .with_extra_rw(&portage_db_dir, &format!("/var/db/pkg/cross-{chost}"))
+            .with_extra_rw(
+                &binpkgs_cross_dir,
+                &format!("/var/cache/binpkgs/cross-{chost}"),
+            );
 
         // Clean up the repos.conf entry `eselect repository` wrote pointing
         // at a project overlay that may not exist yet. Portage nags about
@@ -219,16 +251,27 @@ impl Sandbox {
                 ),
             });
         }
+        let portage_db_dir = store_dir.join(".portage-db");
+        let binpkgs_cross_dir = store_dir.join(".binpkgs-cross");
+        std::fs::create_dir_all(&portage_db_dir)?;
+        std::fs::create_dir_all(&binpkgs_cross_dir)?;
         let upper_in_sandbox = format!(".overlay-upper-{chost}-{cflags_hash}");
         let work_in_sandbox = format!(".overlay-work-{chost}-{cflags_hash}");
         std::fs::create_dir_all(self.dir.join(&upper_in_sandbox))?;
         std::fs::create_dir_all(self.dir.join(&work_in_sandbox))?;
-        Ok(self.runner().with_overlay(OverlaySpec {
-            lower: store_dir,
-            upper_in_container: format!("/{upper_in_sandbox}"),
-            work_in_container: format!("/{work_in_sandbox}"),
-            mount_at: format!("/usr/{chost}"),
-        }))
+        Ok(self
+            .runner()
+            .with_overlay(OverlaySpec {
+                lower: store_dir,
+                upper_in_container: format!("/{upper_in_sandbox}"),
+                work_in_container: format!("/{work_in_sandbox}"),
+                mount_at: format!("/usr/{chost}"),
+            })
+            .with_extra_rw(&portage_db_dir, &format!("/var/db/pkg/cross-{chost}"))
+            .with_extra_rw(
+                &binpkgs_cross_dir,
+                &format!("/var/cache/binpkgs/cross-{chost}"),
+            ))
     }
 
     /// Return a `SandboxRunner` for running commands inside this sandbox.
