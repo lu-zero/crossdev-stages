@@ -6,8 +6,9 @@ fn main() {
     // change to the git state.
     println!("cargo:rerun-if-changed=../.git/HEAD");
     println!("cargo:rerun-if-changed=../.git/refs");
+    println!("cargo:rerun-if-changed=../.git/index");
 
-    let commit = Command::new("git")
+    let mut commit = Command::new("git")
         .args(["rev-parse", "--short=12", "HEAD"])
         .output()
         .ok()
@@ -19,6 +20,18 @@ fn main() {
             }
         })
         .unwrap_or_else(|| "unknown".to_string());
+
+    // Append -dirty when the working tree has uncommitted changes so a
+    // build from a modified checkout can be told apart in the lock file.
+    let dirty = Command::new("git")
+        .args(["status", "--porcelain"])
+        .output()
+        .ok()
+        .map(|out| !out.stdout.is_empty())
+        .unwrap_or(false);
+    if dirty {
+        commit.push_str("-dirty");
+    }
 
     println!("cargo:rustc-env=CROSSDEV_STAGES_GIT_COMMIT={commit}");
 }
