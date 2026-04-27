@@ -9,6 +9,8 @@ const TARGETS: &str = "targets";
 const BUILDS: &str = "builds";
 const SOURCES: &str = "sources";
 const LOGS: &str = "logs";
+const STORE: &str = "store";
+const BINPKGS: &str = "binpkgs";
 
 /// Manages the on-disk cache layout:
 /// ~/.cache/crossdev-stages/{stages,sandboxes,targets,builds}/
@@ -51,6 +53,18 @@ impl Workspace {
         self.base.join(LOGS)
     }
 
+    /// Content-addressed crossdev prefix store.  Keyed by `(chost,
+    /// cflags-hash)`; populated by Phase 3.
+    pub fn store_dir(&self) -> Utf8PathBuf {
+        self.base.join(STORE)
+    }
+
+    /// Shared binpkg cache (`PKGDIR`).  Populated by `FEATURES=buildpkg`
+    /// once Phase 3 wires it.
+    pub fn binpkgs_dir(&self) -> Utf8PathBuf {
+        self.base.join(BINPKGS)
+    }
+
     /// Create all cache subdirectories if they don't exist.
     pub fn ensure_dirs(&self) -> Result<()> {
         for dir in [
@@ -60,6 +74,8 @@ impl Workspace {
             self.builds_dir(),
             self.sources_dir(),
             self.logs_dir(),
+            self.store_dir(),
+            self.binpkgs_dir(),
         ] {
             std::fs::create_dir_all(&dir)?;
         }
