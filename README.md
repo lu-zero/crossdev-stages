@@ -7,7 +7,10 @@ Rootless cross-compilation of Gentoo stages using crossdev and hakoniwa
 - [x] Update a compatible stage3 image
 - [x] Build opensbi + u-boot images and linux kernel + modules
 - [x] Assemble bootable images
-- [x] Per-CFLAGS target stage isolation (glibc-only rebuild)
+- [x] Content-addressed crossdev prefix store, keyed by `(chost, CFLAGS-hash)`
+- [x] Shared binpkg cache, keyed the same way
+- [x] `build.lock.toml` per image with pinned source commits + CFLAGS
+- [x] `crossdev-stages update` to compare lock vs upstream HEAD
 - [x] Rust CLI using [hakoniwa](https://github.com/souk4711/hakoniwa) for sandboxing
 - [x] Modular bootloader (opensbi, u-boot, tfa, rkbin)
 - [x] File-convention hooks (pre/post/override scripts per build step)
@@ -15,7 +18,7 @@ Rootless cross-compilation of Gentoo stages using crossdev and hakoniwa
 
 ## Platforms
 - riscv64 (BPI-F3, Milk-V Jupiter, DC Roma II, OrangePi RV2, K230, Blackhole P100/P150)
-- aarch64 (Odroid M2 -- testing)
+- aarch64 (Odroid M2, Odroid C2, Odroid C4 -- testing)
 
 ## CLI
 
@@ -28,8 +31,8 @@ Commands:
   image     Build board images
   stages    List or download Gentoo stage3 tarballs
   board     Manage and inspect boards
-  maint     Maintenance: cleanup, logs, diagnostics
   status    Show overview of sandboxes, targets, builds, and boards
+  update    Compare a board's build.lock.toml against upstream HEAD
 
 Options:
   --project-dir <DIR>  Project root (where boards/ lives) [default: .]
@@ -41,34 +44,35 @@ Options:
 ### Quick start
 
 ```sh
-# Set up host sandbox
-crossdev-stages sandbox setup
-crossdev-stages sandbox prepare
-crossdev-stages sandbox crossdev --arch riscv64 --board k1
-
-# Create target stage from a stage3 seed
-crossdev-stages target setup --arch riscv64
-crossdev-stages target stage1
-crossdev-stages target update
-
-# Build an image
+# One-shot: ensures sandbox + crossdev prefix exist, then builds
 crossdev-stages image build --board k1
 
-# Check status
+# Inspect builds, sandboxes, and the toolchain store
 crossdev-stages status
+
+# See what would change on a fresh build (read-only)
+crossdev-stages update --board k1
+crossdev-stages update --all
 
 # Export the image
 crossdev-stages image export --board k1 -o /tmp/
-
-# Clean up stale builds and old stage3 tarballs
-crossdev-stages maint cleanup
 ```
 
-### Source cache
+### Cache layout
 
-Git repos are cached as bare repositories at `~/.cache/crossdev-stages/sources/`.
-First clone fetches from upstream; subsequent builds use `--reference` for
-near-instant checkout.
+Everything lives under `~/.cache/crossdev-stages/`:
+
+| Path | Contents |
+|---|---|
+| `stages/` | downloaded stage3 tarballs |
+| `sources/<repo>.git/` | bare git mirrors used as `--reference` for fast clones |
+| `sandboxes/<name>/` | host stage3 unpacks; `.upper-<chost>-<hash>/` directories hold per-toolchain overlay writes |
+| `targets/<name>/` | cross-compiled target rootfs |
+| `store/<chost>/<cflags-hash>/` | immutable crossdev prefix; built once per `(chost, canonical CFLAGS)` and overlay-mounted at `/usr/<chost>/` for every build that needs it |
+| `binpkgs/<chost>/<cflags-hash>/` | shared `PKGDIR` for cross-compiled packages so different boards with compatible CFLAGS reuse builds |
+| `builds/<board>/<timestamp>/` | per-image build output, including `build.lock.toml` |
+
+CFLAGS are canonicalized via [sokgi](https://github.com/OctopusET/sokgi) before hashing, so semantically equivalent flag strings (different token order, last-wins overrides) share a store entry.
 
 ## Dependencies
 ```sh
