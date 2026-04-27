@@ -89,7 +89,12 @@ pub struct BoardConfig {
 
     pub image_name: Option<String>,
     pub compression: Option<String>, // xz (default) | gz | none
-    pub testing: bool,
+
+    /// Free-form labels from `TAGS=(...)` in board.conf (e.g.
+    /// `["testing", "wip"]`).  Surfaced in `board list` / `status`.
+    pub tags: Vec<String>,
+    /// Free-form note from `DESCRIPTION=` in board.conf.
+    pub description: Option<String>,
 }
 
 impl BoardConfig {
@@ -277,10 +282,15 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
 
         image_name: kv.get("IMAGE_NAME").cloned(),
         compression: kv.get("COMPRESSION").cloned(),
-        testing: kv
-            .get("TESTING")
-            .map(|v| v == "true" || v == "yes" || v == "1")
-            .unwrap_or(false),
+        tags: arrays
+            .get("TAGS")
+            .cloned()
+            .or_else(|| {
+                kv.get("TAGS")
+                    .map(|s| s.split_whitespace().map(String::from).collect())
+            })
+            .unwrap_or_default(),
+        description: kv.get("DESCRIPTION").cloned(),
     })
 }
 

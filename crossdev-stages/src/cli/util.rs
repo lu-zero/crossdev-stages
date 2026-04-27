@@ -140,6 +140,7 @@ pub fn default_board_config(arch: &str) -> board::BoardConfig {
         workaround_cflags: vec![],
         image_name: None,
         compression: None,
-        testing: false,
+        tags: vec![],
+        description: None,
     }
 }
