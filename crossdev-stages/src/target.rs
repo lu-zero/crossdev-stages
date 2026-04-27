@@ -44,21 +44,25 @@ impl Target {
 
     /// Bootstrap the target: cross-emerge baselayout → packages.build → portage.
     /// Idempotent via `.stage1` marker.
-    pub fn build_stage1(&self, sandbox: &Sandbox) -> Result<()> {
+    pub fn build_stage1(&self, ws: &Workspace, sandbox: &Sandbox) -> Result<()> {
         if self.dir.join(".stage1").exists() {
             tracing::info!("Stage1 already built, skipping.");
             return Ok(());
         }
         let chost = chost_for_arch(&self.arch)?;
+        // Standalone `target stage1` has no board context, so key the store
+        // with generic arch defaults; image builds override later via
+        // `prepare_portage_with_cflags(..., board.effective_cflags(), ...)`.
+        let cflags = default_cflags(&self.arch);
+        let (_, hash) = crate::cflags::canonicalize(cflags);
+        let gcc_spec = sandbox.default_gcc_spec()?;
 
-        // Write target portage config and copy profile before first emerge.
-        // Standalone `target stage1` has no board context, so use generic
-        // arch defaults; image builds override later via
-        // `prepare_portage_with_cflags(..., board.effective_cflags())`.
         tracing::info!("Preparing target portage configuration…");
-        self.prepare_portage_with_cflags(sandbox, &chost, default_cflags(&self.arch))?;
+        self.prepare_portage_with_cflags(ws, &chost, cflags, &gcc_spec)?;
 
-        let runner = sandbox.runner().with_target(&self.dir);
+        let runner = sandbox
+            .runner_for_chost(ws, &self.arch, &hash, &gcc_spec)?
+            .with_target(&self.dir);
         tracing::info!("Logs at: {}", runner.log_dir());
         let portage = Portage::new(&runner);
 
@@ -81,7 +85,7 @@ impl Target {
         tracing::info!("Cross-emerging portage…");
         portage.cross_emerge_build(&chost, &["sys-apps/portage"])?;
 
-        self.update_ldconfig(sandbox)?;
+        self.update_ldconfig(ws, sandbox)?;
 
         std::fs::write(self.dir.join(".stage1"), chrono::Utc::now().to_rfc3339())?;
         tracing::info!("Stage1 complete.");
@@ -89,9 +93,13 @@ impl Target {
     }
 
     /// Update the target stage (`@world` rebuild).
-    pub fn update(&self, sandbox: &Sandbox) -> Result<()> {
+    pub fn update(&self, ws: &Workspace, sandbox: &Sandbox) -> Result<()> {
         let chost = chost_for_arch(&self.arch)?;
-        let runner = sandbox.runner().with_target(&self.dir);
+        let (_, hash) = crate::cflags::canonicalize(default_cflags(&self.arch));
+        let gcc_spec = sandbox.default_gcc_spec()?;
+        let runner = sandbox
+            .runner_for_chost(ws, &self.arch, &hash, &gcc_spec)?
+            .with_target(&self.dir);
         let portage = Portage::new(&runner);
 
         // Update the cross-toolchain in the crossdev prefix first (no ROOT=/target).
@@ -106,36 +114,45 @@ impl Target {
             "KERNEL_DIR=/usr/src/linux ROOT=/target {chost}-emerge -b -k -e @world"
         ))?;
 
-        self.update_ldconfig(sandbox)?;
+        self.update_ldconfig(ws, sandbox)?;
         std::fs::write(self.dir.join(".updated"), chrono::Utc::now().to_rfc3339())?;
         Ok(())
     }
 
     /// Cross-emerge specific packages into the target.
-    pub fn install(&self, sandbox: &Sandbox, packages: &[&str]) -> Result<()> {
+    pub fn install(&self, ws: &Workspace, sandbox: &Sandbox, packages: &[&str]) -> Result<()> {
         let chost = chost_for_arch(&self.arch)?;
-        let runner = sandbox.runner().with_target(&self.dir);
+        let (_, hash) = crate::cflags::canonicalize(default_cflags(&self.arch));
+        let gcc_spec = sandbox.default_gcc_spec()?;
+        let runner = sandbox
+            .runner_for_chost(ws, &self.arch, &hash, &gcc_spec)?
+            .with_target(&self.dir);
         let portage = Portage::new(&runner);
         portage.cross_emerge(&chost, packages)
     }
 
     /// Run `ldconfig` inside the target stage.
-    pub fn update_ldconfig(&self, sandbox: &Sandbox) -> Result<()> {
+    pub fn update_ldconfig(&self, ws: &Workspace, sandbox: &Sandbox) -> Result<()> {
         tracing::info!("Updating ldconfig in target…");
-        let runner = sandbox.runner().with_target(&self.dir);
+        let (_, hash) = crate::cflags::canonicalize(default_cflags(&self.arch));
+        let gcc_spec = sandbox.default_gcc_spec()?;
+        let runner = sandbox
+            .runner_for_chost(ws, &self.arch, &hash, &gcc_spec)?
+            .with_target(&self.dir);
         runner.run("ldconfig -v -r /target")
     }
 
     /// Write target portage make.conf with explicit CFLAGS and copy the
-    /// profile link from the crossdev prefix in the sandbox — mirrors
-    /// `prepare_target_portage` in the bash script.  Idempotent: re-writes
-    /// make.conf each call so callers can refresh CFLAGS when a board's
-    /// values change.
+    /// profile link from the crossdev prefix in the workspace store —
+    /// mirrors `prepare_target_portage` in the bash script.  Idempotent:
+    /// re-writes make.conf each call so callers can refresh CFLAGS when
+    /// a board's values change.
     pub fn prepare_portage_with_cflags(
         &self,
-        sandbox: &Sandbox,
+        ws: &Workspace,
         chost: &str,
         cflags: &str,
+        gcc_spec: &str,
     ) -> Result<()> {
         let portage_dir = self.dir.join("etc/portage");
         std::fs::create_dir_all(&portage_dir)?;
@@ -150,8 +167,14 @@ impl Target {
         .write(&portage_dir)?;
 
         // Copy the profile directory and make.profile symlink from the
-        // crossdev prefix so the target stage uses the correct Gentoo profile.
-        let src_portage = sandbox.dir.join(format!("usr/{chost}/etc/portage"));
+        // store-resident crossdev prefix so the target stage uses the
+        // correct Gentoo profile.  The (chost, cflags-hash, gcc-spec)
+        // keyed store dir is the source of truth post-Phase 3.
+        let (_, hash) = crate::cflags::canonicalize(cflags);
+        let src_portage = ws
+            .store_dir()
+            .join(crate::workspace::store_key(chost, &hash, gcc_spec))
+            .join("etc/portage");
 
         let src_profile_dir = src_portage.join("profile");
         if src_profile_dir.is_dir() {

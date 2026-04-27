@@ -68,7 +68,7 @@ pub async fn run(
                 mirror,
             )
             .await?;
-            tgt.build_stage1(&sb)?;
+            tgt.build_stage1(ws, &sb)?;
         }
         TargetCmd::Update => {
             let (tgt, sb) = ensure_target(
@@ -80,7 +80,7 @@ pub async fn run(
                 mirror,
             )
             .await?;
-            tgt.update(&sb)?;
+            tgt.update(ws, &sb)?;
         }
         TargetCmd::Install { packages } => {
             let (tgt, sb) = ensure_target(
@@ -93,7 +93,7 @@ pub async fn run(
             )
             .await?;
             let pkgs: Vec<&str> = packages.iter().map(String::as_str).collect();
-            tgt.install(&sb, &pkgs)?;
+            tgt.install(ws, &sb, &pkgs)?;
         }
         TargetCmd::Ldconfig => {
             let (tgt, sb) = ensure_target(
@@ -105,7 +105,7 @@ pub async fn run(
                 mirror,
             )
             .await?;
-            tgt.update_ldconfig(&sb)?;
+            tgt.update_ldconfig(ws, &sb)?;
         }
         TargetCmd::Destroy { name } => {
             target::destroy(ws, &name)?;

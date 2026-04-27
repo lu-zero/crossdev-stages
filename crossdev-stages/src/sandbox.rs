@@ -5,11 +5,13 @@ use camino::{Utf8Path, Utf8PathBuf};
 use portage_atom::Version as PortageVersion;
 
 use crate::board::BoardConfig;
-use crate::container::{destroy_dir, recover_mounts_for_removal, unpack_tarball, SandboxRunner};
+use crate::container::{
+    destroy_dir, recover_mounts_for_removal, unpack_tarball, OverlaySpec, SandboxRunner,
+};
 use crate::error::{Error, Result};
 use crate::portage::{install_host_deps, sync_portage_tree, MakeConf};
 use crate::stage::gentoo_profile;
-use crate::workspace::Workspace;
+use crate::workspace::{store_key, Workspace};
 
 /// A Gentoo sandbox: an unpacked stage3 used as the host build environment.
 pub struct Sandbox {
@@ -116,41 +118,72 @@ impl Sandbox {
         Ok(versions)
     }
 
-    /// Set up the crossdev toolchain for `target_arch` inside this sandbox.
-    /// Idempotent: skips if `.crossdev-<target_arch>` marker exists with a matching gcc version.
+    /// The gcc spec used to key the store when no explicit version is
+    /// requested: the highest installed slot.  Deterministic and known
+    /// host-side (`.gcc_versions` cache; one `qlist` run the first time)
+    /// before any crossdev work enters the sandbox.
+    pub fn default_gcc_spec(&self) -> Result<String> {
+        let installed = self.get_installed_gcc_versions()?;
+        installed
+            .keys()
+            .filter_map(|k| k.parse::<u32>().ok())
+            .max()
+            .map(|n| n.to_string())
+            .ok_or_else(|| Error::CommandFailed {
+                code: 1,
+                reason: "No GCC installed in sandbox; run sandbox prepare first".into(),
+            })
+    }
+
+    /// Resolve the gcc spec that keys the store for `board`:
+    /// CLI `--gcc-version` > `BOARD_GCC_VERSION` > highest installed slot.
+    /// The spec string is used verbatim in the store key, so the same
+    /// resolution must be applied by everything that touches the store
+    /// (setup, runners, portage prep).
+    pub fn gcc_spec_for(&self, board: &BoardConfig, cli_gcc: Option<&str>) -> Result<String> {
+        match cli_gcc.or(board.gcc_version.as_deref()) {
+            Some(s) => Ok(s.to_string()),
+            None => self.default_gcc_spec(),
+        }
+    }
+
+    /// Set up the crossdev toolchain for `target_arch` with `board`'s CFLAGS.
     ///
-    /// GCC version resolution order: CLI `gcc_version` > `board.gcc_version` > highest installed slot.
+    /// The cross-prefix output lives in the workspace's content-addressed
+    /// store at `store/<chost>/<cflags-hash>-gcc<spec>/`; subsequent runs
+    /// that need this toolchain overlay-mount the store dir at
+    /// `/usr/<chost>/` (see [`Self::runner_for_board`]).  The gcc spec is
+    /// part of the key: two boards with the same chost+CFLAGS but different
+    /// `BOARD_GCC_VERSION` get separate prefixes instead of ping-ponging
+    /// full rebuilds inside one dir.
     ///
-    /// The spec is either a bare slot number ("15") or a version prefix ("15.2", "15.2.1_p20260214").
-    /// Prefixes use portage's `=pkg-ver*` glob, so "15.2" matches any 15.2.x snapshot.
+    /// GCC version resolution order: CLI `gcc_version` > `board.gcc_version`
+    /// > highest installed slot.  The spec is either a bare slot number
+    /// ("15") or a version prefix ("15.2", "15.2.1_p20260214").  Prefixes
+    /// use portage's `=pkg-ver*` glob, so "15.2" matches any 15.2.x snapshot.
+    ///
+    /// Idempotent: a store dir carrying `.complete` is never rebuilt (a
+    /// different gcc spec or CFLAGS keys a different dir), and never
+    /// mutated while `.complete` is set -- the marker is written only
+    /// after the full setup finishes.
     pub fn setup_crossdev(
         &self,
+        ws: &Workspace,
         target_arch: &str,
         board: &BoardConfig,
         gcc_version: Option<&str>,
     ) -> Result<()> {
-        let marker = self.dir.join(format!(".crossdev-{target_arch}"));
-        let runner = self.runner();
+        let chost = crate::stage::chost_for_arch(target_arch)?;
+        let cflags = board.effective_cflags();
+        let (_canonical, hash) = crate::cflags::canonicalize(&cflags);
 
-        // Resolve spec from CLI > board > auto-detect.
-        // A single number ("15") selects the slot; any longer version ("15.2", "15.2.1_p…")
-        // is used as a portage version prefix via =sys-devel/gcc-<prefix>*.
+        // Resolve gcc spec from CLI > board > auto-detect.
+        // A single number ("15") selects the slot; any longer version ("15.2",
+        // "15.2.1_p…") is used as a portage version prefix via
+        // =sys-devel/gcc-<prefix>*.
         let requested = gcc_version.or(board.gcc_version.as_deref());
         let (gcc_slot, ver_prefix): (String, Option<String>) = match requested {
-            None => {
-                // Auto-detect: highest installed slot (avoids an extra gcc-config call).
-                let installed = self.get_installed_gcc_versions()?;
-                let slot = installed
-                    .keys()
-                    .filter_map(|k| k.parse::<u32>().ok())
-                    .max()
-                    .map(|n| n.to_string())
-                    .ok_or_else(|| Error::CommandFailed {
-                        code: 1,
-                        reason: "No GCC installed in sandbox; run sandbox prepare first".into(),
-                    })?;
-                (slot, None)
-            }
+            None => (self.default_gcc_spec()?, None),
             Some(s) => {
                 let ver = PortageVersion::parse(s).map_err(|_| Error::CommandFailed {
                     code: 1,
@@ -167,49 +200,42 @@ impl Sandbox {
                 }
             }
         };
+        // The spec that keys the store: the requested string verbatim, or
+        // the auto-detected slot.  Known host-side before any sandbox work.
+        let gcc_spec = requested
+            .map(str::to_string)
+            .unwrap_or_else(|| gcc_slot.clone());
 
-        // Idempotency: marker holds the exact gcc version used last time.
-        // For a prefix spec, check that the installed version's numbers start with the prefix's.
-        if marker.exists() {
-            if let Ok(existing) = std::fs::read_to_string(&marker) {
-                let existing = existing.trim();
-                let matches = match &ver_prefix {
-                    Some(prefix) => match (
-                        PortageVersion::parse(existing),
-                        PortageVersion::parse(prefix),
-                    ) {
-                        (Ok(ev), Ok(pv)) => ev.numbers.starts_with(&pv.numbers),
-                        _ => existing.starts_with(prefix.as_str()),
-                    },
-                    None => {
-                        PortageVersion::parse(existing)
-                            .ok()
-                            .and_then(|v| v.numbers.first().copied())
-                            .map(|n| n.to_string())
-                            .as_deref()
-                            == Some(gcc_slot.as_str())
-                    }
-                };
-                if matches {
-                    tracing::info!(
-                        "Crossdev for {target_arch} already set up with gcc-{existing}, skipping."
-                    );
-                    // Ensure any board-required ex-pkgs are present even if we skip a full re-run.
-                    let chost = crate::stage::chost_for_arch(target_arch)?;
-                    self.ensure_grub_ex_pkg(board, &chost, &runner)?;
-                    return Ok(());
-                }
-                let want = ver_prefix.as_deref().unwrap_or(&gcc_slot);
-                tracing::info!(
-                    "Crossdev for {target_arch}: re-setting up (was gcc-{existing}, want gcc-{want})…"
-                );
-                std::fs::remove_file(&marker)?;
-            }
+        let store_dir = ws.store_dir().join(store_key(&chost, &hash, &gcc_spec));
+        let complete_marker = store_dir.join(".complete");
+        let sandbox_marker = self.dir.join(format!(".crossdev-{target_arch}"));
+
+        // Idempotency: `.complete` in a (chost, cflags-hash, gcc-spec) keyed
+        // dir means this exact toolchain is built.  Only per-sandbox glue is
+        // (re-)ensured here; the store itself is not touched.
+        if complete_marker.exists() {
+            let existing = std::fs::read_to_string(&complete_marker)
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
+            tracing::info!("Crossdev prefix at {store_dir} complete (gcc-{existing}), skipping.");
+            std::fs::write(&sandbox_marker, &existing)?;
+            // Ensure any board-required ex-pkgs are present even on the skip path.
+            self.ensure_grub_ex_pkg(board, &chost, &store_dir)?;
+            return Ok(());
         }
 
-        let chost = crate::stage::chost_for_arch(target_arch)?;
+        // From here the dir is partial (no `.complete`): building into it
+        // is safe, and a crash leaves it partial, never half-complete.
+        std::fs::create_dir_all(&store_dir)?;
+        tracing::info!("Building crossdev prefix into {store_dir}…");
+
         let profile = gentoo_profile(target_arch)?;
-        let cflags = board.effective_cflags();
+        // Bind-mount the store dir RW at /usr/<chost>/ so the crossdev
+        // wizard's writes land directly in the workspace store.  Hidden
+        // sandbox contents at that path stay invisible during the build.
+        let runner = self
+            .runner()
+            .with_extra_rw(&store_dir, &format!("/usr/{chost}"));
 
         tracing::info!("Creating crossdev overlay…");
         runner.run(
@@ -273,9 +299,11 @@ impl Sandbox {
         runner.run(&format!("gcc-config {host_chost}-{gcc_slot}"))?;
         runner.run("env-update && source /etc/profile")?;
 
-        // Configure the crossdev prefix portage settings (written on the host fs).
-        let crossdev_root = self.dir.join(format!("usr/{chost}"));
-        let crossdev_portage = crossdev_root.join("etc/portage");
+        // Configure the crossdev prefix portage settings.  The store dir is
+        // bind-mounted at /usr/<chost>/, so writing to <store>/etc/portage
+        // on the host is identical to writing to /usr/<chost>/etc/portage
+        // inside the sandbox.
+        let crossdev_portage = store_dir.join("etc/portage");
         runner.run(&format!(
             "export PORTAGE_CONFIGROOT=/usr/{chost}; eselect profile set {profile}"
         ))?;
@@ -310,10 +338,62 @@ impl Sandbox {
             "gcc-config {chost}-{gcc_slot} && source /etc/profile"
         ))?;
 
-        // Write marker with the exact version used (enables idempotency on next run).
-        std::fs::write(&marker, &gcc_ver)?;
-        tracing::info!("Crossdev for {chost} complete (gcc-{gcc_ver}).");
+        // Two markers, written only now that the prefix is fully built:
+        // store `.complete` (exact gcc PVR; runner_for_chost requires it)
+        // and per-sandbox `.crossdev-<arch>` (last-used gcc, informational).
+        std::fs::write(&complete_marker, &gcc_ver)?;
+        std::fs::write(&sandbox_marker, &gcc_ver)?;
+        tracing::info!("Crossdev prefix at {store_dir} complete (gcc-{gcc_ver}).");
         Ok(())
+    }
+
+    /// Build a [`SandboxRunner`] that overlay-mounts the workspace store
+    /// for `(target_arch, board.cflags, board gcc spec)` at `/usr/<chost>/`.
+    /// Use this for any operation that reads or writes the cross-toolchain
+    /// (image builds, target updates, etc.).  The lower (immutable store)
+    /// must already be marked complete by [`Self::setup_crossdev`].
+    pub fn runner_for_board(
+        &self,
+        ws: &Workspace,
+        target_arch: &str,
+        board: &BoardConfig,
+    ) -> Result<SandboxRunner> {
+        let (_canonical, hash) = crate::cflags::canonicalize(&board.effective_cflags());
+        let gcc_spec = self.gcc_spec_for(board, None)?;
+        self.runner_for_chost(ws, target_arch, &hash, &gcc_spec)
+    }
+
+    /// Lower-level variant of [`Self::runner_for_board`] that takes the
+    /// cflags-hash and gcc spec directly.  Useful for target operations
+    /// that don't have a board, only an arch (e.g. `target stage1`).
+    pub fn runner_for_chost(
+        &self,
+        ws: &Workspace,
+        target_arch: &str,
+        cflags_hash: &str,
+        gcc_spec: &str,
+    ) -> Result<SandboxRunner> {
+        let chost = crate::stage::chost_for_arch(target_arch)?;
+        let store_dir = ws.store_dir().join(store_key(&chost, cflags_hash, gcc_spec));
+        if !store_dir.join(".complete").exists() {
+            return Err(Error::CommandFailed {
+                code: 1,
+                reason: format!("store {store_dir} is not complete; run setup_crossdev first"),
+            });
+        }
+        // Upper/work are keyed by the full store key so two stores that
+        // share chost+cflags but differ in gcc never mix upper layers.
+        let leaf = store_dir.file_name().unwrap_or(cflags_hash);
+        let upper_in_sandbox = format!(".overlay-upper-{chost}-{leaf}");
+        let work_in_sandbox = format!(".overlay-work-{chost}-{leaf}");
+        std::fs::create_dir_all(self.dir.join(&upper_in_sandbox))?;
+        std::fs::create_dir_all(self.dir.join(&work_in_sandbox))?;
+        Ok(self.runner().with_overlay(OverlaySpec {
+            lower: store_dir,
+            upper_in_container: format!("/{upper_in_sandbox}"),
+            work_in_container: format!("/{work_in_sandbox}"),
+            mount_at: format!("/usr/{chost}"),
+        }))
     }
 
     /// Return a `SandboxRunner` for running commands inside this sandbox.
@@ -342,40 +422,57 @@ impl Sandbox {
 
     // ── Private helpers ──────────────────────────────────────────────────────
 
-    /// Install `sys-boot/grub` into the crossdev prefix if the board needs it and it
-    /// isn't already there.  Uses `{chost}-emerge` (installs into `/usr/{chost}/`),
-    /// which compiles grub with the i586/x86 cross-compiler, producing proper
-    /// i386-pc modules regardless of the build host's native architecture.
+    /// Install `sys-boot/grub` into the store-resident crossdev prefix if the
+    /// board needs it and it isn't already there.  Uses `{chost}-emerge`
+    /// (installs into `/usr/{chost}/`), which compiles grub with the
+    /// i586/x86 cross-compiler, producing proper i386-pc modules regardless
+    /// of the build host's native architecture.
+    ///
+    /// This amends a completed store, so `.complete` is dropped for the
+    /// duration of the emerge and restored afterwards -- a crash mid-emerge
+    /// leaves the store partial (rebuilt next run) instead of complete but
+    /// permanently grubless.
     fn ensure_grub_ex_pkg(
         &self,
         board: &BoardConfig,
         chost: &str,
-        runner: &SandboxRunner,
+        store_dir: &Utf8Path,
     ) -> Result<()> {
         let Some(ref platforms) = board.grub_platforms else {
             return Ok(());
         };
-        let grub_mods = self.dir.join(format!("usr/{chost}/usr/lib/grub/i386-pc"));
-        if grub_mods.exists() {
+        if store_dir.join("usr/lib/grub/i386-pc").exists() {
             return Ok(());
         }
+        let complete_marker = store_dir.join(".complete");
+        let recorded = std::fs::read_to_string(&complete_marker).ok();
+        if recorded.is_some() {
+            std::fs::remove_file(&complete_marker)?;
+        }
         // Write USE flags to the crossdev prefix portage config before emerging.
-        // The crossdev portage config is not re-written when setup_crossdev is skipped,
-        // so we must ensure the grub platform flag is present here.
+        // The crossdev portage config is not re-written when setup_crossdev is
+        // skipped, so we must ensure the grub platform flag is present here.
         let flags: Vec<String> = platforms
             .split_whitespace()
             .map(|p| format!("grub_platforms_{p}"))
             .collect();
-        let use_dir = self
-            .dir
-            .join(format!("usr/{chost}/etc/portage/package.use"));
+        let use_dir = store_dir.join("etc/portage/package.use");
         std::fs::create_dir_all(&use_dir)?;
         std::fs::write(
             use_dir.join("grub"),
             format!("sys-boot/grub {}\n", flags.join(" ")),
         )?;
         tracing::info!("Installing sys-boot/grub into crossdev prefix for {chost}…");
-        runner.run(&format!("{chost}-emerge -b -k sys-boot/grub"))
+        // RW-bind the store (not an overlay) so grub persists in the store
+        // itself and is visible to every sandbox that mounts it.
+        let runner = self
+            .runner()
+            .with_extra_rw(store_dir, &format!("/usr/{chost}"));
+        runner.run(&format!("{chost}-emerge -b -k sys-boot/grub"))?;
+        if let Some(v) = recorded {
+            std::fs::write(&complete_marker, v)?;
+        }
+        Ok(())
     }
 
     /// Write portage config files for the crossdev prefix directly on the host fs.
