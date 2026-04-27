@@ -109,6 +109,15 @@ impl BoardConfig {
             .clone()
             .unwrap_or_else(|| crate::stage::default_cflags(&self.arch).to_string())
     }
+
+    /// Effective firmware checkout ref: FIRMWARE_TAG, else the U-Boot tag
+    /// (vendor SDKs cut both from one release), else "main".
+    pub fn effective_firmware_tag(&self) -> String {
+        self.firmware_tag
+            .clone()
+            .or_else(|| self.u_boot_tag.clone())
+            .unwrap_or_else(|| "main".to_string())
+    }
 }
 
 /// Load a board configuration from `<boards_root>/<name>/board.conf`.

@@ -222,8 +222,8 @@ fn default_deps(
 fn default_checkout(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     crate::bootloader::clone_pipeline(runner, board)?;
     if let Some(repo) = &board.firmware_repo {
-        let tag = board.firmware_tag.as_deref().unwrap_or("master");
-        crate::source_cache::cached_clone(runner, repo, tag, "/build/firmware", "firmware")?;
+        let tag = board.effective_firmware_tag(); // FIRMWARE_TAG → U_BOOT_TAG → "main"
+        crate::source_cache::cached_clone(runner, repo, &tag, "/build/firmware", "firmware")?;
     }
     crate::source_cache::cached_clone(
         runner,
@@ -596,11 +596,11 @@ fn warn_unpinned_sources(board: &BoardConfig) {
         board.syslinux_repo.as_deref(),
         board.syslinux_tag.as_deref(),
     );
-    // default_checkout clones firmware at the U-Boot tag ("main" fallback).
+    let fw_tag = board.effective_firmware_tag();
     check(
         "firmware",
         board.firmware_repo.as_deref(),
-        board.u_boot_tag.as_deref().or(Some("main")),
+        Some(fw_tag.as_str()),
     );
     check("kernel", Some(&board.kernel_repo), Some(&board.kernel_tag));
     // TODO: check fip once BOOT_PIPELINE lands fip_repo/fip_tag on BoardConfig.
@@ -621,9 +621,8 @@ fn record_sources(
         manifest.record_source(runner, "syslinux", repo, tag, "/build/syslinux")?;
     }
     if let Some(repo) = &board.firmware_repo {
-        // default_checkout clones firmware at the U-Boot tag ("main" fallback).
-        let tag = board.u_boot_tag.as_deref().unwrap_or("main");
-        manifest.record_source(runner, "firmware", repo, tag, "/build/firmware")?;
+        let tag = board.effective_firmware_tag();
+        manifest.record_source(runner, "firmware", repo, &tag, "/build/firmware")?;
     }
     // TODO: record fip once BOOT_PIPELINE lands fip_repo/fip_tag on BoardConfig.
     manifest.record_source(
