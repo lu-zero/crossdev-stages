@@ -7,14 +7,17 @@ use crate::error::{check_status, Result};
 /// command runs.  Phase 3 uses this to overlay a content-addressed
 /// crossdev prefix (`store/<chost>/<cflags-hash>/`) at `/usr/<chost>/`.
 ///
-/// All three host directories are bind-mounted into the container at
-/// hidden paths and then `mount -t overlay` is invoked from inside the
-/// userns (where uid 0 has CAP_SYS_ADMIN).
+/// `lower` is a host directory bind-mounted read-only into the container.
+/// `upper_in_container` and `work_in_container` must already exist as
+/// directories inside the sandbox rootfs at those container-relative
+/// paths -- overlayfs in a user namespace refuses to use upper/work
+/// that come from separate bind-mounts, so they have to live on the
+/// rootfs mount itself.
 #[derive(Clone, Debug)]
 pub struct OverlaySpec {
     pub lower: Utf8PathBuf,
-    pub upper: Utf8PathBuf,
-    pub work: Utf8PathBuf,
+    pub upper_in_container: String,
+    pub work_in_container: String,
     pub mount_at: String,
 }
 
@@ -79,6 +82,15 @@ impl SandboxRunner {
     pub fn with_cache(mut self, cache_dir: &Utf8Path) -> Self {
         self.extra_rw
             .push((cache_dir.to_path_buf(), "/cache".into()));
+        self
+    }
+
+    /// Add an arbitrary read-write bind mount.  Used by setup_crossdev
+    /// to plant the workspace store dir at `/usr/<chost>/` while the
+    /// crossdev wizard runs.
+    pub fn with_extra_rw(mut self, host_path: &Utf8Path, container_path: &str) -> Self {
+        self.extra_rw
+            .push((host_path.to_path_buf(), container_path.to_string()));
         self
     }
 
@@ -190,17 +202,13 @@ impl SandboxRunner {
             c.bindmount_ro(scripts.as_str(), "/scripts");
         }
 
-        // Bind in each overlay's host dirs at hidden container paths.
-        // The actual `mount -t overlay` happens inside the container via
-        // overlay_prefix() since hakoniwa drops privileges before its
-        // own bindmounts are visible.
+        // Bind-mount each overlay's lower (read-only) at a hidden
+        // container path.  Upper/work must live on the rootfs mount
+        // already (overlayfs in userns rejects upper/work from separate
+        // bind-mounts), so we don't bind them.
         for (i, ovl) in self.overlays.iter().enumerate() {
             let _ = std::fs::create_dir_all(&ovl.lower);
-            let _ = std::fs::create_dir_all(&ovl.upper);
-            let _ = std::fs::create_dir_all(&ovl.work);
             c.bindmount_ro(ovl.lower.as_str(), &overlay_lower_path(i));
-            c.bindmount_rw(ovl.upper.as_str(), &overlay_upper_path(i));
-            c.bindmount_rw(ovl.work.as_str(), &overlay_work_path(i));
         }
         c
     }
@@ -214,12 +222,12 @@ impl SandboxRunner {
         let mut parts = Vec::with_capacity(self.overlays.len());
         for (i, ovl) in self.overlays.iter().enumerate() {
             parts.push(format!(
-                "mkdir -p {mp} && mount -t overlay overlay \
+                "mkdir -p {mp} {up} {wk} && mount -t overlay overlay \
                  -o lowerdir={lo},upperdir={up},workdir={wk} {mp}",
                 mp = ovl.mount_at,
                 lo = overlay_lower_path(i),
-                up = overlay_upper_path(i),
-                wk = overlay_work_path(i),
+                up = ovl.upper_in_container,
+                wk = ovl.work_in_container,
             ));
         }
         // `set -e` so a failed overlay aborts before user code runs.
@@ -228,8 +236,6 @@ impl SandboxRunner {
 }
 
 fn overlay_lower_path(i: usize) -> String { format!("/.overlay/{i}/lower") }
-fn overlay_upper_path(i: usize) -> String { format!("/.overlay/{i}/upper") }
-fn overlay_work_path(i: usize) -> String { format!("/.overlay/{i}/work") }
 
 /// Build UID maps: caller → root + subordinate range. Mirrors hakoniwa CLI `--userns=auto`.
 fn uid_maps() -> Vec<(u32, u32, u32)> {

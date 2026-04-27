@@ -1,7 +1,7 @@
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::board::BoardConfig;
-use crate::container::{destroy_dir, unpack_tarball, SandboxRunner};
+use crate::container::{destroy_dir, unpack_tarball, OverlaySpec, SandboxRunner};
 use crate::error::{Error, Result};
 use crate::portage::{install_host_deps, MakeConf};
 use crate::stage::gentoo_profile;
@@ -66,19 +66,46 @@ impl Sandbox {
         Ok(())
     }
 
-    /// Set up the crossdev toolchain for `target_arch` inside this sandbox.
-    /// Idempotent: skips if `.crossdev-<target_arch>` marker exists.
-    pub fn setup_crossdev(&self, target_arch: &str, board: &BoardConfig) -> Result<()> {
-        let marker = self.dir.join(format!(".crossdev-{target_arch}"));
-        if marker.exists() {
-            tracing::info!("Crossdev for {target_arch} already set up, skipping.");
+    /// Set up the crossdev toolchain for `target_arch` with `board`'s
+    /// CFLAGS.  Output lives in the workspace's content-addressed store
+    /// at `store/<chost>/<cflags-hash>/`; subsequent runs that need this
+    /// toolchain overlay-mount the store dir at `/usr/<chost>/`.
+    ///
+    /// Idempotent: skips if `<store>/.complete` already exists.  The
+    /// per-sandbox marker `.crossdev-<target_arch>` records the hash so
+    /// status drift detection has a per-sandbox view.
+    pub fn setup_crossdev(
+        &self,
+        ws: &Workspace,
+        target_arch: &str,
+        board: &BoardConfig,
+    ) -> Result<()> {
+        let chost = format!("{target_arch}-unknown-linux-gnu");
+        let cflags = board.effective_cflags();
+        let (_canonical, hash) = crate::cflags::canonicalize(&cflags);
+
+        let store_dir = ws.store_dir().join(&chost).join(&hash);
+        let complete_marker = store_dir.join(".complete");
+        let sandbox_marker = self.dir.join(format!(".crossdev-{target_arch}"));
+
+        if complete_marker.exists() {
+            tracing::info!(
+                "Crossdev prefix at {store_dir} already complete (cflags hash {hash}), skipping."
+            );
+            std::fs::write(&sandbox_marker, &hash)?;
             return Ok(());
         }
 
-        let chost = format!("{target_arch}-unknown-linux-gnu");
+        std::fs::create_dir_all(&store_dir)?;
+        tracing::info!("Building crossdev prefix into {store_dir}…");
+
         let profile = gentoo_profile(target_arch)?;
-        let cflags = board.effective_cflags();
-        let runner = self.runner();
+        // Bind-mount the store dir RW at /usr/<chost>/ so the crossdev
+        // wizard's writes land directly in the workspace store.  Hidden
+        // sandbox contents at that path stay invisible during the build.
+        let runner = self
+            .runner()
+            .with_extra_rw(&store_dir, &format!("/usr/{chost}"));
 
         // Clean up the repos.conf entry `eselect repository` wrote pointing
         // at a project overlay that may not exist yet. Portage nags about
@@ -125,9 +152,11 @@ impl Sandbox {
         runner.run(&format!("gcc-config {gcc_profile}"))?;
         runner.run("source /etc/profile && env-update")?;
 
-        // Configure the crossdev prefix portage settings (written on the host fs).
-        let crossdev_root = self.dir.join(format!("usr/{chost}"));
-        let crossdev_portage = crossdev_root.join("etc/portage");
+        // Configure the crossdev prefix portage settings.  The store dir is
+        // bind-mounted at /usr/<chost>/, so writing to <store>/etc/portage
+        // on the host is identical to writing to /usr/<chost>/etc/portage
+        // inside the sandbox.
+        let crossdev_portage = store_dir.join("etc/portage");
         runner.run(&format!(
             "export PORTAGE_CONFIGROOT=/usr/{chost}; eselect profile set {profile}"
         ))?;
@@ -148,9 +177,58 @@ impl Sandbox {
         // Switch cross compiler to gcc-16.
         runner.run(&format!("gcc-config {chost}-16 && source /etc/profile"))?;
 
-        std::fs::write(&marker, "")?;
-        tracing::info!("Crossdev for {chost} complete.");
+        std::fs::write(&complete_marker, &hash)?;
+        std::fs::write(&sandbox_marker, &hash)?;
+        tracing::info!(
+            "Crossdev prefix at {store_dir} complete (cflags hash {hash})."
+        );
         Ok(())
+    }
+
+    /// Build a [`SandboxRunner`] that overlay-mounts the workspace store
+    /// for `(target_arch, board.cflags)` at `/usr/<chost>/`.  Use this
+    /// for any operation that reads or writes the cross-toolchain (image
+    /// builds, target updates, etc.).  The lower (immutable store) must
+    /// already be marked complete by [`Self::setup_crossdev`].
+    pub fn runner_for_board(
+        &self,
+        ws: &Workspace,
+        target_arch: &str,
+        board: &BoardConfig,
+    ) -> Result<SandboxRunner> {
+        let (_canonical, hash) = crate::cflags::canonicalize(&board.effective_cflags());
+        self.runner_for_chost(ws, target_arch, &hash)
+    }
+
+    /// Lower-level variant of [`Self::runner_for_board`] that takes the
+    /// cflags-hash directly.  Useful for target operations that don't have
+    /// a board, only an arch (e.g. `target build-stage1`).
+    pub fn runner_for_chost(
+        &self,
+        ws: &Workspace,
+        target_arch: &str,
+        cflags_hash: &str,
+    ) -> Result<SandboxRunner> {
+        let chost = format!("{target_arch}-unknown-linux-gnu");
+        let store_dir = ws.store_dir().join(&chost).join(cflags_hash);
+        if !store_dir.join(".complete").exists() {
+            return Err(Error::CommandFailed {
+                code: 1,
+                reason: format!(
+                    "store {store_dir} is not complete; run setup_crossdev first"
+                ),
+            });
+        }
+        let upper_in_sandbox = format!(".overlay-upper-{chost}-{cflags_hash}");
+        let work_in_sandbox = format!(".overlay-work-{chost}-{cflags_hash}");
+        std::fs::create_dir_all(self.dir.join(&upper_in_sandbox))?;
+        std::fs::create_dir_all(self.dir.join(&work_in_sandbox))?;
+        Ok(self.runner().with_overlay(OverlaySpec {
+            lower: store_dir,
+            upper_in_container: format!("/{upper_in_sandbox}"),
+            work_in_container: format!("/{work_in_sandbox}"),
+            mount_at: format!("/usr/{chost}"),
+        }))
     }
 
     /// Return a `SandboxRunner` for running commands inside this sandbox.

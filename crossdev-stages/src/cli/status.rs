@@ -31,6 +31,7 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
     let sandboxes = sandbox::list(ws)?;
     let boards = board::list(boards_root)?;
     let builds = ws.list_builds()?;
+    let stores = list_stores(ws);
 
     if tty {
         println!("Sandboxes ({}):", sandboxes.len());
@@ -43,6 +44,13 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
             if let Ok(b) = board::load(boards_root, name) {
                 let tag = if b.testing { " [TESTING]" } else { "" };
                 println!("  {:<16} {:<10}{tag}", name, b.arch);
+            }
+        }
+        if !stores.is_empty() {
+            println!("\nStore ({}):", stores.len());
+            for s in &stores {
+                let state = if s.complete { "complete" } else { "partial" };
+                println!("  {:<28} {:<14} {state}", s.chost, s.hash);
             }
         }
         println!("\nBuilds (latest {}/{}):", builds.len().min(5), builds.len());
@@ -68,6 +76,10 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
             if let Ok(b) = board::load(boards_root, name) {
                 println!("board\t{}\t{}\t{}", name, b.arch, b.testing);
             }
+        }
+        for s in &stores {
+            let state = if s.complete { "complete" } else { "partial" };
+            println!("store\t{}\t{}\t{state}", s.chost, s.hash);
         }
         for dir in builds.iter().take(10) {
             if let Some(b) = image::Build::open((*dir).clone()) {
@@ -96,6 +108,34 @@ fn print_sources_tty(lock: &LockSummary) {
         parts.push(format!("{name} {}@{short}{marker}", src.tag));
     }
     println!("      sources: {}", parts.join(" | "));
+}
+
+struct StoreEntry {
+    chost: String,
+    hash: String,
+    complete: bool,
+}
+
+/// Walk `store/<chost>/<hash>/` for every present prefix; flag whether
+/// each carries a `.complete` marker.  Phase 3 makes drift impossible
+/// by construction (each (chost, hash) lives in its own dir), so this
+/// simply reports what's available.
+fn list_stores(ws: &Workspace) -> Vec<StoreEntry> {
+    let root = ws.store_dir();
+    let Ok(chost_iter) = std::fs::read_dir(&root) else { return vec![] };
+    let mut entries = Vec::new();
+    for chost_entry in chost_iter.flatten() {
+        let Some(chost) = chost_entry.file_name().to_str().map(String::from) else { continue };
+        let chost_dir = chost_entry.path();
+        let Ok(hash_iter) = std::fs::read_dir(&chost_dir) else { continue };
+        for hash_entry in hash_iter.flatten() {
+            let Some(hash) = hash_entry.file_name().to_str().map(String::from) else { continue };
+            let complete = hash_entry.path().join(".complete").exists();
+            entries.push(StoreEntry { chost: chost.clone(), hash, complete });
+        }
+    }
+    entries.sort_by(|a, b| (a.chost.as_str(), a.hash.as_str()).cmp(&(b.chost.as_str(), b.hash.as_str())));
+    entries
 }
 
 fn print_sources_tsv(build_id: &str, lock: &LockSummary) {

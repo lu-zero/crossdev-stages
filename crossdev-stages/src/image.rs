@@ -127,11 +127,14 @@ fn default_deps(
     target: &Target,
     board: &BoardConfig,
     boards_root: &Utf8Path,
+    ws: &Workspace,
     binpkgs_dir: &Utf8Path,
 ) -> Result<()> {
     let sandbox_pkgs = boards_root.join(&board.name).join("sandbox-packages.txt");
     if sandbox_pkgs.exists() {
-        let host_runner = board_runner(sandbox, board).with_binpkgs(binpkgs_dir);
+        // Host-side packages don't touch the cross toolchain; plain
+        // sandbox runner is enough.
+        let host_runner = sandbox.runner().with_binpkgs(binpkgs_dir);
         let portage = Portage::new(&host_runner);
         let content = std::fs::read_to_string(&sandbox_pkgs)?;
         let pkgs: Vec<&str> = content
@@ -153,7 +156,8 @@ fn default_deps(
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .collect();
         if !pkgs.is_empty() {
-            let target_runner = board_runner(sandbox, board)
+            let target_runner = sandbox
+                .runner_for_board(ws, &board.arch, board)?
                 .with_target(&target.dir)
                 .with_binpkgs(binpkgs_dir);
             let portage = Portage::new(&target_runner);
@@ -324,13 +328,6 @@ fn default_pack(runner: &SandboxRunner, board: &BoardConfig, build: &Build, boar
     Ok(())
 }
 
-// ── Helpers ─────────────────────────────────────────────────────────────────
-
-fn board_runner(sandbox: &Sandbox, board: &BoardConfig) -> SandboxRunner {
-    let _ = board; // arch available if needed later
-    sandbox.runner()
-}
-
 // ── Pipeline ────────────────────────────────────────────────────────────────
 
 pub fn build(
@@ -361,6 +358,7 @@ pub fn build(
     let binpkgs_dir = ws.binpkgs_dir().join(&board.chost()).join(&hash);
     std::fs::create_dir_all(&binpkgs_dir)?;
     target.prepare_portage_with_cflags(
+        ws,
         sandbox,
         &board.chost(),
         &board_cflags,
@@ -384,7 +382,13 @@ pub fn build(
         let step_start = std::time::Instant::now();
         println!("==> [{}/{}] {}...", i + 1, total, step);
 
-        let runner = board_runner(sandbox, board)
+        // Steps that invoke the cross toolchain (deps cross-emerge,
+        // bootloader, kernel) need the store overlay-mounted at
+        // /usr/<chost>/.  Pure-userspace steps (checkout, assemble, pack)
+        // don't, but the overlay costs nothing to mount, so always use
+        // runner_for_board for consistency.
+        let runner = sandbox
+            .runner_for_board(ws, &board.arch, board)?
             .with_target(&target.dir)
             .with_build(&bld.dir, &project_root(boards_root))
             .with_cache(ws.base())
@@ -392,7 +396,7 @@ pub fn build(
 
         let result = match *step {
             "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board,
-                |_r| default_deps(_r, sandbox, target, board, boards_root, &binpkgs_dir)),
+                |_r| default_deps(_r, sandbox, target, board, boards_root, ws, &binpkgs_dir)),
             "checkout" => run_step("checkout", "sources", &bld, &runner, boards_root, board,
                 |r| default_checkout(r, board)),
             "bootloader" => run_step("bootloader", "bootloader", &bld, &runner, boards_root, board,
@@ -413,8 +417,12 @@ pub fn build(
 
     // Collect and write manifest before returning. Build fails if manifest
     // collection fails -- but every probe is best-effort so this should only
-    // fire on pathological runtime issues.
-    let runner = board_runner(sandbox, board)
+    // fire on pathological runtime issues.  Use the overlay-mounted
+    // runner so /usr/<chost>/etc/portage/make.conf resolves to the
+    // store-resident prefix this build actually used, not whatever
+    // legacy content the sandbox happens to carry.
+    let runner = sandbox
+        .runner_for_board(ws, &board.arch, board)?
         .with_target(&target.dir)
         .with_build(&bld.dir, &project_root(boards_root))
         .with_cache(ws.base());
