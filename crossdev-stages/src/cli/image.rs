@@ -53,8 +53,12 @@ pub async fn run(
             };
 
             if dry_run {
-                let tag = if board_cfg.testing { " [TESTING]" } else { "" };
-                println!("Board:      {}{tag}", board_cfg.name);
+                let tags = if board_cfg.tags.is_empty() {
+                    String::new()
+                } else {
+                    format!(" [{}]", board_cfg.tags.join(","))
+                };
+                println!("Board:      {}{tags}", board_cfg.name);
                 println!("Arch:       {}", board_cfg.arch);
                 println!("CFLAGS:     {}", board_cfg.effective_cflags());
                 if let Some(ldflags) = &board_cfg.ldflags {

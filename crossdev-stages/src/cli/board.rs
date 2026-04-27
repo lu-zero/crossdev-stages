@@ -7,10 +7,12 @@ pub fn run(boards_root: &Utf8Path, cmd: BoardCmd) -> Result<()> {
     match cmd {
         BoardCmd::List => {
             for b in board::list(boards_root)? {
-                let tag = board::load(boards_root, &b)
-                    .map(|c| if c.testing { " [TESTING]" } else { "" })
-                    .unwrap_or("");
-                println!("{b}{tag}");
+                let tags = board::load(boards_root, &b)
+                    .ok()
+                    .filter(|c| !c.tags.is_empty())
+                    .map(|c| format!(" [{}]", c.tags.join(",")))
+                    .unwrap_or_default();
+                println!("{b}{tags}");
             }
         }
         BoardCmd::Info { board: board_name } => {
@@ -101,8 +103,11 @@ pub fn run(boards_root: &Utf8Path, cmd: BoardCmd) -> Result<()> {
             if !board_cfg.build_steps.is_empty() {
                 println!("Build steps:    {}", board_cfg.build_steps.join(" "));
             }
-            if board_cfg.testing {
-                println!("Testing:        yes");
+            if !board_cfg.tags.is_empty() {
+                println!("Tags:           {}", board_cfg.tags.join(", "));
+            }
+            if let Some(desc) = &board_cfg.description {
+                println!("Description:    {desc}");
             }
 
             let board_dir = boards_root.join(&board_name);

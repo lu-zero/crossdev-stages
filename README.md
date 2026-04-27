@@ -219,7 +219,8 @@ by `uboot`.
 | `FIP_REPO` / `FIP_TAG` | no | Amlogic boot-FIP packaging repo, tag (default `master`) |
 | `FIRMWARE_TAG` | no | Tag for the firmware overlay repo (default: `TAG`) |
 | `COMPRESSION` | no | Image compression: `xz` (default), `gz`, `none` |
-| `TESTING` | no | Mark board as testing (`true`/`false`) |
+| `TAGS` | no | Free-form labels (bash array, e.g. `TAGS=("testing" "wip")`) -- shown in `board list` and `status` |
+| `DESCRIPTION` | no | Free-form note shown in `board info` |
 
 ## Limitations
 
