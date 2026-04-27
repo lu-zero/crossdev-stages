@@ -168,6 +168,7 @@ fn default_deps(
     board: &BoardConfig,
     boards_root: &Utf8Path,
     defaults_root: &Utf8Path,
+    binpkgs_dir: &Utf8Path,
 ) -> Result<()> {
     // Sandbox extras: defaults are already installed during prepare; only the
     // board's own extras (e.g. grub for pentium-mmx) need emerging here.
@@ -186,8 +187,8 @@ fn default_deps(
             &board_dir.join("sandbox-packages.use"),
             &portage_dir,
         )?;
-        // Host-side packages don't touch the cross toolchain; plain
-        // sandbox runner is enough.
+        // Host-side packages don't touch the cross toolchain or the shared
+        // target binpkg cache; a plain sandbox runner is enough.
         let host_runner = sandbox.runner();
         let portage = Portage::new(&host_runner);
         portage.emerge(&crate::package_list::atoms(&board_sandbox))?;
@@ -201,7 +202,8 @@ fn default_deps(
     if !target_pkgs.is_empty() {
         let target_runner = sandbox
             .runner_for_board(ws, &board.arch, board)?
-            .with_target(&target.dir);
+            .with_target(&target.dir)
+            .with_binpkgs(binpkgs_dir);
         let portage = Portage::new(&target_runner);
         portage.cross_emerge(&board.chost(), &crate::package_list::atoms(&target_pkgs))?;
     }
@@ -435,6 +437,13 @@ pub fn build(
     let (canonical, hash) = crate::cflags::canonicalize(&board_cflags);
     tracing::info!("Target make.conf CFLAGS={canonical:?} (hash {hash})");
 
+    // Per-(chost, cflags-hash) binpkg dir bind-mounted at /binpkgs.
+    // PKGDIR=/binpkgs lives in the crossdev prefix make.conf (the config
+    // {chost}-emerge actually reads), never in the target's -- the target
+    // make.conf ships into images.
+    let binpkgs_dir = ws.binpkgs_dir().join(board.chost()).join(&hash);
+    std::fs::create_dir_all(&binpkgs_dir)?;
+
     let default_steps = if board.build_steps.is_empty() {
         vec![
             "deps",
@@ -468,11 +477,21 @@ pub fn build(
             .runner_for_board(ws, &board.arch, board)?
             .with_target(&target.dir)
             .with_build(&bld.dir, &project_root(boards_root))
-            .with_cache(ws.base());
+            .with_cache(ws.base())
+            .with_binpkgs(&binpkgs_dir);
 
         let result = match *step {
             "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board, |_r| {
-                default_deps(_r, ws, sandbox, target, board, boards_root, defaults_root)
+                default_deps(
+                    _r,
+                    ws,
+                    sandbox,
+                    target,
+                    board,
+                    boards_root,
+                    defaults_root,
+                    &binpkgs_dir,
+                )
             }),
             "checkout" => run_step(
                 "checkout",

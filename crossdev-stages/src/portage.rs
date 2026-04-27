@@ -11,6 +11,10 @@ pub struct MakeConf<'a> {
     pub cflags: Option<&'a str>,
     pub mirror: Option<&'a str>,
     pub binhost: Option<&'a str>,
+    /// In-container path of a writable bind-mount where binpkgs should
+    /// land.  When set, `FEATURES` gains `buildpkg` and `PKGDIR` is
+    /// pointed at it.  `None` keeps portage defaults.
+    pub pkgdir: Option<&'a str>,
 }
 
 impl<'a> MakeConf<'a> {
@@ -50,13 +54,26 @@ impl<'a> MakeConf<'a> {
             "EMERGE_DEFAULT_OPTS",
             &format!("--jobs={jobs} --load-average {load}"),
         )?;
-        set_make_conf_var(&make_conf, "FEATURES", "parallel-install -merge-wait")?;
+        let features = if self.pkgdir.is_some() {
+            "parallel-install -merge-wait buildpkg"
+        } else {
+            "parallel-install -merge-wait"
+        };
+        set_make_conf_var(&make_conf, "FEATURES", features)?;
         set_make_conf_var(&make_conf, "ACCEPT_KEYWORDS", &format!("~{garch}"))?;
         set_make_conf_var(
             &make_conf,
             "PORT_LOGDIR",
             &format!("/var/log/portage/{garch}"),
         )?;
+        // PKGDIR only makes sense inside the sandbox (it names a bind-mount
+        // path).  Drop a stale line when unset so a target make.conf that
+        // once carried it (and would ship into images) is healed on the
+        // next prepare.
+        match self.pkgdir {
+            Some(pkgdir) => set_make_conf_var(&make_conf, "PKGDIR", pkgdir)?,
+            None => remove_make_conf_var(&make_conf, "PKGDIR")?,
+        }
 
         // LLVM_TARGETS: host gets the union of every supported arch (so the
         // bundled LLVM inside dev-lang/rust can bootstrap any cross-std);
@@ -81,7 +98,11 @@ impl<'a> MakeConf<'a> {
 
         if let Some(binhost) = self.binhost {
             set_make_conf_var(&make_conf, "PORTAGE_BINHOST", binhost)?;
-            let features = "parallel-install -merge-wait getbinpkg";
+            let features = if self.pkgdir.is_some() {
+                "parallel-install -merge-wait buildpkg getbinpkg"
+            } else {
+                "parallel-install -merge-wait getbinpkg"
+            };
             set_make_conf_var(&make_conf, "FEATURES", features)?;
         }
 
@@ -120,6 +141,18 @@ pub fn set_make_conf_var(file: &Utf8Path, name: &str, value: &str) -> Result<()>
         lines.push(new_line);
     }
 
+    std::fs::write(file, lines.join("\n") + "\n")?;
+    Ok(())
+}
+
+/// Remove a variable from a make.conf file if present.
+fn remove_make_conf_var(file: &Utf8Path, name: &str) -> Result<()> {
+    let content = std::fs::read_to_string(file).unwrap_or_default();
+    let prefix = format!("{name}=");
+    let lines: Vec<&str> = content
+        .lines()
+        .filter(|line| !line.starts_with(&prefix))
+        .collect();
     std::fs::write(file, lines.join("\n") + "\n")?;
     Ok(())
 }

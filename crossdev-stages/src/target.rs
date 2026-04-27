@@ -157,12 +157,17 @@ impl Target {
         let portage_dir = self.dir.join("etc/portage");
         std::fs::create_dir_all(&portage_dir)?;
 
+        // pkgdir is deliberately None: this make.conf ships into the image
+        // via `cp -a /target/. /build/gen/root/`.  FEATURES=buildpkg +
+        // PKGDIR=/binpkgs belong in the crossdev prefix config, which is
+        // what {chost}-emerge (PORTAGE_CONFIGROOT=/usr/<chost>) reads.
         MakeConf {
             arch: &self.arch,
             chost: Some(chost),
             cflags: Some(cflags),
             mirror: None,
             binhost: None,
+            pkgdir: None,
         }
         .write(&portage_dir)?;
 
