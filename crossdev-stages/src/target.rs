@@ -52,13 +52,16 @@ impl Target {
         let chost = format!("{}-unknown-linux-gnu", self.arch);
         let cflags = default_cflags(&self.arch);
         let (_, hash) = crate::cflags::canonicalize(cflags);
+        let binpkgs_dir = ws.binpkgs_dir().join(&chost).join(&hash);
+        std::fs::create_dir_all(&binpkgs_dir)?;
 
         tracing::info!("Preparing target portage configuration…");
-        self.prepare_portage_with_cflags(ws, sandbox, &chost, cflags, None)?;
+        self.prepare_portage_with_cflags(ws, sandbox, &chost, cflags, Some("/binpkgs"))?;
 
         let runner = sandbox
             .runner_for_chost(ws, &self.arch, &hash)?
-            .with_target(&self.dir);
+            .with_target(&self.dir)
+            .with_binpkgs(&binpkgs_dir);
         tracing::info!("Logs at: {}", runner.log_dir());
         let portage = Portage::new(&runner);
 
@@ -93,9 +96,12 @@ impl Target {
         let chost = format!("{}-unknown-linux-gnu", self.arch);
         let cflags = default_cflags(&self.arch);
         let (_, hash) = crate::cflags::canonicalize(cflags);
+        let binpkgs_dir = ws.binpkgs_dir().join(&chost).join(&hash);
+        std::fs::create_dir_all(&binpkgs_dir)?;
         let runner = sandbox
             .runner_for_chost(ws, &self.arch, &hash)?
-            .with_target(&self.dir);
+            .with_target(&self.dir)
+            .with_binpkgs(&binpkgs_dir);
         let portage = Portage::new(&runner);
 
         // Update the cross-toolchain in the crossdev prefix first (no ROOT=/target).
@@ -120,9 +126,12 @@ impl Target {
         let chost = format!("{}-unknown-linux-gnu", self.arch);
         let cflags = default_cflags(&self.arch);
         let (_, hash) = crate::cflags::canonicalize(cflags);
+        let binpkgs_dir = ws.binpkgs_dir().join(&chost).join(&hash);
+        std::fs::create_dir_all(&binpkgs_dir)?;
         let runner = sandbox
             .runner_for_chost(ws, &self.arch, &hash)?
-            .with_target(&self.dir);
+            .with_target(&self.dir)
+            .with_binpkgs(&binpkgs_dir);
         let portage = Portage::new(&runner);
         portage.cross_emerge(&chost, packages)
     }
