@@ -8,6 +8,7 @@ pub mod sandbox;
 pub mod stages;
 pub mod status;
 pub mod target;
+pub mod update;
 pub mod util;
 
 // Saner default colored style.
@@ -89,6 +90,18 @@ pub enum Commands {
         /// Machine-readable TAB-separated output.
         #[arg(long)]
         tsv: bool,
+    },
+
+    /// Compare a board's most recent build.lock.toml against upstream
+    /// HEAD of each pinned source -- shows what would change on a fresh
+    /// build.  Read-only.
+    Update {
+        /// Board name; defaults to the most recent build's board.
+        #[arg(long)]
+        board: Option<String>,
+        /// Iterate every board with a usable lock.
+        #[arg(long, conflicts_with = "board")]
+        all: bool,
     },
 }
 
