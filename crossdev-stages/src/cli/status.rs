@@ -39,6 +39,7 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
     let boards = board::list(boards_root)?;
     let builds = ws.list_builds()?;
     let stores = list_stores(ws);
+    let default_specs = crate::cli::store::sandbox_default_specs(ws);
 
     if tty {
         println!("Sandboxes ({}):", sandboxes.len());
@@ -56,7 +57,13 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
         for name in &boards {
             if let Ok(b) = board::load(boards_root, name) {
                 let tag = if b.testing { " [TESTING]" } else { "" };
-                println!("  {:<16} {:<10}{tag}", name, b.arch);
+                let (_, hash) = crate::cflags::canonicalize(&b.effective_cflags());
+                let keys = crate::cli::store::board_store_keys(&b, &default_specs);
+                let store_state = board_store_state(&keys, &stores);
+                println!(
+                    "  {:<16} {:<10} {:<16} {}{tag}",
+                    name, b.arch, hash, store_state,
+                );
             }
         }
         if !stores.is_empty() {
@@ -100,7 +107,13 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
         }
         for name in &boards {
             if let Ok(b) = board::load(boards_root, name) {
-                println!("board\t{}\t{}\t{}", name, b.arch, b.testing);
+                let (_, hash) = crate::cflags::canonicalize(&b.effective_cflags());
+                let keys = crate::cli::store::board_store_keys(&b, &default_specs);
+                let store_state = board_store_state(&keys, &stores);
+                println!(
+                    "board\t{}\t{}\t{}\t{}\t{}",
+                    name, b.arch, b.testing, hash, store_state,
+                );
             }
         }
         for s in &stores {
@@ -126,6 +139,29 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// State of the store entry a board resolves to.  `keys` are the exact
+/// candidate store keys from `cli::store::board_store_keys` (same
+/// `workspace::store_key` derivation the builders use): "ready" if any
+/// is complete, "partial" if one exists but is incomplete, "missing" if
+/// none, "unknown" when the gcc spec is unresolvable (no sandbox and no
+/// BOARD_GCC_VERSION).
+fn board_store_state(keys: &[camino::Utf8PathBuf], stores: &[StoreEntry]) -> &'static str {
+    if keys.is_empty() {
+        return "unknown";
+    }
+    let matching: Vec<&StoreEntry> = stores
+        .iter()
+        .filter(|s| keys.contains(&camino::Utf8PathBuf::from(&s.chost).join(&s.key)))
+        .collect();
+    if matching.iter().any(|s| s.complete) {
+        "ready"
+    } else if !matching.is_empty() {
+        "partial"
+    } else {
+        "missing"
+    }
 }
 
 struct StoreEntry {
