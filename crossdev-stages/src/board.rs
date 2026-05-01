@@ -96,6 +96,12 @@ pub struct BoardConfig {
     pub kernel_dtb_glob: Option<String>,
 
     pub dracut_modules: Option<String>,
+    /// Files (under the target rootfs) to bake into the initramfs via
+    /// `dracut --install`.  Use for firmware that early drivers need
+    /// before the real rootfs is mounted (e.g. K1's esos.elf for the
+    /// rcpu-driven SCMI clock controller; without it PWM / clock
+    /// drivers can hang waiting for the rcpu firmware).
+    pub initramfs_install: Vec<String>,
 
     // Boot configuration
     pub root_dev: Option<String>,
@@ -412,6 +418,14 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         kernel_dtb_glob: kv.get("BOARD_DTB_GLOB").cloned(),
 
         dracut_modules: kv.get("DRACUT_MODULES").cloned(),
+        initramfs_install: arrays
+            .get("INITRAMFS_INSTALL")
+            .cloned()
+            .or_else(|| {
+                kv.get("INITRAMFS_INSTALL")
+                    .map(|s| s.split_whitespace().map(String::from).collect())
+            })
+            .unwrap_or_default(),
 
         root_dev: kv.get("BOOT_ROOT_DEV").cloned(),
         console: kv.get("BOOT_CONSOLE").cloned(),

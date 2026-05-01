@@ -159,6 +159,7 @@ pub fn default_board_config(arch: &str) -> board::BoardConfig {
         kernel_dtb_glob: None,
         kernel_config_fragments: Vec::new(),
         dracut_modules: None,
+        initramfs_install: vec![],
         root_dev: None,
         console: None,
         hostname: "gentoo".into(),
