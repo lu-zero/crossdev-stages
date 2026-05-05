@@ -29,13 +29,26 @@ pub async fn run(
             let sb = sandbox::Sandbox::open(dir)?;
             sb.prepare(mirror)?;
         }
-        SandboxCmd::Crossdev { arch, board, name } => {
+        SandboxCmd::Crossdev {
+            arch,
+            board,
+            name,
+            gcc_version,
+        } => {
             let board_cfg = if let Some(b) = &board {
                 crate::board::load(boards_root, b)?
             } else {
                 default_board_config(&arch)
             };
-            ensure_crossdev(ws, name.as_deref(), &arch, &board_cfg, mirror).await?;
+            ensure_crossdev(
+                ws,
+                name.as_deref(),
+                &arch,
+                &board_cfg,
+                mirror,
+                gcc_version.as_deref(),
+            )
+            .await?;
         }
         SandboxCmd::Enter { name } => {
             let dir = ws.resolve_sandbox(name.as_deref())?;

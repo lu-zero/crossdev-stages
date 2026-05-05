@@ -1,4 +1,8 @@
+use std::collections::HashMap;
+use std::fs;
+
 use camino::{Utf8Path, Utf8PathBuf};
+use portage_atom::Version as PortageVersion;
 
 use crate::board::BoardConfig;
 use crate::container::{destroy_dir, unpack_tarball, SandboxRunner};
@@ -65,19 +69,133 @@ impl Sandbox {
         Ok(())
     }
 
+    /// Return installed GCC versions grouped by slot, using `.gcc_versions` cache if present.
+    /// Versions within each slot are sorted newest-first.
+    pub fn get_installed_gcc_versions(&self) -> Result<HashMap<String, Vec<String>>> {
+        let cache = self.dir.join(".gcc_versions");
+        if let Ok(content) = fs::read_to_string(&cache) {
+            if let Ok(parsed) = toml::from_str::<HashMap<String, Vec<String>>>(&content) {
+                return Ok(parsed);
+            }
+        }
+        self.refresh_gcc_versions()
+    }
+
+    /// Query installed GCC versions fresh via `qlist` and rewrite the `.gcc_versions` cache.
+    fn refresh_gcc_versions(&self) -> Result<HashMap<String, Vec<String>>> {
+        let output = self.runner().run_output("qlist -ICev sys-devel/gcc")?;
+        let mut versions: HashMap<String, Vec<String>> = HashMap::new();
+        for line in output.lines() {
+            let line = line.trim();
+            if let Some(ver_str) = line.split("/gcc-").last().filter(|s| !s.is_empty()) {
+                if let Ok(ver) = PortageVersion::parse(ver_str) {
+                    let slot = ver.numbers[0].to_string();
+                    versions.entry(slot).or_default().push(ver_str.to_string());
+                }
+            }
+        }
+        for vs in versions.values_mut() {
+            vs.sort_by(|a, b| b.cmp(a)); // newest first
+        }
+        let _ = fs::write(
+            self.dir.join(".gcc_versions"),
+            toml::to_string(&versions).unwrap_or_default(),
+        );
+        Ok(versions)
+    }
+
     /// Set up the crossdev toolchain for `target_arch` inside this sandbox.
-    /// Idempotent: skips if `.crossdev-<target_arch>` marker exists.
-    pub fn setup_crossdev(&self, target_arch: &str, board: &BoardConfig) -> Result<()> {
+    /// Idempotent: skips if `.crossdev-<target_arch>` marker exists with a matching gcc version.
+    ///
+    /// GCC version resolution order: CLI `gcc_version` > `board.gcc_version` > highest installed slot.
+    ///
+    /// The spec is either a bare slot number ("15") or a version prefix ("15.2", "15.2.1_p20260214").
+    /// Prefixes use portage's `=pkg-ver*` glob, so "15.2" matches any 15.2.x snapshot.
+    pub fn setup_crossdev(
+        &self,
+        target_arch: &str,
+        board: &BoardConfig,
+        gcc_version: Option<&str>,
+    ) -> Result<()> {
         let marker = self.dir.join(format!(".crossdev-{target_arch}"));
+        let runner = self.runner();
+
+        // Resolve spec from CLI > board > auto-detect.
+        // A single number ("15") selects the slot; any longer version ("15.2", "15.2.1_p…")
+        // is used as a portage version prefix via =sys-devel/gcc-<prefix>*.
+        let requested = gcc_version.or(board.gcc_version.as_deref());
+        let (gcc_slot, ver_prefix): (String, Option<String>) = match requested {
+            None => {
+                // Auto-detect: highest installed slot (avoids an extra gcc-config call).
+                let installed = self.get_installed_gcc_versions()?;
+                let slot = installed
+                    .keys()
+                    .filter_map(|k| k.parse::<u32>().ok())
+                    .max()
+                    .map(|n| n.to_string())
+                    .ok_or_else(|| Error::CommandFailed {
+                        code: 1,
+                        reason: "No GCC installed in sandbox; run sandbox prepare first".into(),
+                    })?;
+                (slot, None)
+            }
+            Some(s) => {
+                let ver = PortageVersion::parse(s).map_err(|_| Error::CommandFailed {
+                    code: 1,
+                    reason: format!("BOARD_GCC_VERSION {s:?} is not a valid portage version"),
+                })?;
+                let slot = ver.numbers[0].to_string();
+                // A single bare number ("15") means slot-only; anything longer is a prefix.
+                let is_slot_only = ver.numbers.len() == 1
+                    && ver.letter.is_none()
+                    && ver.suffixes.is_empty();
+                if is_slot_only {
+                    (slot, None)
+                } else {
+                    (slot, Some(s.to_string()))
+                }
+            }
+        };
+
+        // Idempotency: marker holds the exact gcc version used last time.
+        // For a prefix spec, check that the installed version's numbers start with the prefix's.
         if marker.exists() {
-            tracing::info!("Crossdev for {target_arch} already set up, skipping.");
-            return Ok(());
+            if let Ok(existing) = std::fs::read_to_string(&marker) {
+                let existing = existing.trim();
+                let matches = match &ver_prefix {
+                    Some(prefix) => match (
+                        PortageVersion::parse(existing),
+                        PortageVersion::parse(prefix),
+                    ) {
+                        (Ok(ev), Ok(pv)) => ev.numbers.starts_with(&pv.numbers),
+                        _ => existing.starts_with(prefix.as_str()),
+                    },
+                    None => {
+                        PortageVersion::parse(existing)
+                            .ok()
+                            .and_then(|v| v.numbers.first().copied())
+                            .map(|n| n.to_string())
+                            .as_deref()
+                            == Some(gcc_slot.as_str())
+                    }
+                };
+                if matches {
+                    tracing::info!(
+                        "Crossdev for {target_arch} already set up with gcc-{existing}, skipping."
+                    );
+                    return Ok(());
+                }
+                let want = ver_prefix.as_deref().unwrap_or(&gcc_slot);
+                tracing::info!(
+                    "Crossdev for {target_arch}: re-setting up (was gcc-{existing}, want gcc-{want})…"
+                );
+                std::fs::remove_file(&marker)?;
+            }
         }
 
         let chost = format!("{target_arch}-unknown-linux-gnu");
         let profile = gentoo_profile(target_arch)?;
         let cflags = board.effective_cflags();
-        let runner = self.runner();
 
         tracing::info!("Creating crossdev overlay…");
         runner.run(
@@ -88,32 +206,51 @@ impl Sandbox {
         tracing::info!("Initialising crossdev for {chost}…");
         runner.run(&format!("crossdev {chost} --init-target"))?;
 
-        // Allow unstable rust-std and gcc-16 prerelease.
+        // Accept testing/prerelease keywords for this gcc slot and rust-std.
         runner.run(&format!(
             "echo 'cross-{chost}/rust-std **' \
              > /etc/portage/package.accept_keywords/rust-std"
         ))?;
-        runner.run(
-            "echo '<sys-devel/gcc-16.0.9999:16 **' \
-             > /etc/portage/package.accept_keywords/gcc",
-        )?;
+        let gcc_keyword_line = format!("sys-devel/gcc:{gcc_slot} **");
+        runner.run(&format!(
+            "echo '{gcc_keyword_line}' > /etc/portage/package.accept_keywords/gcc"
+        ))?;
 
-        tracing::info!("Emerging gcc:16 (host)…");
-        runner.run("emerge -b -k sys-devel/gcc:16")?;
-
-        // Query the installed gcc-16 version and make it the default.
-        let gcc_ver =
-            runner.run_output("qlist -ICev sys-devel/gcc:16 | head -n1 | sed 's|.*/gcc-||'")?;
-        if gcc_ver.is_empty() {
-            return Err(Error::CommandFailed {
-                code: 1,
-                reason: "Could not determine gcc-16 version".into(),
-            });
+        // Emerge: version prefix glob (quoted to prevent shell expansion) or best-in-slot.
+        if let Some(ref prefix) = ver_prefix {
+            tracing::info!("Emerging =sys-devel/gcc-{prefix}* (host)…");
+            runner.run(&format!("emerge -b -k '=sys-devel/gcc-{prefix}*'"))?;
+        } else {
+            tracing::info!("Emerging sys-devel/gcc:{gcc_slot} (host)…");
+            runner.run(&format!("emerge -b -k sys-devel/gcc:{gcc_slot}"))?;
         }
-        let gcc_profile =
-            runner.run_output("gcc-config -l | grep '16' | head -n1 | awk '{print $2}'")?;
-        runner.run(&format!("gcc-config {gcc_profile}"))?;
-        runner.run("source /etc/profile && env-update")?;
+
+        // Refresh metadata after emerge — never use the pre-emerge cache here.
+        let installed = self.refresh_gcc_versions()?;
+        let slot_versions = installed.get(&gcc_slot).cloned().unwrap_or_default();
+
+        let gcc_ver = if let Some(ref prefix) = ver_prefix {
+            slot_versions.into_iter()
+                .find(|v| v.starts_with(prefix.as_str()))
+                .ok_or_else(|| Error::CommandFailed {
+                    code: 1,
+                    reason: format!("No gcc-{prefix}* found in sandbox after emerge"),
+                })?
+        } else {
+            // Slot-only: newest installed version (refresh gives newest-first).
+            slot_versions.into_iter().next().ok_or_else(|| Error::CommandFailed {
+                code: 1,
+                reason: format!("No gcc:{gcc_slot} found in sandbox after emerge"),
+            })?
+        };
+
+        tracing::info!("Using gcc-{gcc_ver} for crossdev.");
+
+        // gcc-config profile names are "{chost}-{slot}" (e.g. "aarch64-unknown-linux-gnu-15"),
+        // not "{chost}-{full-version}". Select by slot directly.
+        let host_chost = runner.run_output("portageq envvar CHOST")?.trim().to_string();
+        runner.run(&format!("gcc-config {host_chost}-{gcc_slot}"))?;
+        runner.run("env-update && source /etc/profile")?;
 
         // Configure the crossdev prefix portage settings (written on the host fs).
         let crossdev_root = self.dir.join(format!("usr/{chost}"));
@@ -121,7 +258,14 @@ impl Sandbox {
         runner.run(&format!(
             "export PORTAGE_CONFIGROOT=/usr/{chost}; eselect profile set {profile}"
         ))?;
-        self.write_crossdev_portage(&crossdev_portage, target_arch, &chost, &cflags, board)?;
+        self.write_crossdev_portage(
+            &crossdev_portage,
+            target_arch,
+            &chost,
+            &cflags,
+            board,
+            &gcc_keyword_line,
+        )?;
 
         // Fix the split-usr layout created by crossdev.
         runner.run(&format!("mkdir -p /usr/{chost}/bin"))?;
@@ -135,11 +279,12 @@ impl Sandbox {
              --ex-pkg sys-devel/rust-std"
         ))?;
 
-        // Switch cross compiler to gcc-16.
-        runner.run(&format!("gcc-config {chost}-16 && source /etc/profile"))?;
+        // Switch cross compiler to the installed slot.
+        runner.run(&format!("gcc-config {chost}-{gcc_slot} && source /etc/profile"))?;
 
-        std::fs::write(&marker, "")?;
-        tracing::info!("Crossdev for {chost} complete.");
+        // Write marker with the exact version used (enables idempotency on next run).
+        std::fs::write(&marker, &gcc_ver)?;
+        tracing::info!("Crossdev for {chost} complete (gcc-{gcc_ver}).");
         Ok(())
     }
 
@@ -177,6 +322,7 @@ impl Sandbox {
         chost: &str,
         cflags: &str,
         board: &BoardConfig,
+        gcc_keyword_line: &str,
     ) -> Result<()> {
         // make.conf for the crossdev prefix
         MakeConf {
@@ -229,7 +375,7 @@ impl Sandbox {
         // package.accept_keywords
         std::fs::write(
             portage_dir.join("package.accept_keywords/gcc"),
-            "<sys-devel/gcc-16.0.9999:16 **\n",
+            &format!("{gcc_keyword_line}\n"),
         )?;
 
         // Per-package CFLAGS workarounds from board.conf

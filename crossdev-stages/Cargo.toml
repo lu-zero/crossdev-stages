@@ -18,6 +18,8 @@ thiserror    = "2"
 tracing      = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde        = { version = "1", features = ["derive"] }
+toml         = "1.1"
 chrono       = "0.4"
 num_cpus     = "1"
 libc         = "0.2"
+portage-atom = "0.5.1"

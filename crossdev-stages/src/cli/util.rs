@@ -10,6 +10,7 @@ pub async fn ensure_crossdev(
     arch: &str,
     board_cfg: &board::BoardConfig,
     mirror: Option<&str>,
+    gcc_version: Option<&str>,
 ) -> Result<sandbox::Sandbox> {
     let sd = match ws.resolve_sandbox(sandbox_name) {
         Ok(p) => p,
@@ -25,7 +26,7 @@ pub async fn ensure_crossdev(
     };
     let sb = sandbox::Sandbox::open(sd)?;
     sb.prepare(mirror)?;
-    sb.setup_crossdev(arch, board_cfg)?;
+    sb.setup_crossdev(arch, board_cfg, gcc_version)?;
     Ok(sb)
 }
 
@@ -67,6 +68,7 @@ pub async fn ensure_target(
         &resolved_arch,
         &default_board_config(&resolved_arch),
         mirror,
+        None,
     )
     .await?;
     Ok((tgt, sb))
@@ -80,6 +82,7 @@ pub fn default_board_config(arch: &str) -> board::BoardConfig {
         cflags: None,
         ldflags: None,
         rustflags: None,
+        gcc_version: None,
         cross_compile: format!("{arch}-unknown-linux-gnu-"),
         kernel_arch: None,
         opensbi_repo: None,
