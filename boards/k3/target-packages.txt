@@ -1,0 +1,9 @@
+# Packages to cross-install into the target sysroot for the K1 image
+
+# Services enabled by default
+net-misc/openssh
+app-admin/metalog
+net-misc/ntp
+
+# Initramfs / boot
+sys-apps/busybox
