@@ -52,6 +52,7 @@ pub async fn run(
                 &resolved_arch,
                 &default_board_config(&resolved_arch),
                 mirror,
+                None,
             )
             .await?;
         }

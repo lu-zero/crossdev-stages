@@ -53,7 +53,7 @@ pub async fn run(
             }
 
             let sb =
-                ensure_crossdev(ws, sandbox.as_deref(), &board_cfg.arch, &board_cfg, mirror)
+                ensure_crossdev(ws, sandbox.as_deref(), &board_cfg.arch, &board_cfg, mirror, None)
                     .await?;
 
             let tgt = match ws.resolve_target_for_arch(target.as_deref(), &board_cfg.arch) {

@@ -129,6 +129,9 @@ pub enum SandboxCmd {
         /// Sandbox name (default: most-recently-modified).
         #[arg(long)]
         name: Option<String>,
+        /// GCC version to use: "15" (latest in slot), "15.2" (latest 15.2.x), or "15.2.1_p20260214" (exact). Overrides BOARD_GCC_VERSION.
+        #[arg(long)]
+        gcc_version: Option<String>,
     },
     /// Open an interactive shell in a sandbox.
     Enter {

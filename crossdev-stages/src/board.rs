@@ -11,6 +11,7 @@ pub struct BoardConfig {
     pub cflags: Option<String>,      // BOARD_CFLAGS; None → use default_cflags(arch)
     pub ldflags: Option<String>, // BOARD_LDFLAGS; probably never needed (profile default is fine)
     pub rustflags: Option<String>, // BOARD_RUSTFLAGS; cross-compile target-cpu is handled by rust-std
+    pub gcc_version: Option<String>, // BOARD_GCC_VERSION; None → highest installed slot
     pub cross_compile: String,     // e.g. "riscv64-unknown-linux-gnu-"
     pub kernel_arch: Option<String>, // e.g. "riscv", "arm64", "x86" — required for image builds
 
@@ -139,6 +140,7 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         cflags: kv.get("BOARD_CFLAGS").cloned(),
         ldflags: kv.get("BOARD_LDFLAGS").cloned(),
         rustflags: kv.get("BOARD_RUSTFLAGS").cloned(),
+        gcc_version: kv.get("BOARD_GCC_VERSION").cloned(),
         cross_compile: req!("CROSS_COMPILE"),
         kernel_arch: kv.get("KERNEL_ARCH").cloned(),
 
