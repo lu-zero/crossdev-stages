@@ -7,6 +7,7 @@ pub async fn run(
     ws: &Workspace,
     cmd: SandboxCmd,
     boards_root: &camino::Utf8Path,
+    defaults_root: &camino::Utf8Path,
     mirror: Option<&str>,
 ) -> Result<()> {
     match cmd {
@@ -27,7 +28,7 @@ pub async fn run(
         SandboxCmd::Prepare { name } => {
             let dir = ws.resolve_sandbox(name.as_deref())?;
             let sb = sandbox::Sandbox::open(dir)?;
-            sb.prepare(mirror)?;
+            sb.prepare(mirror, defaults_root)?;
         }
         SandboxCmd::Crossdev {
             arch,
@@ -45,6 +46,7 @@ pub async fn run(
                 name.as_deref(),
                 &arch,
                 &board_cfg,
+                defaults_root,
                 mirror,
                 gcc_version.as_deref(),
             )

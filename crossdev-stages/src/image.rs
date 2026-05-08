@@ -128,35 +128,32 @@ fn default_deps(
     target: &Target,
     board: &BoardConfig,
     boards_root: &Utf8Path,
+    defaults_root: &Utf8Path,
 ) -> Result<()> {
-    let sandbox_pkgs = boards_root.join(&board.name).join("sandbox-packages.txt");
-    if sandbox_pkgs.exists() {
+    // Sandbox extras: defaults are already installed during prepare; only the
+    // board's own extras (e.g. clang for OpenSBI LLVM=1) need emerging here.
+    let board_sandbox = crate::package_list::read_optional(
+        &boards_root.join(&board.name).join("sandbox-packages.txt"),
+    )?;
+    if !board_sandbox.is_empty() {
         let host_runner = board_runner(sandbox, board);
         let portage = Portage::new(&host_runner);
-        let content = std::fs::read_to_string(&sandbox_pkgs)?;
-        let pkgs: Vec<&str> = content
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect();
-        if !pkgs.is_empty() {
-            portage.emerge(&pkgs)?;
-        }
+        let pkgs: Vec<&str> = board_sandbox.iter().map(String::as_str).collect();
+        portage.emerge(&pkgs)?;
     }
 
-    let target_pkgs = boards_root.join(&board.name).join("target-packages.txt");
-    if target_pkgs.exists() {
-        let content = std::fs::read_to_string(&target_pkgs)?;
-        let pkgs: Vec<&str> = content
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect();
-        if !pkgs.is_empty() {
-            let target_runner = board_runner(sandbox, board).with_target(&target.dir);
-            let portage = Portage::new(&target_runner);
-            portage.cross_emerge(&board.chost(), &pkgs)?;
-        }
+    // Target packages: defaults + board-specific, emerged together.
+    let mut target_pkgs = crate::package_list::read_required(
+        &defaults_root.join("target-packages.txt"),
+    )?;
+    target_pkgs.extend(crate::package_list::read_optional(
+        &boards_root.join(&board.name).join("target-packages.txt"),
+    )?);
+    if !target_pkgs.is_empty() {
+        let pkg_refs: Vec<&str> = target_pkgs.iter().map(String::as_str).collect();
+        let target_runner = board_runner(sandbox, board).with_target(&target.dir);
+        let portage = Portage::new(&target_runner);
+        portage.cross_emerge(&board.chost(), &pkg_refs)?;
     }
 
     Ok(())
@@ -334,6 +331,7 @@ pub fn build(
     target: &Target,
     board: &BoardConfig,
     boards_root: &Utf8Path,
+    defaults_root: &Utf8Path,
     steps: Option<&[String]>,
 ) -> Result<()> {
     let bld = Build::create(ws, &board.name)?;
@@ -362,7 +360,7 @@ pub fn build(
 
         let result = match *step {
             "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board,
-                |_r| default_deps(_r, sandbox, target, board, boards_root)),
+                |_r| default_deps(_r, sandbox, target, board, boards_root, defaults_root)),
             "checkout" => run_step("checkout", "sources", &bld, &runner, boards_root, board,
                 |r| default_checkout(r, board)),
             "bootloader" => run_step("bootloader", "bootloader", &bld, &runner, boards_root, board,

@@ -1,0 +1,21 @@
+# Default packages cross-emerged into every image's sysroot.
+# Per-board extras can be added in boards/<board>/target-packages.txt
+# (additive — both lists are emerged).
+
+# Networking / remote access
+net-misc/openssh
+net-misc/ntp
+
+# Logging
+app-admin/metalog
+
+# Initramfs / minimal userland
+sys-apps/busybox
+
+# Basic interactive tools
+app-editors/vim
+sys-process/htop
+app-misc/fastfetch
+
+# Disk utilities
+sys-block/parted

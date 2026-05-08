@@ -46,7 +46,7 @@ impl Sandbox {
 
     /// Configure portage and install host build dependencies.
     /// Idempotent: skips if `.prepared` marker exists.
-    pub fn prepare(&self, mirror: Option<&str>) -> Result<()> {
+    pub fn prepare(&self, mirror: Option<&str>, defaults_root: &Utf8Path) -> Result<()> {
         if self.dir.join(".prepared").exists() {
             tracing::info!("Sandbox already prepared, skipping.");
             return Ok(());
@@ -62,7 +62,7 @@ impl Sandbox {
         .write(&self.dir.join("etc/portage"))?;
 
         tracing::info!("Installing host dependencies…");
-        install_host_deps(&self.runner())?;
+        install_host_deps(&self.runner(), defaults_root)?;
 
         std::fs::write(self.dir.join(".prepared"), "")?;
         tracing::info!("Sandbox prepared.");

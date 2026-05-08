@@ -138,12 +138,6 @@ impl<'a> Portage<'a> {
         Ok(())
     }
 
-    /// Emerge packages from binary packages only (`-G`).
-    pub fn emerge_binary(&self, packages: &[&str]) -> Result<()> {
-        let pkgs = packages.join(" ");
-        self.runner.run(&format!("emerge -G {pkgs}"))
-    }
-
     /// Emerge packages, using binary if available (`-b -k`).
     pub fn emerge(&self, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
@@ -181,7 +175,11 @@ impl<'a> Portage<'a> {
 }
 
 /// Install all host-side dependencies required for cross-compilation.
-pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
+///
+/// Reads the package list from `<defaults_root>/sandbox-packages.txt`. Per-board
+/// extras (boards/<board>/sandbox-packages.txt) are emerged separately during
+/// image build via `image::default_deps`.
+pub fn install_host_deps(runner: &SandboxRunner, defaults_root: &Utf8Path) -> Result<()> {
     let portage = Portage::new(runner);
 
     tracing::info!("Syncing portage tree…");
@@ -190,28 +188,12 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
 
     runner.run("chown -R portage:portage /etc/portage/gnupg")?;
 
-    let bin_packages = ["app-arch/zstd", "app-arch/bzip2", "app-arch/xz-utils"];
-    tracing::info!("Installing binary packages…");
-    portage.emerge_binary(&bin_packages)?;
+    let path = defaults_root.join("sandbox-packages.txt");
+    let packages = crate::package_list::read_required(&path)?;
+    let pkg_refs: Vec<&str> = packages.iter().map(String::as_str).collect();
 
-    let packages = [
-        "sys-devel/crossdev",
-        "sys-devel/bc",
-        "sys-apps/merge-usr",
-        "dev-vcs/git",
-        "dev-embedded/u-boot-tools",
-        "sys-apps/dtc",
-        "sys-kernel/dracut",
-        "sys-apps/busybox",
-        "sys-fs/genimage",
-        "sys-fs/dosfstools",
-        "sys-fs/mtools",
-        "app-eselect/eselect-repository",
-        "dev-lang/rust",
-        "dev-python/pyelftools",
-    ];
-    tracing::info!("Installing build dependencies…");
-    portage.emerge(&packages)?;
+    tracing::info!("Installing host build dependencies ({} packages)…", packages.len());
+    portage.emerge(&pkg_refs)?;
 
     tracing::info!("Installing Rust ldconfig…");
     runner.run("cargo install --root /usr/local ldconfig")?;
