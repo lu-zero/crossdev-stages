@@ -105,11 +105,20 @@ eselect repository create crossdev
 Each board lives in `boards/<name>/` with:
 - `board.conf` -- variables read by Rust and bash scripts
 - `genimage.cfg` -- disk image layout
+- `sandbox-packages.txt` -- extra host packages for the sandbox (optional)
+- `sandbox-packages.use` -- USE flags for those packages (optional)
+- `target-packages.txt` -- extra packages cross-emerged into the image (optional)
 - `pre-{step}.sh` -- runs before Rust default (optional)
 - `post-{step}.sh` -- runs after Rust default (optional)
 - `override-{step}.sh` -- replaces Rust default entirely (optional)
 
 Steps: `deps`, `checkout`, `bootloader`, `kernel`, `assemble`, `pack`
+
+Package lists in `defaults/` apply to every sandbox
+(`defaults/sandbox-packages.txt`) and every image
+(`defaults/target-packages.txt`); board lists are additive extras.
+List lines are `atom [keywords]` -- a keyword override (e.g.
+`sys-boot/syslinux **`) lands in `etc/portage/package.accept_keywords/`.
 
 ### Build step execution
 

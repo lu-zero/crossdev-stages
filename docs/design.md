@@ -120,7 +120,7 @@ and per-package CFLAGS workarounds.
 Steps run in order (configurable via `BUILD_STEPS` in `board.conf`):
 
 ```
-deps       Install extra sandbox packages + cross-emerge target-packages.txt.
+deps       Cross-emerge defaults + per-board package lists into the target.
 checkout   Clone/update kernel, opensbi, u-boot source via git source cache.
 bootloader Build opensbi and/or u-boot inside the sandbox container.
 kernel     Build Linux kernel + modules; install modules into target stage.
@@ -140,6 +140,26 @@ post-{step}.sh       Runs after the Rust default.
 Hook scripts run inside the sandbox container with `/scripts` bind-mounted
 to the project directory (read-only) so they can source `board.conf` and
 sibling helpers.
+
+---
+
+## Package lists
+
+`defaults/` holds package lists applied everywhere:
+
+- `defaults/sandbox-packages.txt` — host build deps emerged during
+  `sandbox prepare` (required).
+- `defaults/target-packages.txt` — packages cross-emerged into every
+  image's sysroot during `deps` (required).
+
+Per-board lists (`boards/<name>/sandbox-packages.txt`, `target-packages.txt`)
+are additive extras on top of the defaults; there is no subtraction
+mechanism, so the defaults must stay small and universal.
+
+List lines are `atom [keywords]`: an optional keyword override (e.g.
+`sys-boot/syslinux **`) is written to `etc/portage/package.accept_keywords/`
+before emerging.  A board's `sandbox-packages.use` (`atom use_flags...`
+lines) is written to `etc/portage/package.use/` the same way.
 
 ---
 

@@ -46,7 +46,7 @@ impl Sandbox {
 
     /// Configure portage and install host build dependencies.
     /// Idempotent: skips if `.prepared` marker exists.
-    pub fn prepare(&self, mirror: Option<&str>) -> Result<()> {
+    pub fn prepare(&self, mirror: Option<&str>, defaults_root: &Utf8Path) -> Result<()> {
         if self.dir.join(".prepared").exists() {
             tracing::info!("Sandbox already prepared, skipping.");
             return Ok(());
@@ -62,7 +62,7 @@ impl Sandbox {
         .write(&self.dir.join("etc/portage"))?;
 
         tracing::info!("Installing host dependencies…");
-        install_host_deps(&self.runner())?;
+        install_host_deps(&self.runner(), defaults_root, &self.dir.join("etc/portage"))?;
 
         std::fs::write(self.dir.join(".prepared"), "")?;
         tracing::info!("Sandbox prepared.");
@@ -343,9 +343,7 @@ impl Sandbox {
         let Some(ref platforms) = board.grub_platforms else {
             return Ok(());
         };
-        let grub_mods = self
-            .dir
-            .join(format!("usr/{chost}/usr/lib/grub/i386-pc"));
+        let grub_mods = self.dir.join(format!("usr/{chost}/usr/lib/grub/i386-pc"));
         if grub_mods.exists() {
             return Ok(());
         }
@@ -356,7 +354,9 @@ impl Sandbox {
             .split_whitespace()
             .map(|p| format!("grub_platforms_{p}"))
             .collect();
-        let use_dir = self.dir.join(format!("usr/{chost}/etc/portage/package.use"));
+        let use_dir = self
+            .dir
+            .join(format!("usr/{chost}/etc/portage/package.use"));
         std::fs::create_dir_all(&use_dir)?;
         std::fs::write(
             use_dir.join("grub"),
