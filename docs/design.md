@@ -120,7 +120,7 @@ and per-package CFLAGS workarounds.
 Steps run in order (configurable via `BUILD_STEPS` in `board.conf`):
 
 ```
-deps       Cross-emerge defaults + per-board package lists into the target.
+deps       Install extra sandbox packages + cross-emerge target-packages.txt.
 checkout   Clone/update kernel, opensbi, u-boot source via git source cache.
 bootloader Build opensbi and/or u-boot inside the sandbox container.
 kernel     Build Linux kernel + modules; install modules into target stage.
@@ -140,37 +140,6 @@ post-{step}.sh       Runs after the Rust default.
 Hook scripts run inside the sandbox container with `/scripts` bind-mounted
 to the project directory (read-only) so they can source `board.conf` and
 sibling helpers.
-
----
-
-## Package lists
-
-`defaults/` holds package lists applied everywhere:
-
-- `defaults/sandbox-packages.txt` — host build deps emerged during
-  `sandbox prepare` (required).
-- `defaults/target-packages.txt` — packages cross-emerged into every
-  image's sysroot during `deps` (required).
-
-Per-board lists (`boards/<name>/sandbox-packages.txt`, `target-packages.txt`)
-overlay the defaults.  The effective target set is
-`defaults/target-packages.txt` UNION `boards/<name>/target-packages.txt`
-MINUS the board's `-atom` lines (e.g. `-app-misc/fastfetch`) — every part
-is a plain file.  Subtracting an atom not in the merged set warns and does
-nothing; `-atom` lines in a defaults file are rejected with an error, since
-defaults define the base and only boards subtract.  Heavy per-board opt-ins
-(mold, go, cmake, rust, iw, wpa_supplicant) are deliberately not defaults.
-Sandbox defaults are installed at prepare time, so a `-atom` in a board's
-`sandbox-packages.txt` can only cancel the board's own extras.
-
-List lines are `atom [keywords]`: an optional keyword override (e.g.
-`sys-boot/syslinux **`) is written to `etc/portage/package.accept_keywords/`
-before emerging.  A board's `sandbox-packages.use` (`atom use_flags...`
-lines) is written to `etc/portage/package.use/` the same way.
-
-Files under `defaults/portage/` are overlaid onto the sandbox's
-`etc/portage/` during prepare.  Prepare is idempotent (`.prepared`
-marker), so later changes do not reach already-prepared sandboxes.
 
 ---
 

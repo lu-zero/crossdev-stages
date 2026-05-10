@@ -1,5 +1,3 @@
-use camino::Utf8Path;
-
 use crate::error::Result;
 use crate::workspace::Workspace;
 use crate::{board, error, sandbox, stage, target};
@@ -11,7 +9,6 @@ pub async fn ensure_crossdev(
     sandbox_name: Option<&str>,
     arch: &str,
     board_cfg: &board::BoardConfig,
-    defaults_root: &Utf8Path,
     mirror: Option<&str>,
     gcc_version: Option<&str>,
 ) -> Result<sandbox::Sandbox> {
@@ -30,7 +27,7 @@ pub async fn ensure_crossdev(
         }
     };
     let sb = sandbox::Sandbox::open(sd)?;
-    sb.prepare(mirror, defaults_root)?;
+    sb.prepare(mirror)?;
     sb.setup_crossdev(arch, board_cfg, gcc_version)?;
     Ok(sb)
 }
@@ -42,7 +39,6 @@ pub async fn ensure_target(
     target_name: Option<&str>,
     arch_override: Option<&str>,
     sandbox_name: Option<&str>,
-    defaults_root: &Utf8Path,
     mirror: Option<&str>,
 ) -> Result<(target::Target, sandbox::Sandbox)> {
     let (tgt, resolved_arch) = match ws.resolve_target(target_name) {
@@ -71,7 +67,6 @@ pub async fn ensure_target(
         sandbox_name,
         &resolved_arch,
         &default_board_config(&resolved_arch),
-        defaults_root,
         mirror,
         None,
     )
@@ -104,11 +99,21 @@ pub fn default_board_config(arch: &str) -> board::BoardConfig {
         u_boot_tag: None,
         u_boot_defconfig: None,
         u_boot_make_flags: None,
-        firmware_repo: None,
         grub_platforms: None,
         grub_modules: None,
         syslinux_repo: None,
         syslinux_tag: None,
+        tfa_repo: None,
+        tfa_tag: None,
+        tfa_plat: None,
+        rkbin_repo: None,
+        rkbin_tag: None,
+        rkbin_ddr: None,
+        fip_repo: None,
+        fip_tag: None,
+        boot_pipeline: None,
+        firmware_repo: None,
+        firmware_tag: None,
         firmware_overlay: None,
         host_firmware_paths: vec![],
         kernel_repo: String::new(),

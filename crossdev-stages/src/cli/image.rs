@@ -8,7 +8,6 @@ pub async fn run(
     ws: &Workspace,
     cmd: ImageCmd,
     boards_root: &Utf8Path,
-    defaults_root: &Utf8Path,
     mirror: Option<&str>,
     dry_run: bool,
 ) -> Result<()> {
@@ -73,7 +72,6 @@ pub async fn run(
                 sandbox.as_deref(),
                 &board_cfg.arch,
                 &board_cfg,
-                defaults_root,
                 mirror,
                 None,
             )
@@ -95,15 +93,7 @@ pub async fn run(
             } else {
                 Some(steps.as_slice())
             };
-            image::build(
-                ws,
-                &sb,
-                &tgt,
-                &board_cfg,
-                boards_root,
-                defaults_root,
-                steps_opt,
-            )?;
+            image::build(ws, &sb, &tgt, &board_cfg, boards_root, steps_opt)?;
         }
         ImageCmd::Prune => {
             let builds = ws.list_builds()?;

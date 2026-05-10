@@ -37,8 +37,28 @@ pub struct BoardConfig {
     pub syslinux_repo: Option<String>,
     pub syslinux_tag: Option<String>,
 
+    // ARM Trusted Firmware-A — BL31 for Rockchip / Amlogic SoCs
+    pub tfa_repo: Option<String>,
+    pub tfa_tag: Option<String>,
+    pub tfa_plat: Option<String>,
+
+    // Rockchip closed-source blob repo (DDR init etc., pre-built)
+    pub rkbin_repo: Option<String>,
+    pub rkbin_tag: Option<String>,
+    pub rkbin_ddr: Option<String>, // glob pattern for the DDR init blob
+
+    // Amlogic boot-FIP packaging repo (vendor BL2/BL30/BL301 + tools)
+    pub fip_repo: Option<String>,
+    pub fip_tag: Option<String>,
+
+    /// Ordered bootloader pipeline (`BOOT_PIPELINE` array).
+    /// `None` (key absent) → DEFAULT_PIPELINE (`opensbi uboot syslinux grub`);
+    /// `Some(vec![])` (explicit `()`) → no stages.
+    pub boot_pipeline: Option<Vec<String>>,
+
     // Firmware overlay
     pub firmware_repo: Option<String>,
+    pub firmware_tag: Option<String>,     // FIRMWARE_TAG; falls back to TAG
     pub firmware_overlay: Option<String>, // path inside firmware repo
     pub host_firmware_paths: Vec<String>, // host paths to copy into image
 
@@ -148,6 +168,23 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         };
     }
 
+    // Fail fast on typos: reject unknown pipeline stages at load time,
+    // not hours later when the bootloader step runs.
+    let boot_pipeline = arrays.get("BOOT_PIPELINE").cloned();
+    if let Some(stages) = &boot_pipeline {
+        for s in stages {
+            if !crate::bootloader::STAGES.contains(&s.as_str()) {
+                return Err(Error::BoardConfigParse {
+                    file: path.to_string(),
+                    msg: format!(
+                        "unknown BOOT_PIPELINE stage '{s}' (known: {})",
+                        crate::bootloader::STAGES.join(" ")
+                    ),
+                });
+            }
+        }
+    }
+
     Ok(BoardConfig {
         name: name.to_string(),
         arch: req!("BOARD_ARCH"),
@@ -176,7 +213,24 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         syslinux_repo: kv.get("SYSLINUX_REPO").cloned(),
         syslinux_tag: kv.get("SYSLINUX_TAG").cloned(),
 
+        // No TAG fallback for tfa/rkbin/fip tags: TAG names a vendor-SDK
+        // ref that never exists in these third-party repos.  The clone
+        // sites default to "master".
+        tfa_repo: kv.get("TFA_REPO").cloned(),
+        tfa_tag: kv.get("TFA_TAG").cloned(),
+        tfa_plat: kv.get("TFA_PLAT").cloned(),
+
+        rkbin_repo: kv.get("RKBIN_REPO").cloned(),
+        rkbin_tag: kv.get("RKBIN_TAG").cloned(),
+        rkbin_ddr: kv.get("RKBIN_DDR").cloned(),
+
+        fip_repo: kv.get("FIP_REPO").cloned(),
+        fip_tag: kv.get("FIP_TAG").cloned(),
+
+        boot_pipeline,
+
         firmware_repo: kv.get("FIRMWARE_REPO").cloned(),
+        firmware_tag: kv.get("FIRMWARE_TAG").or_else(|| kv.get("TAG")).cloned(),
         firmware_overlay: kv.get("BOARD_FIRMWARE_OVERLAY").cloned(),
         host_firmware_paths: arrays
             .get("HOST_FIRMWARE_PATHS")
