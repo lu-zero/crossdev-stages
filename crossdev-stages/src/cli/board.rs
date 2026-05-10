@@ -33,6 +33,16 @@ pub fn run(boards_root: &Utf8Path, cmd: BoardCmd) -> Result<()> {
             if let Some(t) = &board_cfg.u_boot_tag { println!("U-Boot tag:     {t}"); }
             if let Some(d) = &board_cfg.u_boot_defconfig { println!("U-Boot deconf:  {d}"); }
             if let Some(f) = &board_cfg.u_boot_make_flags { println!("U-Boot flags:   {f}"); }
+            if let Some(r) = &board_cfg.tfa_repo { println!("TFA repo:       {r}"); }
+            if let Some(t) = &board_cfg.tfa_tag { println!("TFA tag:        {t}"); }
+            if let Some(p) = &board_cfg.tfa_plat { println!("TFA plat:       {p}"); }
+            if let Some(r) = &board_cfg.rkbin_repo { println!("rkbin repo:     {r}"); }
+            if let Some(g) = &board_cfg.rkbin_ddr { println!("rkbin DDR:      {g}"); }
+            if let Some(r) = &board_cfg.fip_repo { println!("FIP repo:       {r}"); }
+            if let Some(t) = &board_cfg.fip_tag { println!("FIP tag:        {t}"); }
+            let pipeline = crate::bootloader::pipeline(&board_cfg);
+            let default_marker = if board_cfg.boot_pipeline.is_empty() { " (default)" } else { "" };
+            println!("Boot pipeline:  {}{default_marker}", pipeline.join(" "));
             if !board_cfg.build_steps.is_empty() {
                 println!("Build steps:    {}", board_cfg.build_steps.join(" "));
             }
