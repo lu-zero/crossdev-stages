@@ -119,6 +119,8 @@ Package lists in `defaults/` apply to every sandbox
 (`defaults/target-packages.txt`); board lists are additive extras.
 List lines are `atom [keywords]` -- a keyword override (e.g.
 `sys-boot/syslinux **`) lands in `etc/portage/package.accept_keywords/`.
+Portage config files under `defaults/portage/` are overlaid onto the
+sandbox's `etc/portage/` during prepare.
 
 ### Build step execution
 

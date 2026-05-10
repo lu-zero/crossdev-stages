@@ -61,6 +61,15 @@ impl Sandbox {
         }
         .write(&self.dir.join("etc/portage"))?;
 
+        // Overlay any user-provided portage config from defaults/portage/
+        // onto the sandbox's /etc/portage/.  Lets boards declare USE flags
+        // (e.g. sys-fs/dosfstools compat) and other portage tweaks as files
+        // rather than hardcoded strings.
+        let portage_src = defaults_root.join("portage");
+        if portage_src.is_dir() {
+            copy_tree(&portage_src, &self.dir.join("etc/portage"))?;
+        }
+
         tracing::info!("Installing host dependencies…");
         install_host_deps(&self.runner(), defaults_root, &self.dir.join("etc/portage"))?;
 
@@ -496,4 +505,30 @@ pub struct SandboxInfo {
     pub name: String,
     pub arch: String,
     pub prepared: bool,
+}
+
+/// Recursively copy directory `src` into `dst`, overwriting files.
+/// Symlinks and other special entries are rejected.
+fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let from = Utf8PathBuf::try_from(entry.path()).map_err(|e| Error::CommandFailed {
+            code: 1,
+            reason: e.to_string(),
+        })?;
+        let to = dst.join(from.file_name().unwrap_or_default());
+        if kind.is_dir() {
+            copy_tree(&from, &to)?;
+        } else if kind.is_file() {
+            std::fs::copy(&from, &to)?;
+        } else {
+            return Err(Error::CommandFailed {
+                code: 1,
+                reason: format!("unsupported entry in portage overlay (symlink?): {from}"),
+            });
+        }
+    }
+    Ok(())
 }
