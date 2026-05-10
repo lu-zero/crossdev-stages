@@ -161,6 +161,10 @@ List lines are `atom [keywords]`: an optional keyword override (e.g.
 before emerging.  A board's `sandbox-packages.use` (`atom use_flags...`
 lines) is written to `etc/portage/package.use/` the same way.
 
+Files under `defaults/portage/` are overlaid onto the sandbox's
+`etc/portage/` during prepare.  Prepare is idempotent (`.prepared`
+marker), so later changes do not reach already-prepared sandboxes.
+
 ---
 
 ## Sandboxing approach
