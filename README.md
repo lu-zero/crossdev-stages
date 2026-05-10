@@ -9,7 +9,7 @@ Rootless cross-compilation of Gentoo stages using crossdev and hakoniwa
 - [x] Assemble bootable images
 - [x] Per-CFLAGS target stage isolation (glibc-only rebuild)
 - [x] Rust CLI using [hakoniwa](https://github.com/souk4711/hakoniwa) for sandboxing
-- [x] Modular bootloader (opensbi, u-boot, tfa, rkbin)
+- [x] Modular bootloader (opensbi, u-boot, grub, syslinux, tfa, rkbin)
 - [x] File-convention hooks (pre/post/override scripts per build step)
 - [x] Git source cache (bare repo references)
 
@@ -105,28 +105,11 @@ eselect repository create crossdev
 Each board lives in `boards/<name>/` with:
 - `board.conf` -- variables read by Rust and bash scripts
 - `genimage.cfg` -- disk image layout
-- `sandbox-packages.txt` -- extra host packages for the sandbox (optional)
-- `sandbox-packages.use` -- USE flags for those packages (optional)
-- `target-packages.txt` -- extra packages cross-emerged into the image (optional)
 - `pre-{step}.sh` -- runs before Rust default (optional)
 - `post-{step}.sh` -- runs after Rust default (optional)
 - `override-{step}.sh` -- replaces Rust default entirely (optional)
 
 Steps: `deps`, `checkout`, `bootloader`, `kernel`, `assemble`, `pack`
-
-Package lists in `defaults/` apply to every sandbox
-(`defaults/sandbox-packages.txt`) and every image
-(`defaults/target-packages.txt`).  The effective target set is
-`defaults/target-packages.txt` UNION `boards/<name>/target-packages.txt`
-MINUS the board's `-atom` lines (e.g. `-app-misc/fastfetch` drops a
-default) -- every part is a plain file.  Subtracting an atom not in the
-set warns and does nothing; `-atom` lines in the defaults file itself
-are an error.  Heavy extras (mold, go, cmake, rust, iw, wpa_supplicant)
-stay out of the defaults -- boards opt in via their own list.
-List lines are `atom [keywords]` -- a keyword override (e.g.
-`sys-boot/syslinux **`) lands in `etc/portage/package.accept_keywords/`.
-Portage config files under `defaults/portage/` are overlaid onto the
-sandbox's `etc/portage/` during prepare.
 
 ### Build step execution
 
@@ -136,6 +119,20 @@ sandbox's `etc/portage/` during prepare.
 3. Rust module default
 4. post-{step}.sh exists?      -> run it
 ```
+
+### Bootloader pipeline
+
+The `bootloader` step runs an ordered list of stages declared in the
+`BOOT_PIPELINE` array. Valid stage names: `opensbi`, `uboot`, `grub`,
+`syslinux`, `tfa`, `rkbin`, `amlogic-fip` (validated when board.conf is
+loaded). If the key is omitted the default
+`("opensbi" "uboot" "syslinux" "grub")` applies; each stage is a no-op
+unless its board.conf keys are set, so the default covers both the
+RISC-V vendor SDK pattern and the x86 BIOS pattern. An explicitly empty
+array `()` runs no stages (all-prebuilt firmware). Stages pass data
+forward via env exports prepended to later stages' build commands, e.g.
+`tfa` exports `BL31=` and `rkbin` exports `ROCKCHIP_TPL=`, both consumed
+by `uboot`.
 
 ### board.conf variables
 
@@ -151,9 +148,17 @@ sandbox's `etc/portage/` during prepare.
 | `KERNEL_TAG` | no | Kernel git ref (default: top-level `TAG`) |
 | `KERNEL_ARCH` | no | Linux `ARCH=` value (default: auto from `BOARD_ARCH`) |
 | `BUILD_STEPS` | no | Build pipeline steps (default: deps checkout bootloader kernel assemble pack) |
+| `BOOT_PIPELINE` | no | Ordered bootloader stages (default: `("opensbi" "uboot" "syslinux" "grub")`; `()` = none) |
 | `OPENSBI_FW_TYPE` | no | OpenSBI firmware type: `dynamic` (default), `jump`, `payload` |
 | `OPENSBI_MAKE_FLAGS` | no | Extra opensbi make arguments |
 | `U_BOOT_MAKE_FLAGS` | no | Extra u-boot make arguments |
+| `GRUB_PLATFORMS` | no | GRUB platform (e.g. `pc`); enables the `grub` stage (grub-mkimage) |
+| `GRUB_MODULES` | no | GRUB modules embedded in core.img (default: BIOS boot set) |
+| `SYSLINUX_REPO` / `SYSLINUX_TAG` | no | SYSLINUX source repo + tag; enables the `syslinux` stage |
+| `TFA_REPO` / `TFA_TAG` / `TFA_PLAT` | no | ARM Trusted Firmware-A (BL31) repo, tag (default `master`), platform |
+| `RKBIN_REPO` / `RKBIN_TAG` / `RKBIN_DDR` | no | Rockchip blob repo, tag (default `master`), DDR-init blob glob |
+| `FIP_REPO` / `FIP_TAG` | no | Amlogic boot-FIP packaging repo, tag (default `master`) |
+| `FIRMWARE_TAG` | no | Tag for the firmware overlay repo (default: `TAG`) |
 | `COMPRESSION` | no | Image compression: `xz` (default), `gz`, `none` |
 | `TESTING` | no | Mark board as testing (`true`/`false`) |
 

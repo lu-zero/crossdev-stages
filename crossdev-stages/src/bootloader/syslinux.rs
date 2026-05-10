@@ -1,3 +1,9 @@
+//! SYSLINUX: BIOS bootloader (MBR bootstrap + ldlinux).
+//!
+//! Cross-compiled from source; the mtools-based installer is rebuilt with
+//! the host compiler so genimage's exec-post can run it on unmounted FAT
+//! images without root.
+
 use crate::board::BoardConfig;
 use crate::container::SandboxRunner;
 use crate::error::Result;
@@ -19,7 +25,7 @@ pub fn clone(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
 /// 2. Rebuild just the `mtools/syslinux` installer with the host compiler.
 ///    This variant works on unmounted FAT images without root, perfect for
 ///    use with genimage's exec-post hook.
-pub fn build(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+pub fn build(runner: &SandboxRunner, board: &BoardConfig, _env: &[String]) -> Result<()> {
     if board.syslinux_repo.is_none() {
         return Ok(());
     }
@@ -107,4 +113,10 @@ pub fn build(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
          CC=gcc LD=ld AR=gcc-ar RANLIB=gcc-ranlib \
          all",
     )
+}
+
+/// SYSLINUX's outputs (mbr.bin, ldlinux blobs, mtools installer) are
+/// consumed at pack time (genimage exec-post), not by later stages.
+pub fn exports(_board: &BoardConfig) -> Vec<String> {
+    Vec::new()
 }

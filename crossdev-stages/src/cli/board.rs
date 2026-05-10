@@ -53,6 +53,51 @@ pub fn run(boards_root: &Utf8Path, cmd: BoardCmd) -> Result<()> {
             if let Some(f) = &board_cfg.u_boot_make_flags {
                 println!("U-Boot flags:   {f}");
             }
+            if let Some(p) = &board_cfg.grub_platforms {
+                println!("GRUB platforms: {p}");
+            }
+            if let Some(m) = &board_cfg.grub_modules {
+                println!("GRUB modules:   {m}");
+            }
+            if let Some(r) = &board_cfg.syslinux_repo {
+                println!("SYSLINUX repo:  {r}");
+            }
+            if let Some(t) = &board_cfg.syslinux_tag {
+                println!("SYSLINUX tag:   {t}");
+            }
+            if let Some(r) = &board_cfg.tfa_repo {
+                println!("TFA repo:       {r}");
+            }
+            if let Some(t) = &board_cfg.tfa_tag {
+                println!("TFA tag:        {t}");
+            }
+            if let Some(p) = &board_cfg.tfa_plat {
+                println!("TFA plat:       {p}");
+            }
+            if let Some(r) = &board_cfg.rkbin_repo {
+                println!("rkbin repo:     {r}");
+            }
+            if let Some(g) = &board_cfg.rkbin_ddr {
+                println!("rkbin DDR:      {g}");
+            }
+            if let Some(r) = &board_cfg.fip_repo {
+                println!("FIP repo:       {r}");
+            }
+            if let Some(t) = &board_cfg.fip_tag {
+                println!("FIP tag:        {t}");
+            }
+            let pipeline = crate::bootloader::pipeline(&board_cfg);
+            let default_marker = if board_cfg.boot_pipeline.is_none() {
+                " (default)"
+            } else {
+                ""
+            };
+            let stages = if pipeline.is_empty() {
+                "(none)".into()
+            } else {
+                pipeline.join(" ")
+            };
+            println!("Boot pipeline:  {stages}{default_marker}");
             if !board_cfg.build_steps.is_empty() {
                 println!("Build steps:    {}", board_cfg.build_steps.join(" "));
             }
