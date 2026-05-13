@@ -120,7 +120,7 @@ and per-package CFLAGS workarounds.
 Steps run in order (configurable via `BUILD_STEPS` in `board.conf`):
 
 ```
-deps       Install extra sandbox packages + cross-emerge target-packages.txt.
+deps       Cross-emerge defaults + per-board package lists into the target.
 checkout   Clone/update kernel, opensbi, u-boot source via git source cache.
 bootloader Build opensbi and/or u-boot inside the sandbox container.
 kernel     Build Linux kernel + modules; install modules into target stage.
