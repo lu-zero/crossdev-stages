@@ -1,0 +1,20 @@
+# K1 extras on top of defaults/target-packages.txt
+
+# Dev tools (vim/git/htop/fastfetch are in defaults)
+dev-debug/strace
+dev-debug/gdb
+net-misc/curl
+net-misc/wget
+
+# System tools
+sys-process/lsof
+sys-apps/file
+app-misc/screen
+
+# Numerical / scientific
+sci-libs/fftw
+# sci-libs/gsl, sci-libs/lapack: pull sci-libs/openblas which fails to
+# cross-compile on RISC-V (param.h sgemm_r undeclared). Native emerge.
+
+# dev-lang/ocaml: cross-emerge fails -- configure runs cross-compiled
+# test binaries (host can't execute RISC-V). Native emerge on board.
