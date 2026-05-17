@@ -26,6 +26,10 @@ bash /scripts/boards/k230/make-k230-firmware.sh \
     -i /build/u-boot/spl/u-boot-spl.bin \
     -o /build/u-boot/fn_u-boot-spl.bin
 
+# Validate K230 boot ROM header magic ('K230' at offset 0)
+magic=$(head -c 4 /build/u-boot/fn_u-boot-spl.bin)
+[ "$magic" = "K230" ] || { echo "ERROR: SPL missing K230 magic (got: $magic)" >&2; exit 1; }
+
 # Package u-boot as gzipped uImage
 gzip -fkn9 /build/u-boot/u-boot.bin
 mkimage -A riscv -C gzip -O u-boot -T firmware -a 0 -e 0 -n uboot \
