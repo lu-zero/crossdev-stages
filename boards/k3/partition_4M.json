@@ -1,0 +1,46 @@
+{
+  "version": "1.0",
+  "format": "mtd",
+  "_note": "SPI flash layout (4M-ish total). Paths point at our build dir.",
+  "partitions": [
+    {
+      "name": "bootinfo",
+      "comment": "address+size info of fsbl; MUST not change position",
+      "offset": "0",
+      "size": "128K",
+      "image": "u-boot/bootinfo_spinor.bin"
+    },
+    {
+      "name": "fsbl",
+      "comment": "offset designated by bootinfo",
+      "offset": "128K",
+      "size": "512K",
+      "image": "u-boot/FSBL.bin"
+    },
+    {
+      "name": "env",
+      "comment": "uboot env data; MUST not change offset/size",
+      "offset": "640K",
+      "size": "64K",
+      "image": "u-boot/env.bin"
+    },
+    {
+      "name": "esos",
+      "offset": "704K",
+      "size": "1M",
+      "image": "esos.itb"
+    },
+    {
+      "name": "opensbi",
+      "offset": "1728K",
+      "size": "384K",
+      "image": "opensbi/build/platform/generic/firmware/fw_dynamic.itb"
+    },
+    {
+      "name": "uboot",
+      "offset": "2112K",
+      "size": "3M",
+      "image": "u-boot/u-boot.itb"
+    }
+  ]
+}
