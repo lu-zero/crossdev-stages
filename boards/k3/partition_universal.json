@@ -1,0 +1,67 @@
+{
+  "version": "1.0",
+  "format": "gpt",
+  "_note": "eMMC/UFS GPT layout — matches our genimage.cfg byte-for-byte.",
+  "partitions": [
+    {
+      "name": "env",
+      "hidden": true,
+      "offset": "640K",
+      "size": "64K",
+      "image": "u-boot/env.bin"
+    },
+    {
+      "name": "bootinfo",
+      "hidden": true,
+      "offset": "1M",
+      "size": "128K",
+      "image": "factory/bootinfo_block.bin"
+    },
+    {
+      "name": "fsbl",
+      "hidden": true,
+      "offset": "1536K",
+      "size": "512K",
+      "image": "factory/FSBL.bin"
+    },
+    {
+      "name": "esos",
+      "hidden": true,
+      "offset": "4M",
+      "size": "3M",
+      "image": "esos.itb"
+    },
+    {
+      "name": "opensbi",
+      "hidden": true,
+      "offset": "7M",
+      "size": "1M",
+      "image": "opensbi/build/platform/generic/firmware/fw_dynamic.itb"
+    },
+    {
+      "name": "uboot",
+      "hidden": true,
+      "offset": "8M",
+      "size": "4M",
+      "image": "u-boot/u-boot.itb"
+    },
+    {
+      "name": "ESP",
+      "offset": "12M",
+      "size": "256M",
+      "image": "esp.vfat"
+    },
+    {
+      "name": "bootfs",
+      "offset": "268M",
+      "size": "256M",
+      "image": "bootfs.ext4"
+    },
+    {
+      "name": "rootfs",
+      "offset": "524M",
+      "size": "-",
+      "image": "rootfs.ext4"
+    }
+  ]
+}
