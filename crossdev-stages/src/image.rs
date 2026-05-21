@@ -366,6 +366,21 @@ fn default_pack(
     };
     runner.run(&format!("mv /build/{cfg_name} /build/{img_name}"))?;
 
+    // Emit the sidecar manifest after the timestamped mv (so it records the
+    // final image name) and BEFORE compression: partition sources are still
+    // in-place and the sha256 covers the uncompressed bytes users will dd.
+    let host_cfg = if board_cfg.exists() {
+        board_cfg.clone()
+    } else {
+        project_root(boards_root).join("genimage.cfg")
+    };
+    crate::manifest::write_image_sidecar(
+        &build.dir,
+        &board.name,
+        &img_name,
+        host_cfg.exists().then_some(host_cfg.as_path()),
+    )?;
+
     let compression = board.compression.as_deref().unwrap_or("xz");
     let final_name = match compression {
         "none" => {

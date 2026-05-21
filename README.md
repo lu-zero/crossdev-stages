@@ -96,6 +96,28 @@ the packed image filename (which carries a UTC timestamp) from the build's
 `.image` marker. Without a `bundle.list` the whole build dir is copied,
 skipping the `gen/`, `linux/`, `tmp/`, and `firmware/` source trees.
 
+### Image manifest
+
+Every `image build` emits an `<image>.manifest.json` next to the
+compressed disk image, listing board, full-image sha256, and the
+partition table parsed from `genimage.cfg`:
+
+```json
+{
+  "board": "k230",
+  "image": "gentoo-linux-k230_dev-sdcard-20260430T165016Z.img",
+  "sha256": "d1632bbf...",
+  "partitions": [
+    { "name": "uboot_spl_1", "offset": "1024K", "size": "512K",
+      "image": "u-boot/fn_u-boot-spl.bin", "sha256": "273f5662..." },
+    ...
+  ]
+}
+```
+
+Useful for verifying integrity and writing individual partitions to
+eMMC/SPI flash at known offsets without re-parsing `genimage.cfg`.
+
 ### Source cache
 
 Git repos are cached as bare repositories at `~/.cache/crossdev-stages/sources/`.
