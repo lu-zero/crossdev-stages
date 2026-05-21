@@ -1,0 +1,59 @@
+#!/sbin/openrc-run
+# Resize the rootfs partition to fill its underlying disk on first boot,
+# then resize the ext4 filesystem to match.  After the first successful
+# run, leaves a marker file and short-circuits on subsequent boots.
+#
+# Why: images ship with a fixed-size rootfs (e.g. 5 GB) to keep the .img
+# small.  On real storage (UFS / eMMC / SD card / NVMe) the underlying
+# partition is much larger, but the filesystem still thinks it's 5 GB
+# until something grows it.
+
+description="Grow rootfs filesystem to fill its partition on first boot"
+
+depend() {
+    need root
+    before *
+}
+
+start() {
+    [ -f /etc/.rootfs-grown ] && return 0
+
+    local src disk part
+    src=$(findmnt -n -o SOURCE /)
+    case "$src" in
+        /dev/mmcblk*p*|/dev/nvme*n*p*)
+            disk=${src%p*}
+            part=${src##*p}
+            ;;
+        /dev/sd[a-z]*|/dev/vd[a-z]*|/dev/xvd[a-z]*)
+            disk=$(echo "$src" | sed -E 's/[0-9]+$//')
+            part=$(echo "$src" | grep -oE '[0-9]+$')
+            ;;
+        *)
+            ewarn "Unsupported root device pattern: $src"
+            return 0
+            ;;
+    esac
+
+    if [ -z "$disk" ] || [ -z "$part" ]; then
+        ewarn "Could not parse disk/partition from $src"
+        return 0
+    fi
+
+    ebegin "Growing partition $part on $disk to disk end"
+    parted -s "$disk" resizepart "$part" 100% || {
+        eend $? "parted resizepart failed"
+        return 0
+    }
+    eend 0
+
+    ebegin "Resizing ext4 on $src"
+    resize2fs "$src" || {
+        eend $? "resize2fs failed"
+        return 0
+    }
+    eend 0
+
+    touch /etc/.rootfs-grown
+    einfo "Rootfs grown.  Marker /etc/.rootfs-grown created."
+}
