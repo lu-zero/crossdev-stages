@@ -1,9 +1,30 @@
-# Packages to cross-install into the target sysroot for the K1 image
+# Packages to cross-install into the target sysroot for the K3 image
 
-# Services enabled by default
+# Services
 net-misc/openssh
 app-admin/metalog
 net-misc/ntp
 
 # Initramfs / boot
 sys-apps/busybox
+
+# Dev tools
+app-editors/vim
+dev-vcs/git
+dev-debug/strace
+dev-debug/gdb
+net-misc/curl
+net-misc/wget
+
+# System tools
+sys-process/htop
+sys-process/lsof
+sys-apps/file
+app-misc/fastfetch
+app-misc/screen
+
+# Build systems
+dev-build/meson
+dev-build/ninja
+
+# perf is built from kernel/tools/perf in post-assemble.sh (matches K3 kernel)
