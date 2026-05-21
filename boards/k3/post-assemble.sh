@@ -25,3 +25,9 @@ cp /build/u-boot/bootinfo_block.bin  /build/factory/bootinfo_block.bin
 
 # Create env.bin for the env partition from the u-boot build's default environment
 cp /build/u-boot/u-boot-env-default.bin /build/u-boot/env.bin
+
+# Build perf from kernel source (version-matched to K3 kernel) and install to rootfs
+make -C /build/linux/tools/perf \
+    ARCH="${KERNEL_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" \
+    V=1 WERROR=0 NO_LIBPYTHON=1 NO_LIBPERL=1 NO_LIBTRACEEVENT=1 \
+    DESTDIR=/build/gen/root/usr install
