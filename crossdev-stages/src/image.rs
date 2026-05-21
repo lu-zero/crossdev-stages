@@ -231,6 +231,17 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
 
     runner
         .run("mkdir -p /build/gen/root/etc/runlevels/{boot,default,nonetwork,shutdown,sysinit}")?;
+
+    // Board-agnostic: grow-rootfs oneshot, runs once on first boot, fills
+    // the rootfs partition out to the disk end + resize2fs.  Needs
+    // sys-block/parted + sys-fs/e2fsprogs in the target.
+    runner.run(
+        "install -m 0755 /scripts/defaults/scripts/grow-rootfs.initd \
+           /build/gen/root/etc/init.d/grow-rootfs && \
+         ln -sf /etc/init.d/grow-rootfs \
+           /build/gen/root/etc/runlevels/boot/grow-rootfs",
+    )?;
+
     for svc in &board.services {
         if let Some((name, runlevel)) = svc.split_once(':') {
             runner.run(&format!(
