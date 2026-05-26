@@ -109,15 +109,29 @@ impl Target {
         let portage = Portage::new(&runner);
 
         // Update the cross-toolchain in the crossdev prefix first (no ROOT=/target).
-        tracing::info!("Updating crossdev prefix: gcc, binutils-libs, @system…");
-        portage.cross_emerge_crossdev(&chost, &["sys-devel/gcc"])?;
+        // Pin gcc to the board's GCC_VERSION so portage doesn't pick the current
+        // default visible (could be a different major and would break ABI of
+        // binpkgs already in the cache).  Pass --noreplace so the cross prefix's
+        // package.mask/pin-gcc — which intentionally blocks upgrades past the
+        // installed version to prevent bootstrap breakage — does not abort the
+        // run when gcc is already at the requested version.
+        let gcc_atom = board
+            .and_then(|b| b.gcc_version.as_deref())
+            .map(|v| format!("=sys-devel/gcc-{v}*"))
+            .unwrap_or_else(|| "sys-devel/gcc".to_string());
+        tracing::info!(gcc_atom = %gcc_atom, "Updating crossdev prefix: gcc, binutils-libs, @system…");
+        portage.cross_emerge_crossdev(&chost, &["--noreplace", &gcc_atom])?;
         portage.cross_emerge_crossdev(&chost, &["sys-libs/binutils-libs"])?;
         portage.cross_emerge_crossdev(&chost, &["-u", "system"])?;
 
         // Rebuild @world in the target.
+        // Explicit --jobs / --load-average so EMERGE_DEFAULT_OPTS from make.conf
+        // can't be silently lost (e.g. when a wrapper drops PORTAGE_CONFIGROOT).
+        let (jobs, load) = crate::portage::parallelism();
         tracing::info!("Rebuilding @world in target…");
         runner.run(&format!(
-            "KERNEL_DIR=/usr/src/linux ROOT=/target {chost}-emerge -b -k -e @world"
+            "KERNEL_DIR=/usr/src/linux ROOT=/target {chost}-emerge \
+             -b -k --jobs={jobs} --load-average {load} -e @world"
         ))?;
 
         self.update_ldconfig(ws, sandbox)?;

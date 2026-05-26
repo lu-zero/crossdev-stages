@@ -121,7 +121,7 @@ impl<'a> MakeConf<'a> {
     }
 }
 
-fn parallelism() -> (usize, usize) {
+pub fn parallelism() -> (usize, usize) {
     let n = num_cpus::get();
     let jobs = n / 2 + 1;
     let load = n;
