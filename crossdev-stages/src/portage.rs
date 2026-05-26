@@ -59,11 +59,15 @@ impl<'a> MakeConf<'a> {
             // a binary package is only safe to reuse under the flags that
             // made it, and that is what PKGDIR names.
             let features = if self.pkgdir.is_some() {
-                "parallel-install -merge-wait buildpkg"
+                "parallel-install parallel-fetch -merge-wait pkgdir-index-trusted buildpkg"
             } else {
-                "parallel-install -merge-wait"
+                "parallel-install parallel-fetch -merge-wait pkgdir-index-trusted"
             };
             set_make_conf_var(&make_conf, "FEATURES", features)?;
+            // The container already tmpfs-mounts /dev/shm, and portage's build
+            // dir is the one thing in a cross build that is pure write-then-
+            // discard: gcc, llvm and rust each move gigabytes through it.
+            set_make_conf_var(&make_conf, "PORTAGE_TMPDIR", "/dev/shm")?;
             set_make_conf_var(
                 &make_conf,
                 "PORT_LOGDIR",
@@ -123,9 +127,7 @@ impl<'a> MakeConf<'a> {
 
 pub fn parallelism() -> (usize, usize) {
     let n = num_cpus::get();
-    let jobs = n / 2 + 1;
-    let load = n;
-    (jobs, load)
+    (n, n * 2)
 }
 
 /// Set or replace a variable in a make.conf file.
