@@ -77,6 +77,9 @@ crossdev-stages status
 # Export the image
 crossdev-stages image export --board <BOARD> -o /tmp/
 
+# Export a full flash bundle (all boot blobs + images), optionally as .tar.xz
+crossdev-stages image export --board <BOARD> --all --tar -o /tmp/
+
 # Clean up stale builds and old stage3 tarballs
 crossdev-stages maint clean
 
@@ -84,6 +87,14 @@ crossdev-stages maint clean
 crossdev-stages maint clean --sandboxes --targets
 crossdev-stages maint clean --all
 ```
+
+`--all` copies every build artifact into a `<BOARD>-flash-bundle/` directory.
+If `boards/<BOARD>/bundle.list` exists it acts as a whitelist: one build-dir
+relative path per line, `#` comments ignored. A missing entry fails the
+export unless prefixed with `optional:`, and the token `@image` resolves to
+the packed image filename (which carries a UTC timestamp) from the build's
+`.image` marker. Without a `bundle.list` the whole build dir is copied,
+skipping the `gen/`, `linux/`, `tmp/`, and `firmware/` source trees.
 
 ### Source cache
 

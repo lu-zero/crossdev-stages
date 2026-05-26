@@ -110,6 +110,7 @@ pub async fn run(
             board: board_name,
             output,
             all,
+            tar,
         } => {
             let builds = ws.list_builds()?;
             let build = builds
@@ -124,20 +125,36 @@ pub async fn run(
             std::fs::create_dir_all(&out_dir)?;
 
             if all {
-                let mut exported = 0;
-                for entry in std::fs::read_dir(&build.dir)? {
-                    let entry = entry?;
-                    let name = entry.file_name().into_string().unwrap_or_default();
-                    if name.starts_with('.') || !entry.path().is_file() {
-                        continue;
-                    }
-                    let dest = out_dir.join(&name);
-                    std::fs::copy(entry.path(), &dest)?;
-                    let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                    println!("{name} ({:.1}M)", size as f64 / 1_048_576.0);
-                    exported += 1;
+                let bundle_root = out_dir.join(format!("{board_name}-flash-bundle"));
+                // Start clean so artifacts dropped from bundle.list don't linger.
+                if bundle_root.exists() {
+                    std::fs::remove_dir_all(&bundle_root)?;
                 }
-                println!("{exported} file(s) exported to {out_dir}");
+                let manifest = boards_root.join(&board_name).join("bundle.list");
+                if manifest.is_file() {
+                    copy_listed_artifacts(&build.dir, &bundle_root, &manifest)?;
+                } else {
+                    copy_build_artifacts(&build.dir, &bundle_root)?;
+                }
+                copy_flash_aux(&boards_root.join(&board_name), &bundle_root)?;
+                if tar {
+                    let archive = out_dir.join(format!("{board_name}-flash-bundle.tar.xz"));
+                    let status = std::process::Command::new("tar")
+                        .args(["-cf", archive.as_str(), "-I", "xz -T0", "-C",
+                               out_dir.as_str(),
+                               &format!("{board_name}-flash-bundle")])
+                        .status()?;
+                    if !status.success() {
+                        return Err(crate::error::Error::CommandFailed {
+                            code: status.code().unwrap_or(1),
+                            reason: "tar -I 'xz -T0' failed".into(),
+                        });
+                    }
+                    let size = std::fs::metadata(&archive).map(|m| m.len()).unwrap_or(0);
+                    println!("{archive} ({:.1}M)", size as f64 / 1_048_576.0);
+                } else {
+                    println!("Bundle at {bundle_root}");
+                }
             } else {
                 let img_name = std::fs::read_to_string(build.dir.join(".image"))
                     .map(|s| s.trim().to_string())
@@ -156,6 +173,124 @@ pub async fn run(
                     println!("Build not packed yet. Run: crossdev-stages image build --board {board_name}");
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+/// Copy only the paths listed in `<board>/bundle.list` (one relative path
+/// per line, `#` comments + blanks ignored).  Preserves directory structure.
+///
+/// The magic token `@image` expands to the packed image filename recorded in
+/// the build's `.image` marker (its name carries a UTC timestamp, so it cannot
+/// be hardcoded).  A leading `optional:` marks an entry that may be absent —
+/// it is skipped with a warning.  Any other missing entry is a hard error, so
+/// a dropped boot blob fails the export instead of silently shipping a broken
+/// bundle.
+fn copy_listed_artifacts(src: &Utf8Path, dst: &Utf8Path, manifest: &Utf8Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    let text = std::fs::read_to_string(manifest)?;
+    for line in text.lines() {
+        let raw = line.split('#').next().unwrap_or("").trim();
+        if raw.is_empty() {
+            continue;
+        }
+        let (optional, token) = match raw.strip_prefix("optional:") {
+            Some(rest) => (true, rest.trim()),
+            None => (false, raw),
+        };
+        if token.is_empty() {
+            continue;
+        }
+        let rel = if token == "@image" {
+            match std::fs::read_to_string(src.join(".image")) {
+                Ok(name) => name.trim().to_string(),
+                Err(_) if optional => {
+                    eprintln!("bundle.list: no packed image (.image marker absent), skipping @image");
+                    continue;
+                }
+                Err(_) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotFound,
+                        "bundle.list: @image requested but build has no .image marker (not packed)",
+                    )
+                    .into());
+                }
+            }
+        } else {
+            token.to_string()
+        };
+        let s = src.join(&rel);
+        if !s.is_file() {
+            if optional {
+                eprintln!("bundle.list: optional {rel} missing, skipping");
+                continue;
+            }
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("bundle.list: required artifact missing: {rel}"),
+            )
+            .into());
+        }
+        let d = dst.join(&rel);
+        if let Some(parent) = d.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(&s, &d)?;
+    }
+    Ok(())
+}
+
+/// Pull flash helpers (partition tables, fastboot.yaml, flash.sh) from
+/// the board source dir into the bundle so the tarball is self-contained.
+fn copy_flash_aux(board_dir: &Utf8Path, dst: &Utf8Path) -> Result<()> {
+    for name in ["partition_4M.json", "partition_universal.json",
+                 "fastboot.yaml", "flash.sh"] {
+        let src = board_dir.join(name);
+        if src.is_file() {
+            std::fs::copy(&src, dst.join(name))?;
+        }
+    }
+    Ok(())
+}
+
+/// Recursively copy a build directory's flash artifacts into `dst`.
+/// Top-level dirs in `TOP_SKIP_DIRS` are excluded (gen/ staged rootfs,
+/// linux/ kernel source build, tmp/ scratch, firmware/ source clone) —
+/// these are already baked into the partition images.  Symlinks and
+/// dotfiles are always skipped.
+fn copy_build_artifacts(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
+    const TOP_SKIP_DIRS: &[&str] = &["gen", "linux", "tmp", "firmware"];
+    copy_build_artifacts_rec(src, dst, true, TOP_SKIP_DIRS)
+}
+
+fn copy_build_artifacts_rec(
+    src: &Utf8Path,
+    dst: &Utf8Path,
+    is_top: bool,
+    top_skip: &[&str],
+) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let name = entry.file_name().into_string().unwrap_or_default();
+        if name.starts_with('.') {
+            continue;
+        }
+        let ty = entry.file_type()?;
+        if ty.is_symlink() {
+            continue;
+        }
+        if ty.is_dir() {
+            if is_top && top_skip.contains(&name.as_str()) {
+                continue;
+            }
+            let Ok(s_utf8) = camino::Utf8PathBuf::try_from(entry.path()) else {
+                continue; // non-UTF-8 path; skip like the file_name() branch above
+            };
+            copy_build_artifacts_rec(&s_utf8, &dst.join(&name), false, top_skip)?;
+        } else if ty.is_file() {
+            std::fs::copy(entry.path(), dst.join(&name))?;
         }
     }
     Ok(())

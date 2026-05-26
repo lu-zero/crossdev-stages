@@ -1,0 +1,25 @@
+# Files copied into the K3 flash bundle by `image export --board k3 --all`.
+# Paths are relative to the build directory.
+#
+# Syntax: one path per line; `#` starts a comment.  A missing entry is a
+# hard error unless prefixed with `optional:`.  The token `@image` expands
+# to the packed image filename recorded in the build's .image marker.
+
+# Boot blobs flashed by flash.sh
+u-boot/FSBL.bin
+u-boot/u-boot.itb
+u-boot/env.bin
+u-boot/bootinfo_spinor.bin
+factory/FSBL.bin
+factory/bootinfo_block.bin
+opensbi/build/platform/generic/firmware/fw_dynamic.itb
+esos.itb
+
+# Filesystem images
+esp.vfat
+bootfs.ext4
+rootfs.ext4
+
+# Full single-disk image for SD-card writing; optional: so a blob-only
+# build still exports.
+optional:@image
