@@ -229,6 +229,10 @@ pub enum ImageCmd {
         /// Export all build artifacts, not just the final image.
         #[arg(long)]
         all: bool,
+        /// Bundle exported artifacts into a single .tar.xz next to outputs.
+        /// Only meaningful with --all.
+        #[arg(long, requires = "all")]
+        tar: bool,
     },
 }
 
