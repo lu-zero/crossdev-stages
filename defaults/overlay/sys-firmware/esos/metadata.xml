@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+  <maintainer type="person">
+    <email>sumoon@seoulsaram.org</email>
+    <name>Sungjoon Moon</name>
+  </maintainer>
+  <longdescription lang="en">
+    ESOS (Energy Service OS) — RT-Thread coprocessor firmware for SpaceMIT
+    K1 (N308) or K3 (RT24) chips, selected via USE=k1 or USE=k3.  The
+    upstream openeuler-riscv tree carries both platforms; ./build.sh
+    config picks which to build.  Built with upstream baremetal
+    riscv64-elf-gcc — no vendor toolchain.
+
+    K3 RDEPENDs on sys-firmware/esos-lite (PM mini-blob .incbin'd at SRAM 0).
+    K1 installs /lib/firmware/esos.elf for AP's remoteproc.
+    K3 installs /boot/esos.itb for u-boot to load into RT24 cores.
+  </longdescription>
+  <use>
+    <flag name="k1">Build for K1 N308 coprocessor (rv32imafc/ilp32f/medlow)</flag>
+    <flag name="k3">Build for K3 RT24 coprocessors (rv64imafdc/lp64d/medany), produces esos.itb FIT image</flag>
+  </use>
+</pkgmetadata>

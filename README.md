@@ -443,6 +443,28 @@ does not change them. genimage's own `disk-signature = random` cannot be used
 here: `assemble` writes the boot config before `pack` creates the partition
 table, so the value has to be known first.
 
+### Optional: coprocessor firmware (K1/K3 ESOS)
+
+The `defaults/overlay/` directory ships as the `crossdev-stages` portage
+overlay inside the sandbox.  It contains opt-in (p.masked) ebuilds for
+SpaceMIT coprocessor firmware:
+
+- `sys-firmware/esos` (USE=k1|k3) — RT-Thread firmware from a single
+  upstream tree, chip selected at build time
+- `sys-firmware/esos-lite` — K3 PM mini-blob (RDEPEND of esos[k3])
+
+To install on a target sysroot:
+
+```sh
+echo 'sys-firmware/esos' >> /etc/portage/package.unmask
+crossdev -t riscv64-elf -s4   # baremetal toolchain, ESOS-specific
+USE=k1 ROOT=$SYSROOT emerge -av sys-firmware/esos    # K1 board
+USE=k3 ROOT=$SYSROOT emerge -av sys-firmware/esos    # K3 board
+```
+
+Patches and final build wiring still in progress — current ebuilds are
+scaffolding.
+
 ## Limitations
 
 - Some packages are cross-compilation unfriendly and rely on runtime checks (e.g. git iconv checks)

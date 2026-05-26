@@ -1,0 +1,5 @@
+# Coprocessor firmware ebuilds.  Build is fragile (vendor RT-Thread tree
+# with custom toolchain patches), so packages are opt-in via
+# /etc/portage/package.unmask.  See README "Optional: coprocessor firmware".
+sys-firmware/esos
+sys-firmware/esos-lite

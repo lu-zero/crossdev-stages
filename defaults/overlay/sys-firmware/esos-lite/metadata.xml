@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE pkgmetadata SYSTEM "https://www.gentoo.org/dtd/metadata.dtd">
+<pkgmetadata>
+  <maintainer type="person">
+    <email>sumoon@seoulsaram.org</email>
+    <name>Sungjoon Moon</name>
+  </maintainer>
+  <longdescription lang="en">
+    Tiny PM firmware blob loaded at SRAM 0x0 on K3 RT24, embedded via
+    .incbin into the main ESOS-K3 build.  Built from openeuler-riscv
+    spacemit-k3-firmware-esos-lite (spacemit-k3-esos-lite branch).
+    Required by sys-firmware/esos-k3 unless BSP_USING_PM is disabled.
+  </longdescription>
+</pkgmetadata>

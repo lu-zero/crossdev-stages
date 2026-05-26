@@ -1,0 +1,67 @@
+diff --git a/bsp/spacemit/rtconfig.py b/bsp/spacemit/rtconfig.py
+index 5356e40b..554165ae 100644
+--- a/bsp/spacemit/rtconfig.py
++++ b/bsp/spacemit/rtconfig.py
+@@ -26,10 +26,10 @@ BUILD = 'release'
+ 
+ if CPU == 'n308':
+     if os.getenv('RTT_EXEC_PATH') is None:
+-        EXEC_PATH   = os.getcwd() + '/../../tools/toolchain/gcc/bin'
++        EXEC_PATH = '/usr/bin'
+     if PLATFORM == 'gcc':
+         # toolchains
+-        PREFIX  = 'riscv-nuclei-elf-'
++        PREFIX  = os.getenv('RTT_CC_PREFIX') or 'riscv64-elf-'
+         CC      = PREFIX + 'gcc'
+         CXX     = PREFIX + 'gcc'
+         AS      = PREFIX + 'gcc'
+@@ -41,11 +41,11 @@ if CPU == 'n308':
+         OBJCPY  = PREFIX + 'objcopy'
+         STRIP   = PREFIX + 'strip'
+ 
+-        DEVICE = ' -march=rv32imafc -mabi=ilp32f -mcmodel=medlow'
++        DEVICE = ' -march=rv32imafc_zifencei -mabi=ilp32f -mcmodel=medlow'
+ 
+         CFLAGS  = DEVICE + ' -c -g -ffunction-sections -fdata-sections -Wall'
+         AFLAGS  = ' -c' + DEVICE + ' -x assembler-with-cpp'
+-        LFLAGS  = DEVICE + ' -nostartfiles -Wl,--no-whole-archive ' + ' -Xlinker --defsym=ENTRY_POINT=%s -T ./platform/%s/%s/gcc.ld -Wl,-gc-sections -Wl,-Map=rtt.map' % (TARGET_ENTRY,CPU,BOARD)
++        LFLAGS  = LDEVICE + ' -nostdlib -Wl,--no-whole-archive -Xlinker --defsym=ENTRY_POINT=%s -T ./platform/%s/%s/gcc.ld -Wl,-gc-sections -Wl,-Map=rtt.map -lgcc' % (TARGET_ENTRY,CPU,BOARD)
+         CPATH   = ''
+         LPATH   = ''
+ 
+@@ -63,7 +63,7 @@ if CPU == 'n308':
+ else:
+     if PLATFORM == 'gcc':
+         # toolchains
+-        PREFIX  = os.getenv('RTT_CC_PREFIX') or 'riscv64-unknown-elf-'
++        PREFIX  = os.getenv('RTT_CC_PREFIX') or 'riscv64-elf-'
+         CC      = PREFIX + 'gcc'
+         CXX     = PREFIX + 'gcc'
+         AS      = PREFIX + 'gcc'
+@@ -75,11 +75,12 @@ else:
+         STRIP   = PREFIX + 'strip'
+         TARGET_EXT = 'elf'
+ 
+-        DEVICE = ' -march=rv64imafdczifencei -mabi=lp64d -mcmodel=medany '
++        DEVICE  = ' -march=rv64imafdc_zifencei -mabi=lp64d -mcmodel=medany '
++        LDEVICE = ' -march=rv64imafdc -mabi=lp64d -mcmodel=medany '
+ 
+         CFLAGS  = DEVICE + '-ffreestanding -flax-vector-conversions -Wno-cpp -fno-common -ffunction-sections -fdata-sections -fstrict-volatile-bitfields -fdiagnostics-color=always'
+         AFLAGS  = ' -c' + DEVICE + ' -x assembler-with-cpp -D__ASSEMBLY__ '
+-        LFLAGS  = DEVICE + ' -nostartfiles -Wl,--no-whole-archive ' + ' -Xlinker --defsym=ENTRY_POINT=%s -T ./platform/%s/%s/gcc.ld -Wl,-gc-sections -Wl,-Map=rtt.map' % (TARGET_ENTRY,CPU,BOARD)
++        LFLAGS  = LDEVICE + ' -nostdlib -Wl,--no-whole-archive -Xlinker --defsym=ENTRY_POINT=%s -T ./platform/%s/%s/gcc.ld -Wl,-gc-sections -Wl,-Map=rtt.map -lgcc' % (TARGET_ENTRY,CPU,BOARD)
+         CPATH   = ''
+         LPATH   = ''
+ 
+diff --git a/build.sh b/build.sh
+index 94ac0a99..6f57c979 100755
+--- a/build.sh
++++ b/build.sh
+@@ -192,6 +192,7 @@ function config_sdk()
+ 	show_target_config
+ 
+ 	mk_info "prepare to toolchain ..."
++	if [ -n "${RTT_EXEC_PATH}" ]; then mk_info "using upstream toolchain from $RTT_EXEC_PATH, skip vendor toolchain unpack"; return 0; fi
+ 
+ 	if [ "x${TARGET_CHIP}" = "xn308" ]; then
+ 		if [ ! -d "${TOP_DIR}/tools/toolchain/gcc" ]; then
