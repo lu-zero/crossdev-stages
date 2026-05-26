@@ -195,6 +195,9 @@ impl Target {
         }
         .write(&portage_dir)?;
 
+        let gcc_pin = board.and_then(|b| b.gcc_version.as_deref());
+        crate::portage::write_version_pins(&portage_dir, gcc_pin)?;
+
         // Copy the profile directory and make.profile symlink from the
         // store-resident crossdev prefix so the target stage uses the
         // correct Gentoo profile.  The (chost, cflags-hash, gcc-spec)
