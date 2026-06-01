@@ -4,7 +4,7 @@ use crate::container::{destroy_dir, unpack_tarball};
 use crate::error::{Error, Result};
 use crate::portage::{MakeConf, Portage};
 use crate::sandbox::Sandbox;
-use crate::stage::default_cflags;
+use crate::stage::{chost_for_arch, default_cflags};
 use crate::workspace::Workspace;
 
 /// A cross-compiled Gentoo stage for the target arch.
@@ -46,7 +46,7 @@ impl Target {
             tracing::info!("Stage1 already built, skipping.");
             return Ok(());
         }
-        let chost = format!("{}-unknown-linux-gnu", self.arch);
+        let chost = chost_for_arch(&self.arch)?;
 
         // Write target portage config and copy profile before first emerge.
         tracing::info!("Preparing target portage configuration…");
@@ -84,7 +84,7 @@ impl Target {
 
     /// Update the target stage (`@world` rebuild).
     pub fn update(&self, sandbox: &Sandbox) -> Result<()> {
-        let chost = format!("{}-unknown-linux-gnu", self.arch);
+        let chost = chost_for_arch(&self.arch)?;
         let runner = sandbox.runner().with_target(&self.dir);
         let portage = Portage::new(&runner);
 
@@ -107,7 +107,7 @@ impl Target {
 
     /// Cross-emerge specific packages into the target.
     pub fn install(&self, sandbox: &Sandbox, packages: &[&str]) -> Result<()> {
-        let chost = format!("{}-unknown-linux-gnu", self.arch);
+        let chost = chost_for_arch(&self.arch)?;
         let runner = sandbox.runner().with_target(&self.dir);
         let portage = Portage::new(&runner);
         portage.cross_emerge(&chost, packages)

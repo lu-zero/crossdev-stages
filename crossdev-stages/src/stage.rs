@@ -16,10 +16,22 @@ pub fn gentoo_arch(arch: &str) -> Result<&'static str> {
         "x86_64" => "amd64",
         "aarch64" => "arm64",
         a if a.starts_with("riscv") => "riscv",
+        a if is_ix86(a) => "x86",
         other => {
             return Err(crate::error::Error::UnknownArch(other.to_string()));
         }
     })
+}
+
+/// Return the full CHOST triple for a given arch.
+/// x86 32-bit uses the "pc" vendor (Gentoo convention); others use "unknown".
+pub fn chost_for_arch(arch: &str) -> Result<String> {
+    let vendor = if is_ix86(arch) { "pc" } else { "unknown" };
+    Ok(format!("{arch}-{vendor}-linux-gnu"))
+}
+
+fn is_ix86(arch: &str) -> bool {
+    matches!(arch, "i386" | "i486" | "i586" | "i686")
 }
 
 /// Return the Gentoo profile path for an OS arch string.
@@ -28,6 +40,7 @@ pub fn gentoo_profile(arch: &str) -> Result<&'static str> {
         a if a.starts_with("riscv") => "default/linux/riscv/23.0/rv64/lp64d",
         "x86_64" => "default/linux/amd64/23.0",
         "aarch64" => "default/linux/arm64/23.0",
+        a if is_ix86(a) => "default/linux/x86/23.0",
         other => {
             return Err(crate::error::Error::UnknownArch(other.to_string()));
         }
@@ -45,6 +58,7 @@ pub fn kernel_arch(arch: &str) -> Result<&'static str> {
         a if a.starts_with("mips") => "mips",
         a if a.starts_with("powerpc") => "powerpc",
         a if a.starts_with("loongarch") => "loongarch",
+        a if is_ix86(a) => "x86",
         other => return Err(crate::error::Error::UnknownArch(other.to_string())),
     })
 }
@@ -78,6 +92,7 @@ pub fn all_llvm_targets() -> String {
 pub fn llvm_target(arch: &str) -> Option<&'static str> {
     Some(match arch {
         a if a.starts_with("x86") => "X86",
+        a if is_ix86(a) => "X86",
         a if a.starts_with("aarch64") => "AArch64",
         a if a.starts_with("arm") => "ARM",
         a if a.starts_with("riscv") => "RISCV",
@@ -96,6 +111,8 @@ pub fn stage_variant(arch: &str) -> &'static str {
         a if a.starts_with("riscv") => "rv64_lp64d-openrc",
         "aarch64" => "arm64-openrc",
         "x86_64" => "amd64-openrc",
+        "i486" | "i586" => "i486-openrc",
+        "i686" => "i686-openrc",
         _ => "openrc",
     }
 }

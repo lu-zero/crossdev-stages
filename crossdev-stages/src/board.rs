@@ -8,6 +8,7 @@ use crate::error::{Error, Result};
 pub struct BoardConfig {
     pub name: String,
     pub arch: String,                // e.g. "riscv64"
+    pub chost_override: Option<String>, // CHOST; overrides derived chost_for_arch()
     pub cflags: Option<String>,      // BOARD_CFLAGS; None → use default_cflags(arch)
     pub ldflags: Option<String>, // BOARD_LDFLAGS; probably never needed (profile default is fine)
     pub rustflags: Option<String>, // BOARD_RUSTFLAGS; cross-compile target-cpu is handled by rust-std
@@ -64,9 +65,15 @@ pub struct BoardConfig {
 }
 
 impl BoardConfig {
-    /// Derive the CHOST triple from the arch (e.g. "riscv64-unknown-linux-gnu").
+    /// Derive the CHOST triple from the arch (e.g. "i586-pc-linux-gnu", "riscv64-unknown-linux-gnu").
+    /// Uses explicit CHOST from board.conf if set, otherwise derives from arch.
     pub fn chost(&self) -> String {
-        format!("{}-unknown-linux-gnu", self.arch)
+        if let Some(ref chost) = self.chost_override {
+            return chost.clone();
+        }
+        crate::stage::chost_for_arch(&self.arch).unwrap_or_else(|_| {
+            format!("{}-unknown-linux-gnu", self.arch)
+        })
     }
 
     /// Effective CFLAGS (board-specific or arch default).
@@ -137,6 +144,7 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
     Ok(BoardConfig {
         name: name.to_string(),
         arch: req!("BOARD_ARCH"),
+        chost_override: kv.get("CHOST").cloned(),
         cflags: kv.get("BOARD_CFLAGS").cloned(),
         ldflags: kv.get("BOARD_LDFLAGS").cloned(),
         rustflags: kv.get("BOARD_RUSTFLAGS").cloned(),
