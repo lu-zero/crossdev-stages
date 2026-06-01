@@ -221,9 +221,10 @@ packages_from_file() {
 gentoo_arch() {
     local os_arch=$1
     case $os_arch in
-        x86_64) ARCH=amd64 FLAVOR=amd64-openrc;;
-        aarch64) ARCH=arm64 FLAVOR=arm64-openrc;;
-        riscv*) ARCH=riscv FLAVOR=rv64_lp64d-openrc;;
+        x86_64)   ARCH=amd64 FLAVOR=amd64-openrc;;
+        aarch64)  ARCH=arm64 FLAVOR=arm64-openrc;;
+        riscv*)   ARCH=riscv FLAVOR=rv64_lp64d-openrc;;
+        i[3456]86) ARCH=x86 FLAVOR=x86-openrc;;
         *) echo "Error: Unknown architecture: $os_arch" >&2; return 1;;
     esac
 }
@@ -236,10 +237,11 @@ target_cflags() {
         return
     fi
     case $arch in
-        x86_64)  echo "-O3 -march=x86-64 -pipe" ;;
-        aarch64) echo "-O3 -pipe" ;;
-        riscv64) echo "-O3 -march=rv64gc -pipe" ;;
-        *)       echo "-O3 -pipe" ;;
+        x86_64)    echo "-O3 -march=x86-64 -pipe" ;;
+        aarch64)   echo "-O3 -pipe" ;;
+        riscv64)   echo "-O3 -march=rv64gc -pipe" ;;
+        i[3456]86) echo "-O2 -march=${arch} -pipe" ;;
+        *)         echo "-O3 -pipe" ;;
     esac
 }
 
@@ -249,6 +251,7 @@ gentoo_profile() {
     gentoo_arch "$arch"
     case "$ARCH" in
         riscv) echo "default/linux/riscv/23.0/rv64/lp64d" ;;
+        x86)   echo "default/linux/x86/23.0" ;;
         *)     echo "default/linux/${ARCH}/23.0" ;;
     esac
 }
@@ -257,10 +260,11 @@ llvm_arch() {
     local arch=$1
     local llvm_target=""
     case $arch in
-        x86_64)  llvm_target="X86" ;;
-        aarch64) llvm_target="AArch64" ;;
-        riscv*)  llvm_target="RISCV" ;;
-        *)       ;;
+        x86_64)    llvm_target="X86" ;;
+        i[3456]86) llvm_target="X86" ;;
+        aarch64)   llvm_target="AArch64" ;;
+        riscv*)    llvm_target="RISCV" ;;
+        *)         ;;
     esac
     if [[ -n "$llvm_target" ]]; then
         echo "$llvm_target"
