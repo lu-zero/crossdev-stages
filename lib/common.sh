@@ -224,8 +224,18 @@ gentoo_arch() {
         x86_64)   ARCH=amd64 FLAVOR=amd64-openrc;;
         aarch64)  ARCH=arm64 FLAVOR=arm64-openrc;;
         riscv*)   ARCH=riscv FLAVOR=rv64_lp64d-openrc;;
-        i[3456]86) ARCH=x86 FLAVOR=x86-openrc;;
+        i486|i586) ARCH=x86 FLAVOR=i486-openrc;;
+        i686)      ARCH=x86 FLAVOR=i686-openrc;;
         *) echo "Error: Unknown architecture: $os_arch" >&2; return 1;;
+    esac
+}
+
+# Derive CHOST triple from OS arch (x86 uses "pc" vendor per Gentoo convention)
+chost_for_arch() {
+    local arch=$1
+    case $arch in
+        i[3456]86) echo "${arch}-pc-linux-gnu" ;;
+        *)         echo "${arch}-unknown-linux-gnu" ;;
     esac
 }
 
@@ -251,7 +261,11 @@ gentoo_profile() {
     gentoo_arch "$arch"
     case "$ARCH" in
         riscv) echo "default/linux/riscv/23.0/rv64/lp64d" ;;
-        x86)   echo "default/linux/x86/23.0" ;;
+        x86)
+            case "$arch" in
+                i686) echo "default/linux/x86/23.0/i686" ;;
+                *)    echo "default/linux/x86/23.0/i486" ;;
+            esac ;;
         *)     echo "default/linux/${ARCH}/23.0" ;;
     esac
 }

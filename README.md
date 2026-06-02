@@ -13,9 +13,20 @@ Rootless cross-compilation of Gentoo stages using crossdev and hakoniwa
 - [x] File-convention hooks (pre/post/override scripts per build step)
 - [x] Git source cache (bare repo references)
 
-## Platforms
-- riscv64 (BPI-F3, Milk-V Jupiter, DC Roma II, OrangePi RV2, K230, Blackhole P100/P150)
-- aarch64 (Odroid M2 -- testing)
+## Boards
+
+| Board | Arch | Kernel | Boot chain | CFLAGS | Status |
+|---|---|---|---|---|---|
+| k1 | riscv64 | spacemit 6.6 | OpenSBI + U-Boot | `-O3 -march=rv64gcv_zvl256b` | stable |
+| k1-upstream | riscv64 | spacemit k3 | OpenSBI + U-Boot | `-O3 -march=rv64gcv_zvl256b` | testing |
+| k3 | riscv64 | spacemit 6.18 | OpenSBI + U-Boot | `-O3 -march=rva23u64` | stable |
+| k230 | riscv64 | canaan (hdmi) | OpenSBI (payload) + U-Boot | `-O3 -march=rv64gcv_zvl128b` | stable |
+| ky-x1 | riscv64 | spacemit 6.6 | OpenSBI + U-Boot | `-O3 -march=rv64gcv_zvl256b` | stable |
+| blackhole | riscv64 | tenstorrent | OpenSBI (jump, PCIe BAR) | `-O3 -march=rv64gcv_zvl512b` | stable |
+| odroid-m1 | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a55` | testing |
+| odroid-m1s | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a55` | testing |
+| odroid-m2 | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a76.cortex-a55` | testing |
+| pentium-mmx | i586 | mainline v6.12 | BIOS (no firmware) | `-O2 -march=pentium-mmx` | testing |
 
 ## CLI
 
@@ -41,24 +52,30 @@ Options:
 ### Quick start
 
 ```sh
+# List available boards
+crossdev-stages board list
+
+# Inspect a board configuration
+crossdev-stages board info --board <BOARD>
+
 # Set up host sandbox
 crossdev-stages sandbox setup
 crossdev-stages sandbox prepare
-crossdev-stages sandbox crossdev --arch riscv64 --board k1
+crossdev-stages sandbox crossdev --arch <ARCH> --board <BOARD>
 
 # Create target stage from a stage3 seed
-crossdev-stages target setup --arch riscv64
+crossdev-stages target setup --arch <ARCH>
 crossdev-stages target stage1
 crossdev-stages target update
 
 # Build an image
-crossdev-stages image build --board k1
+crossdev-stages image build --board <BOARD>
 
 # Check status
 crossdev-stages status
 
 # Export the image
-crossdev-stages image export --board k1 -o /tmp/
+crossdev-stages image export --board <BOARD> -o /tmp/
 
 # Clean up stale builds and old stage3 tarballs
 crossdev-stages maint cleanup
@@ -107,13 +124,21 @@ Steps: `deps`, `checkout`, `bootloader`, `kernel`, `assemble`, `pack`
 
 | Variable | Required | Description |
 |---|---|---|
-| `BOARD_ARCH` | yes | Target architecture (`riscv64`, `aarch64`) |
+| `BOARD_NAME` | yes | Board identifier (matches directory name) |
+| `BOARD_ARCH` | yes | Target architecture (`riscv64`, `aarch64`, `i586`, `i686`) |
+| `CROSS_COMPILE` | yes | Toolchain prefix (e.g. `riscv64-unknown-linux-gnu-`) |
+| `KERNEL_REPO` | yes | Kernel source repository URL |
+| `KERNEL_DEFCONFIG` | yes | Kernel defconfig name |
+| `CHOST` | no | Override derived CHOST triple (default: auto from arch) |
 | `BOARD_CFLAGS` | no | Board-specific CFLAGS (default: arch default) |
+| `KERNEL_TAG` | no | Kernel git ref (default: top-level `TAG`) |
+| `KERNEL_ARCH` | no | Linux `ARCH=` value (default: auto from `BOARD_ARCH`) |
 | `BUILD_STEPS` | no | Build pipeline steps (default: deps checkout bootloader kernel assemble pack) |
 | `OPENSBI_FW_TYPE` | no | OpenSBI firmware type: `dynamic` (default), `jump`, `payload` |
 | `OPENSBI_MAKE_FLAGS` | no | Extra opensbi make arguments |
 | `U_BOOT_MAKE_FLAGS` | no | Extra u-boot make arguments |
 | `COMPRESSION` | no | Image compression: `xz` (default), `gz`, `none` |
+| `TESTING` | no | Mark board as testing (`true`/`false`) |
 
 ## Limitations
 

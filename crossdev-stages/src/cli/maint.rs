@@ -1,7 +1,7 @@
-use camino::Utf8PathBuf;
-use crate::{board, container, image, workspace::Workspace};
-use crate::error::Result;
 use crate::cli::MaintCmd;
+use crate::error::Result;
+use crate::{board, container, image, workspace::Workspace};
+use camino::Utf8PathBuf;
 
 pub fn run(
     ws: &Workspace,
@@ -62,8 +62,12 @@ fn cleanup(ws: &Workspace, all: bool, dry_run: bool) -> Result<()> {
         }
 
         for (_arch, mut files) in by_arch {
-            files.sort_by(|a, b| b.1.cmp(&a.1)); // newest first
-            let to_remove = if all { &files[..] } else { files.get(1..).unwrap_or(&[]) };
+            files.sort_by_key(|b| std::cmp::Reverse(b.1)); // newest first
+            let to_remove = if all {
+                &files[..]
+            } else {
+                files.get(1..).unwrap_or(&[])
+            };
             for (path, _) in to_remove {
                 let name = path.file_name().unwrap_or("?");
                 if dry_run {
@@ -91,14 +95,21 @@ fn logs(ws: &Workspace, board_name: &str, step: Option<&str>) -> Result<()> {
         .iter()
         .filter_map(|dir| image::Build::open(dir.clone()))
         .find(|b| b.board == board_name)
-        .ok_or_else(|| crate::error::Error::BoardNotFound(
-            format!("no builds for '{board_name}'"),
-        ))?;
+        .ok_or_else(|| {
+            crate::error::Error::BoardNotFound(format!("no builds for '{board_name}'"))
+        })?;
 
     println!("Build: {}", build.dir);
     println!("Board: {}", build.board);
 
-    for s in &["deps", "sources", "bootloader", "kernel", "assembled", "packed"] {
+    for s in &[
+        "deps",
+        "sources",
+        "bootloader",
+        "kernel",
+        "assembled",
+        "packed",
+    ] {
         let marker = build.dir.join(format!(".{s}"));
         if marker.exists() {
             let ts = std::fs::read_to_string(&marker).unwrap_or_default();
@@ -163,7 +174,10 @@ fn doctor(ws: &Workspace, boards_root: &camino::Utf8Path) -> Result<()> {
     }
 
     let boards = board::list(boards_root).unwrap_or_default();
-    check!(&format!("{} board(s) found", boards.len()), !boards.is_empty());
+    check!(
+        &format!("{} board(s) found", boards.len()),
+        !boards.is_empty()
+    );
 
     println!("\n{ok} ok, {fail} issues");
     if fail > 0 {

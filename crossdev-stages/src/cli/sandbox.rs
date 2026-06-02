@@ -1,7 +1,7 @@
-use crate::{sandbox, stage, workspace::Workspace};
-use crate::error::Result;
-use crate::cli::SandboxCmd;
 use crate::cli::util::{default_board_config, ensure_crossdev};
+use crate::cli::SandboxCmd;
+use crate::error::Result;
+use crate::{sandbox, stage, workspace::Workspace};
 
 pub async fn run(
     ws: &Workspace,

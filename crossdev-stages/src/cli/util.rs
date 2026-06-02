@@ -1,6 +1,6 @@
-use crate::{board, error, sandbox, stage, target};
-use crate::workspace::Workspace;
 use crate::error::Result;
+use crate::workspace::Workspace;
+use crate::{board, error, sandbox, stage, target};
 
 /// Ensure the sandbox exists, is prepared, and has crossdev for `arch`.
 /// Auto-creates a sandbox from the host arch stage3 if none is found.
@@ -18,8 +18,10 @@ pub async fn ensure_crossdev(
             let host_arch = std::env::consts::ARCH;
             tracing::info!("No sandbox found, creating one for {host_arch}…");
             let source_stage = stage::fetch(&ws.stages_dir(), host_arch, mirror).await?;
-            let name =
-                format!("{host_arch}-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"));
+            let name = format!(
+                "{host_arch}-{}",
+                chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+            );
             sandbox::Sandbox::create(ws, &name, host_arch, &source_stage)?;
             ws.resolve_sandbox(None)?
         }
@@ -53,9 +55,7 @@ pub async fn ensure_target(
                     "target not found; specify --arch to create one".into(),
                 )
             })?;
-            let name = target_name
-                .unwrap_or(&format!("{arch}-stage1"))
-                .to_string();
+            let name = target_name.unwrap_or(&format!("{arch}-stage1")).to_string();
             tracing::info!("Target '{name}' not found, creating from stage3…");
             let source_stage = stage::fetch(&ws.stages_dir(), arch, mirror).await?;
             let tgt = target::Target::create(ws, &name, arch, &source_stage)?;
@@ -79,11 +79,16 @@ pub fn default_board_config(arch: &str) -> board::BoardConfig {
     board::BoardConfig {
         name: arch.to_string(),
         arch: arch.to_string(),
+        chost_override: None,
         cflags: None,
         ldflags: None,
         rustflags: None,
         gcc_version: None,
-        cross_compile: format!("{arch}-unknown-linux-gnu-"),
+        cross_compile: format!(
+            "{}-",
+            crate::stage::chost_for_arch(arch)
+                .unwrap_or_else(|_| format!("{arch}-unknown-linux-gnu"))
+        ),
         kernel_arch: None,
         opensbi_repo: None,
         opensbi_tag: None,

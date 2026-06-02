@@ -38,9 +38,7 @@ pub fn cached_clone(
 /// "https://github.com/cyyself/opensbi" -> "cyyself-opensbi"
 /// "https://gitee.com/bianbu-linux/linux-6.6.git" -> "bianbu-linux-linux-6.6"
 fn repo_cache_name(repo: &str, fallback: &str) -> String {
-    let stripped = repo
-        .trim_end_matches('/')
-        .trim_end_matches(".git");
+    let stripped = repo.trim_end_matches('/').trim_end_matches(".git");
     if let Some(idx) = stripped.rfind("://") {
         let path = &stripped[idx + 3..];
         let parts: Vec<&str> = path.split('/').collect();
