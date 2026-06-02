@@ -42,7 +42,12 @@ async fn main() -> anyhow::Result<()> {
         Commands::Sandbox(cmd) => {
             cli::sandbox::run(&ws, cmd, &boards_root, mirror).await?;
         }
-        Commands::Target { arch, sandbox, target, command } => {
+        Commands::Target {
+            arch,
+            sandbox,
+            target,
+            command,
+        } => {
             cli::target::run(&ws, arch, sandbox, target, command, mirror).await?;
         }
         Commands::Board(cmd) => {

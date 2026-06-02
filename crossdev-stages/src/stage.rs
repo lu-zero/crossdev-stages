@@ -40,7 +40,8 @@ pub fn gentoo_profile(arch: &str) -> Result<&'static str> {
         a if a.starts_with("riscv") => "default/linux/riscv/23.0/rv64/lp64d",
         "x86_64" => "default/linux/amd64/23.0",
         "aarch64" => "default/linux/arm64/23.0",
-        a if is_ix86(a) => "default/linux/x86/23.0",
+        "i486" | "i586" => "default/linux/x86/23.0/i486",
+        "i686" => "default/linux/x86/23.0/i686",
         other => {
             return Err(crate::error::Error::UnknownArch(other.to_string()));
         }
@@ -78,11 +79,19 @@ pub fn default_cflags(arch: &str) -> &'static str {
 /// `dev-lang/rust` (the crossdev bootstrap compiler) can target any
 /// arch we know how to cross-build for.
 pub fn all_llvm_targets() -> String {
-    let mut targets: Vec<&str> = ["x86_64", "aarch64", "arm", "riscv64", "mips",
-                                  "loongarch64", "powerpc64", "sparc64"]
-        .into_iter()
-        .filter_map(llvm_target)
-        .collect();
+    let mut targets: Vec<&str> = [
+        "x86_64",
+        "aarch64",
+        "arm",
+        "riscv64",
+        "mips",
+        "loongarch64",
+        "powerpc64",
+        "sparc64",
+    ]
+    .into_iter()
+    .filter_map(llvm_target)
+    .collect();
     targets.sort();
     targets.dedup();
     targets.join(" ")

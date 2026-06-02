@@ -123,7 +123,9 @@ impl Workspace {
                 .list_targets()?
                 .into_iter()
                 .find(|p| p.join("sbin/init").exists())
-                .ok_or_else(|| Error::TargetNotFound("no bootable target (missing /sbin/init)".into())),
+                .ok_or_else(|| {
+                    Error::TargetNotFound("no bootable target (missing /sbin/init)".into())
+                }),
         }
     }
 
@@ -150,9 +152,7 @@ impl Workspace {
             None => self
                 .list_targets()?
                 .into_iter()
-                .find(|p| {
-                    read_arch(p).as_deref() == Some(arch) && p.join("sbin/init").exists()
-                })
+                .find(|p| read_arch(p).as_deref() == Some(arch) && p.join("sbin/init").exists())
                 .ok_or_else(|| {
                     Error::TargetNotFound(format!(
                         "no bootable target for arch '{arch}' (need /sbin/init and matching .arch)"
@@ -187,7 +187,7 @@ fn list_dirs_by_mtime(dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>> {
             Some((path, mtime))
         })
         .collect();
-    entries.sort_by(|a, b| b.1.cmp(&a.1));
+    entries.sort_by_key(|b| std::cmp::Reverse(b.1));
     Ok(entries.into_iter().map(|(p, _)| p).collect())
 }
 

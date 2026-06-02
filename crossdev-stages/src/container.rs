@@ -123,12 +123,28 @@ impl SandboxRunner {
             .runctl(Runctl::RootdirRW)
             .runctl(Runctl::AllowNewPrivs)
             .devfsmount("/dev")
-            .bindmount_ro("/etc/resolv.conf", "/etc/resolv.conf")
             .tmpfsmount("/tmp")
             .tmpfsmount("/dev/shm")
             // Explicit bind mount so portage logs are always reachable at
             // <sandbox_dir>/var/log/ from the host.
             .bindmount_rw(self.log_dir.as_str(), "/var/log");
+
+        // On systemd systems /etc/resolv.conf is typically a symlink to
+        // /run/systemd/resolve/stub-resolv.conf, which doesn't exist inside
+        // the sandbox chroot.  When the symlink target isn't reachable inside
+        // the container root, fall back to a static resolv.conf (1.1.1.1).
+        let host_resolv = Utf8Path::new("/etc/resolv.conf");
+        if host_resolv.is_file() && can_bindmount_resolv(&self.sandbox_dir) {
+            c.bindmount_ro("/etc/resolv.conf", "/etc/resolv.conf");
+        } else {
+            let sandbox_resolv = self.sandbox_dir.join("etc/resolv.conf");
+            let _ = std::fs::create_dir_all(sandbox_resolv.parent().unwrap());
+            std::fs::write(
+                &sandbox_resolv,
+                "nameserver 1.1.1.1\nnameserver 2606:4700:4700::1111\n",
+            )
+            .expect("failed to write fallback resolv.conf");
+        }
         // Map caller → root, plus subordinate IDs for portage user etc.
         c.uidmaps(&uid_maps());
         c.gidmaps(&gid_maps());
@@ -143,6 +159,31 @@ impl SandboxRunner {
             c.bindmount_ro(scripts.as_str(), "/scripts");
         }
         c
+    }
+}
+
+/// Check whether the host `/etc/resolv.conf` can be bind-mounted into a
+/// container rooted at `sandbox_dir`.  On systemd hosts it's a symlink to
+/// `/run/systemd/resolve/stub-resolv.conf`; the bind mount will fail with
+/// EPERM unless the symlink target also exists inside the sandbox.
+fn can_bindmount_resolv(sandbox_dir: &Utf8Path) -> bool {
+    let host_resolv = std::path::Path::new("/etc/resolv.conf");
+    match host_resolv.canonicalize() {
+        Ok(real) => {
+            let real_str = match real.to_str() {
+                Some(s) => s,
+                None => return false,
+            };
+            // If the canonical path starts with /run/systemd, the target
+            // won't exist inside the sandbox — fall back to static DNS.
+            if real_str.starts_with("/run/systemd") {
+                return false;
+            }
+            // Otherwise check that the target exists inside the sandbox.
+            let stripped = real_str.trim_start_matches('/');
+            sandbox_dir.join(stripped).is_file()
+        }
+        Err(_) => false,
     }
 }
 
@@ -189,11 +230,7 @@ pub fn destroy_dir(dir: &Utf8Path, cache_base: &Utf8Path) -> Result<()> {
     if !dir.is_dir() {
         return Ok(());
     }
-    let dir_in_container = format!(
-        "/cache/{}",
-        dir.strip_prefix(cache_base)
-            .unwrap_or(dir)
-    );
+    let dir_in_container = format!("/cache/{}", dir.strip_prefix(cache_base).unwrap_or(dir));
 
     let mut container = Container::new();
     container
@@ -222,13 +259,19 @@ pub fn destroy_dir(dir: &Utf8Path, cache_base: &Utf8Path) -> Result<()> {
 /// are available from the host system).  The entire cache base directory is
 /// bind-mounted read-write at `/cache` so that both the source tarball and
 /// the destination directory are reachable inside the container.
-pub fn unpack_tarball(source_stage: &Utf8Path, dest_dir: &Utf8Path, cache_base: &Utf8Path) -> Result<()> {
+pub fn unpack_tarball(
+    source_stage: &Utf8Path,
+    dest_dir: &Utf8Path,
+    cache_base: &Utf8Path,
+) -> Result<()> {
     std::fs::create_dir_all(dest_dir)?;
 
     // Paths inside the container: /cache/<relative_to_cache_base>
     let stage_in_container = format!(
         "/cache/{}",
-        source_stage.strip_prefix(cache_base).unwrap_or(source_stage)
+        source_stage
+            .strip_prefix(cache_base)
+            .unwrap_or(source_stage)
     );
     let dest_in_container = format!(
         "/cache/{}",
@@ -329,12 +372,10 @@ pub fn pack_tarball(
 /// Prefix a failed-command error with the command string for diagnostics.
 fn annotate_cmd(e: crate::error::Error, cmd: &str) -> crate::error::Error {
     match e {
-        crate::error::Error::CommandFailed { code, reason } => {
-            crate::error::Error::CommandFailed {
-                code,
-                reason: format!("{cmd}: {reason}"),
-            }
-        }
+        crate::error::Error::CommandFailed { code, reason } => crate::error::Error::CommandFailed {
+            code,
+            reason: format!("{cmd}: {reason}"),
+        },
         other => other,
     }
 }

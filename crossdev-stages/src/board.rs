@@ -7,9 +7,9 @@ use crate::error::{Error, Result};
 #[allow(dead_code)]
 pub struct BoardConfig {
     pub name: String,
-    pub arch: String,                // e.g. "riscv64"
+    pub arch: String,                   // e.g. "riscv64"
     pub chost_override: Option<String>, // CHOST; overrides derived chost_for_arch()
-    pub cflags: Option<String>,      // BOARD_CFLAGS; None → use default_cflags(arch)
+    pub cflags: Option<String>,         // BOARD_CFLAGS; None → use default_cflags(arch)
     pub ldflags: Option<String>, // BOARD_LDFLAGS; probably never needed (profile default is fine)
     pub rustflags: Option<String>, // BOARD_RUSTFLAGS; cross-compile target-cpu is handled by rust-std
     pub gcc_version: Option<String>, // BOARD_GCC_VERSION; None → highest installed slot
@@ -20,14 +20,14 @@ pub struct BoardConfig {
     pub opensbi_repo: Option<String>,
     pub opensbi_tag: Option<String>,
     pub opensbi_platform: Option<String>,
-    pub opensbi_fw_type: Option<String>,     // dynamic (default) | jump | payload
-    pub opensbi_make_flags: Option<String>,  // extra make args
+    pub opensbi_fw_type: Option<String>, // dynamic (default) | jump | payload
+    pub opensbi_make_flags: Option<String>, // extra make args
 
     // U-Boot
     pub u_boot_repo: Option<String>,
     pub u_boot_tag: Option<String>,
     pub u_boot_defconfig: Option<String>,
-    pub u_boot_make_flags: Option<String>,   // extra make args
+    pub u_boot_make_flags: Option<String>, // extra make args
 
     // Firmware overlay
     pub firmware_repo: Option<String>,
@@ -60,7 +60,7 @@ pub struct BoardConfig {
     pub workaround_cflags: Vec<String>,
 
     pub image_name: Option<String>,
-    pub compression: Option<String>,  // xz (default) | gz | none
+    pub compression: Option<String>, // xz (default) | gz | none
     pub testing: bool,
 }
 
@@ -71,9 +71,8 @@ impl BoardConfig {
         if let Some(ref chost) = self.chost_override {
             return chost.clone();
         }
-        crate::stage::chost_for_arch(&self.arch).unwrap_or_else(|_| {
-            format!("{}-unknown-linux-gnu", self.arch)
-        })
+        crate::stage::chost_for_arch(&self.arch)
+            .unwrap_or_else(|_| format!("{}-unknown-linux-gnu", self.arch))
     }
 
     /// Effective CFLAGS (board-specific or arch default).
@@ -87,8 +86,8 @@ impl BoardConfig {
 /// Load a board configuration from `<boards_root>/<name>/board.conf`.
 pub fn load(boards_root: &Utf8Path, name: &str) -> Result<BoardConfig> {
     let path = boards_root.join(name).join("board.conf");
-    let content = std::fs::read_to_string(&path)
-        .map_err(|e| Error::BoardNotFound(format!("{path}: {e}")))?;
+    let content =
+        std::fs::read_to_string(&path).map_err(|e| Error::BoardNotFound(format!("{path}: {e}")))?;
     parse(name, &path, &content)
 }
 

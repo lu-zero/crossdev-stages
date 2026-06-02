@@ -1,8 +1,8 @@
-use camino::Utf8PathBuf;
-use crate::{container, stage, target, workspace::Workspace};
-use crate::error::Result;
-use crate::cli::TargetCmd;
 use crate::cli::util::{default_board_config, ensure_crossdev, ensure_target};
+use crate::cli::TargetCmd;
+use crate::error::Result;
+use crate::{container, stage, target, workspace::Workspace};
+use camino::Utf8PathBuf;
 
 pub async fn run(
     ws: &Workspace,
@@ -104,7 +104,10 @@ pub async fn run(
         TargetCmd::Destroy { name } => {
             target::destroy(ws, &name)?;
         }
-        TargetCmd::Export { output, compression } => {
+        TargetCmd::Export {
+            output,
+            compression,
+        } => {
             let tgt_dir = ws.resolve_target(target_name.as_deref())?;
             let tgt = target::Target::open(tgt_dir)?;
             let tgt_name = tgt.dir.file_name().unwrap_or("target");

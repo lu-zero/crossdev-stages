@@ -146,9 +146,8 @@ impl Sandbox {
                 })?;
                 let slot = ver.numbers[0].to_string();
                 // A single bare number ("15") means slot-only; anything longer is a prefix.
-                let is_slot_only = ver.numbers.len() == 1
-                    && ver.letter.is_none()
-                    && ver.suffixes.is_empty();
+                let is_slot_only =
+                    ver.numbers.len() == 1 && ver.letter.is_none() && ver.suffixes.is_empty();
                 if is_slot_only {
                     (slot, None)
                 } else {
@@ -193,7 +192,7 @@ impl Sandbox {
             }
         }
 
-        let chost = format!("{target_arch}-unknown-linux-gnu");
+        let chost = crate::stage::chost_for_arch(target_arch)?;
         let profile = gentoo_profile(target_arch)?;
         let cflags = board.effective_cflags();
 
@@ -230,7 +229,8 @@ impl Sandbox {
         let slot_versions = installed.get(&gcc_slot).cloned().unwrap_or_default();
 
         let gcc_ver = if let Some(ref prefix) = ver_prefix {
-            slot_versions.into_iter()
+            slot_versions
+                .into_iter()
                 .find(|v| v.starts_with(prefix.as_str()))
                 .ok_or_else(|| Error::CommandFailed {
                     code: 1,
@@ -238,17 +238,23 @@ impl Sandbox {
                 })?
         } else {
             // Slot-only: newest installed version (refresh gives newest-first).
-            slot_versions.into_iter().next().ok_or_else(|| Error::CommandFailed {
-                code: 1,
-                reason: format!("No gcc:{gcc_slot} found in sandbox after emerge"),
-            })?
+            slot_versions
+                .into_iter()
+                .next()
+                .ok_or_else(|| Error::CommandFailed {
+                    code: 1,
+                    reason: format!("No gcc:{gcc_slot} found in sandbox after emerge"),
+                })?
         };
 
         tracing::info!("Using gcc-{gcc_ver} for crossdev.");
 
         // gcc-config profile names are "{chost}-{slot}" (e.g. "aarch64-unknown-linux-gnu-15"),
         // not "{chost}-{full-version}". Select by slot directly.
-        let host_chost = runner.run_output("portageq envvar CHOST")?.trim().to_string();
+        let host_chost = runner
+            .run_output("portageq envvar CHOST")?
+            .trim()
+            .to_string();
         runner.run(&format!("gcc-config {host_chost}-{gcc_slot}"))?;
         runner.run("env-update && source /etc/profile")?;
 
@@ -280,7 +286,9 @@ impl Sandbox {
         ))?;
 
         // Switch cross compiler to the installed slot.
-        runner.run(&format!("gcc-config {chost}-{gcc_slot} && source /etc/profile"))?;
+        runner.run(&format!(
+            "gcc-config {chost}-{gcc_slot} && source /etc/profile"
+        ))?;
 
         // Write marker with the exact version used (enables idempotency on next run).
         std::fs::write(&marker, &gcc_ver)?;
@@ -375,7 +383,7 @@ impl Sandbox {
         // package.accept_keywords
         std::fs::write(
             portage_dir.join("package.accept_keywords/gcc"),
-            &format!("{gcc_keyword_line}\n"),
+            format!("{gcc_keyword_line}\n"),
         )?;
 
         // Per-package CFLAGS workarounds from board.conf

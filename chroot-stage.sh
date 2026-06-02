@@ -6,6 +6,8 @@ gentoo_arch() {
         x86_64) ARCH=amd64 FLAVOR=amd64-openrc;;
         aarch64) ARCH=arm64 FLAVOR=arm64-openrc;;
         riscv*) ARCH=riscv FLAVOR=rv64_lp64d-openrc;;
+        i486|i586) ARCH=x86 FLAVOR=i486-openrc;;
+        i686)      ARCH=x86 FLAVOR=i686-openrc;;
         *) ARCH=$os_arch FLAVOR=$ARCH-openrc;;
     esac
 # echo "$os_arch => $ARCH"

@@ -1,8 +1,8 @@
-use camino::{Utf8Path, Utf8PathBuf};
-use crate::{board, image, stage, target, workspace::Workspace};
-use crate::error::Result;
-use crate::cli::ImageCmd;
 use crate::cli::util::ensure_crossdev;
+use crate::cli::ImageCmd;
+use crate::error::Result;
+use crate::{board, image, stage, target, workspace::Workspace};
+use camino::{Utf8Path, Utf8PathBuf};
 
 pub async fn run(
     ws: &Workspace,
@@ -25,14 +25,25 @@ pub async fn run(
             }
 
             let default_steps: Vec<String> = if board_cfg.build_steps.is_empty() {
-                ["deps", "checkout", "bootloader", "kernel", "assemble", "pack"]
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect()
+                [
+                    "deps",
+                    "checkout",
+                    "bootloader",
+                    "kernel",
+                    "assemble",
+                    "pack",
+                ]
+                .iter()
+                .map(|s| s.to_string())
+                .collect()
             } else {
                 board_cfg.build_steps.clone()
             };
-            let steps_to_show = if steps.is_empty() { &default_steps } else { &steps };
+            let steps_to_show = if steps.is_empty() {
+                &default_steps
+            } else {
+                &steps
+            };
 
             if dry_run {
                 let tag = if board_cfg.testing { " [TESTING]" } else { "" };
@@ -47,14 +58,24 @@ pub async fn run(
                 }
                 println!(
                     "Steps:      {}",
-                    steps_to_show.iter().map(String::as_str).collect::<Vec<_>>().join(" ")
+                    steps_to_show
+                        .iter()
+                        .map(String::as_str)
+                        .collect::<Vec<_>>()
+                        .join(" ")
                 );
                 return Ok(());
             }
 
-            let sb =
-                ensure_crossdev(ws, sandbox.as_deref(), &board_cfg.arch, &board_cfg, mirror, None)
-                    .await?;
+            let sb = ensure_crossdev(
+                ws,
+                sandbox.as_deref(),
+                &board_cfg.arch,
+                &board_cfg,
+                mirror,
+                None,
+            )
+            .await?;
 
             let tgt = match ws.resolve_target_for_arch(target.as_deref(), &board_cfg.arch) {
                 Ok(td) => target::Target::open(td)?,
@@ -67,7 +88,11 @@ pub async fn run(
                 }
             };
 
-            let steps_opt = if steps.is_empty() { None } else { Some(steps.as_slice()) };
+            let steps_opt = if steps.is_empty() {
+                None
+            } else {
+                Some(steps.as_slice())
+            };
             image::build(ws, &sb, &tgt, &board_cfg, boards_root, steps_opt)?;
         }
         ImageCmd::Prune => {
@@ -81,15 +106,19 @@ pub async fn run(
             }
             println!("Pruned {pruned} incomplete build(s).");
         }
-        ImageCmd::Export { board: board_name, output, all } => {
+        ImageCmd::Export {
+            board: board_name,
+            output,
+            all,
+        } => {
             let builds = ws.list_builds()?;
             let build = builds
                 .iter()
                 .filter_map(|dir| image::Build::open(dir.clone()))
                 .find(|b| b.board == board_name)
-                .ok_or_else(|| crate::error::Error::BoardNotFound(
-                    format!("no builds for '{board_name}'"),
-                ))?;
+                .ok_or_else(|| {
+                    crate::error::Error::BoardNotFound(format!("no builds for '{board_name}'"))
+                })?;
 
             let out_dir = output.unwrap_or_else(|| Utf8PathBuf::from("."));
             std::fs::create_dir_all(&out_dir)?;

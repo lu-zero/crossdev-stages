@@ -44,7 +44,8 @@ create_sysroot() {
     local cflags="$4"
     local mirror="${5:-}"
     local sysroot_dir="$SYSROOTS_DIR/$name"
-    local chost="${target_arch}-unknown-linux-gnu"
+    local chost
+    chost=$(chost_for_arch "$target_arch")
     local crossdev_root="/usr/${chost}"
 
     if [[ -d "$sysroot_dir" && -f "$sysroot_dir/.cflags" ]]; then

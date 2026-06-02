@@ -1,6 +1,6 @@
-use crate::{stage, workspace::Workspace};
-use crate::error::Result;
 use crate::cli::StagesCmd;
+use crate::error::Result;
+use crate::{stage, workspace::Workspace};
 
 pub async fn run(ws: &Workspace, cmd: StagesCmd, mirror: Option<&str>) -> Result<()> {
     match cmd {

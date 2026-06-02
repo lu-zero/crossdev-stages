@@ -11,10 +11,7 @@ use crate::target::Target;
 use crate::workspace::Workspace;
 
 fn project_root(boards_root: &Utf8Path) -> Utf8PathBuf {
-    boards_root
-        .parent()
-        .unwrap_or(boards_root)
-        .to_path_buf()
+    boards_root.parent().unwrap_or(boards_root).to_path_buf()
 }
 
 // ── Build directory ─────────────────────────────────────────────────────────
@@ -194,7 +191,7 @@ fn default_kernel(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
             })?;
     runner.run(&format!(
         "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} {defconfig} && \
-         make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} -j$(nproc)",
+         make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} WERROR=0 -j$(nproc)",
         cc = board.cross_compile,
         defconfig = board.kernel_defconfig,
     ))
@@ -287,7 +284,12 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     runner.run("/usr/local/bin/ldconfig -v -r /build/gen/root")
 }
 
-fn default_pack(runner: &SandboxRunner, board: &BoardConfig, build: &Build, boards_root: &Utf8Path) -> Result<()> {
+fn default_pack(
+    runner: &SandboxRunner,
+    board: &BoardConfig,
+    build: &Build,
+    boards_root: &Utf8Path,
+) -> Result<()> {
     let board_cfg = boards_root.join(&board.name).join("genimage.cfg");
     let cfg_path = if board_cfg.exists() {
         format!("/scripts/boards/{}/genimage.cfg", board.name)
@@ -350,7 +352,14 @@ pub fn build(
     let bld = Build::create(ws, &board.name)?;
 
     let default_steps = if board.build_steps.is_empty() {
-        vec!["deps", "checkout", "bootloader", "kernel", "assemble", "pack"]
+        vec![
+            "deps",
+            "checkout",
+            "bootloader",
+            "kernel",
+            "assemble",
+            "pack",
+        ]
     } else {
         board.build_steps.iter().map(String::as_str).collect()
     };
@@ -372,19 +381,46 @@ pub fn build(
             .with_cache(ws.base());
 
         let result = match *step {
-            "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board,
-                |_r| default_deps(_r, sandbox, target, board, boards_root)),
-            "checkout" => run_step("checkout", "sources", &bld, &runner, boards_root, board,
-                |r| default_checkout(r, board)),
-            "bootloader" => run_step("bootloader", "bootloader", &bld, &runner, boards_root, board,
-                |r| default_bootloader(r, board)),
-            "kernel" => run_step("kernel", "kernel", &bld, &runner, boards_root, board,
-                |r| default_kernel(r, board)),
-            "assemble" => run_step("assemble", "assembled", &bld, &runner, boards_root, board,
-                |r| default_assemble(r, board)),
-            "pack" => run_step("pack", "packed", &bld, &runner, boards_root, board,
-                |r| default_pack(r, board, &bld, boards_root)),
-            other => { tracing::warn!("Unknown step '{}', skipping.", other); Ok(()) },
+            "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board, |_r| {
+                default_deps(_r, sandbox, target, board, boards_root)
+            }),
+            "checkout" => run_step(
+                "checkout",
+                "sources",
+                &bld,
+                &runner,
+                boards_root,
+                board,
+                |r| default_checkout(r, board),
+            ),
+            "bootloader" => run_step(
+                "bootloader",
+                "bootloader",
+                &bld,
+                &runner,
+                boards_root,
+                board,
+                |r| default_bootloader(r, board),
+            ),
+            "kernel" => run_step("kernel", "kernel", &bld, &runner, boards_root, board, |r| {
+                default_kernel(r, board)
+            }),
+            "assemble" => run_step(
+                "assemble",
+                "assembled",
+                &bld,
+                &runner,
+                boards_root,
+                board,
+                |r| default_assemble(r, board),
+            ),
+            "pack" => run_step("pack", "packed", &bld, &runner, boards_root, board, |r| {
+                default_pack(r, board, &bld, boards_root)
+            }),
+            other => {
+                tracing::warn!("Unknown step '{}', skipping.", other);
+                Ok(())
+            }
         };
 
         let elapsed = step_start.elapsed();
