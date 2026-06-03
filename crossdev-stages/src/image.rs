@@ -131,11 +131,50 @@ fn default_deps(
         let host_runner = board_runner(sandbox, board);
         let portage = Portage::new(&host_runner);
         let content = std::fs::read_to_string(&sandbox_pkgs)?;
-        let pkgs: Vec<&str> = content
+        let lines: Vec<&str> = content
             .lines()
             .map(str::trim)
             .filter(|l| !l.is_empty() && !l.starts_with('#'))
             .collect();
+
+        // Write package.accept_keywords entries for packages with keyword overrides.
+        // Format: "atom [keywords]" — e.g. "sys-boot/syslinux **" or "dev-libs/foo ~amd64"
+        let accept_keywords_dir = sandbox.dir.join("etc/portage/package.accept_keywords");
+        std::fs::create_dir_all(&accept_keywords_dir)?;
+        let mut pkgs: Vec<&str> = Vec::new();
+        for line in &lines {
+            let parts: Vec<&str> = line.splitn(2, char::is_whitespace).collect();
+            let atom = parts[0];
+            pkgs.push(atom);
+            if parts.len() > 1 {
+                let keywords = parts[1].trim();
+                let safe_name = atom.replace('/', "_");
+                std::fs::write(
+                    accept_keywords_dir.join(&safe_name),
+                    format!("{atom} {keywords}\n"),
+                )?;
+            }
+        }
+
+        // Write package.use entries from sandbox-packages.use.
+        // Format: "atom use_flags..." — e.g. "sys-boot/syslinux bios -uefi"
+        let sandbox_use = boards_root.join(&board.name).join("sandbox-packages.use");
+        if sandbox_use.exists() {
+            let use_dir = sandbox.dir.join("etc/portage/package.use");
+            std::fs::create_dir_all(&use_dir)?;
+            let use_content = std::fs::read_to_string(&sandbox_use)?;
+            for line in use_content.lines() {
+                let line = line.trim();
+                if line.is_empty() || line.starts_with('#') {
+                    continue;
+                }
+                let parts: Vec<&str> = line.splitn(2, char::is_whitespace).collect();
+                let atom = parts[0];
+                let safe_name = atom.replace('/', "_");
+                std::fs::write(use_dir.join(&safe_name), format!("{line}\n"))?;
+            }
+        }
+
         if !pkgs.is_empty() {
             portage.emerge(&pkgs)?;
         }
@@ -162,6 +201,7 @@ fn default_deps(
 fn default_checkout(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     crate::bootloader::opensbi::clone(runner, board)?;
     crate::bootloader::uboot::clone(runner, board)?;
+    crate::bootloader::syslinux::clone(runner, board)?;
     if let Some(repo) = &board.firmware_repo {
         let tag = board.u_boot_tag.as_deref().unwrap_or("main");
         crate::source_cache::cached_clone(runner, repo, tag, "/build/firmware", "firmware")?;
@@ -177,7 +217,9 @@ fn default_checkout(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
 
 fn default_bootloader(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     crate::bootloader::opensbi::build(runner, board)?;
-    crate::bootloader::uboot::build(runner, board)
+    crate::bootloader::uboot::build(runner, board)?;
+    crate::bootloader::syslinux::build(runner, board)?;
+    crate::bootloader::grub::build(runner, board)
 }
 
 fn default_kernel(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
@@ -305,6 +347,7 @@ fn default_pack(
     runner.run(&format!(
         "rm -rf /build/tmp && cd /build && \
          genimage --config {cfg_path} \
+         --mkdosfs mkfs.vfat \
          --inputpath /build --outputpath /build --rootpath /build/gen"
     ))?;
 

@@ -182,6 +182,9 @@ impl Sandbox {
                     tracing::info!(
                         "Crossdev for {target_arch} already set up with gcc-{existing}, skipping."
                     );
+                    // Ensure any board-required ex-pkgs are present even if we skip a full re-run.
+                    let chost = crate::stage::chost_for_arch(target_arch)?;
+                    self.ensure_grub_ex_pkg(board, &chost, &runner)?;
                     return Ok(());
                 }
                 let want = ver_prefix.as_deref().unwrap_or(&gcc_slot);
@@ -278,11 +281,16 @@ impl Sandbox {
         runner.run(&format!("merge-usr --root /usr/{chost}"))?;
 
         tracing::info!("Running crossdev (this takes a while)…");
+        let grub_ex_pkg = if board.grub_platforms.is_some() {
+            " --ex-pkg sys-boot/grub"
+        } else {
+            ""
+        };
         runner.run(&format!(
             "crossdev {chost} \
              --gcc {gcc_ver} \
              --ex-pkg sys-devel/clang-crossdev-wrappers \
-             --ex-pkg sys-devel/rust-std"
+             --ex-pkg sys-devel/rust-std{grub_ex_pkg}"
         ))?;
 
         // Switch cross compiler to the installed slot.
@@ -321,6 +329,42 @@ impl Sandbox {
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
+
+    /// Install `sys-boot/grub` into the crossdev prefix if the board needs it and it
+    /// isn't already there.  Uses `{chost}-emerge` (installs into `/usr/{chost}/`),
+    /// which compiles grub with the i586/x86 cross-compiler, producing proper
+    /// i386-pc modules regardless of the build host's native architecture.
+    fn ensure_grub_ex_pkg(
+        &self,
+        board: &BoardConfig,
+        chost: &str,
+        runner: &SandboxRunner,
+    ) -> Result<()> {
+        let Some(ref platforms) = board.grub_platforms else {
+            return Ok(());
+        };
+        let grub_mods = self
+            .dir
+            .join(format!("usr/{chost}/usr/lib/grub/i386-pc"));
+        if grub_mods.exists() {
+            return Ok(());
+        }
+        // Write USE flags to the crossdev prefix portage config before emerging.
+        // The crossdev portage config is not re-written when setup_crossdev is skipped,
+        // so we must ensure the grub platform flag is present here.
+        let flags: Vec<String> = platforms
+            .split_whitespace()
+            .map(|p| format!("grub_platforms_{p}"))
+            .collect();
+        let use_dir = self.dir.join(format!("usr/{chost}/etc/portage/package.use"));
+        std::fs::create_dir_all(&use_dir)?;
+        std::fs::write(
+            use_dir.join("grub"),
+            format!("sys-boot/grub {}\n", flags.join(" ")),
+        )?;
+        tracing::info!("Installing sys-boot/grub into crossdev prefix for {chost}…");
+        runner.run(&format!("{chost}-emerge -b -k sys-boot/grub"))
+    }
 
     /// Write portage config files for the crossdev prefix directly on the host fs.
     fn write_crossdev_portage(
@@ -379,6 +423,17 @@ impl Sandbox {
             "dev-lang/rust rustfmt -system-llvm\n",
         )?;
         std::fs::write(portage_dir.join("package.use/git"), "dev-vcs/git -iconv\n")?;
+
+        if let Some(ref platforms) = board.grub_platforms {
+            let flags: Vec<String> = platforms
+                .split_whitespace()
+                .map(|p| format!("grub_platforms_{p}"))
+                .collect();
+            std::fs::write(
+                portage_dir.join("package.use/grub"),
+                format!("sys-boot/grub {}\n", flags.join(" ")),
+            )?;
+        }
 
         // package.accept_keywords
         std::fs::write(

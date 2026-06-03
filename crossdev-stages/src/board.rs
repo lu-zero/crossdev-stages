@@ -29,6 +29,14 @@ pub struct BoardConfig {
     pub u_boot_defconfig: Option<String>,
     pub u_boot_make_flags: Option<String>, // extra make args
 
+    // GRUB (BIOS/EFI bootloader via grub-mkimage)
+    pub grub_platforms: Option<String>, // e.g. "pc"
+    pub grub_modules: Option<String>,   // extra modules to embed in core.img
+
+    // SYSLINUX (BIOS bootloader)
+    pub syslinux_repo: Option<String>,
+    pub syslinux_tag: Option<String>,
+
     // Firmware overlay
     pub firmware_repo: Option<String>,
     pub firmware_overlay: Option<String>, // path inside firmware repo
@@ -161,6 +169,12 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         u_boot_tag: kv.get("U_BOOT_TAG").or_else(|| kv.get("TAG")).cloned(),
         u_boot_defconfig: kv.get("U_BOOT_DEFCONFIG").cloned(),
         u_boot_make_flags: kv.get("U_BOOT_MAKE_FLAGS").cloned(),
+
+        grub_platforms: kv.get("GRUB_PLATFORMS").cloned(),
+        grub_modules: kv.get("GRUB_MODULES").cloned(),
+
+        syslinux_repo: kv.get("SYSLINUX_REPO").cloned(),
+        syslinux_tag: kv.get("SYSLINUX_TAG").cloned(),
 
         firmware_repo: kv.get("FIRMWARE_REPO").cloned(),
         firmware_overlay: kv.get("BOARD_FIRMWARE_OVERLAY").cloned(),

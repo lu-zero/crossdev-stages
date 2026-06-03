@@ -1,0 +1,3 @@
+# Sandbox packages for pentium-mmx board
+# sys-boot/grub provides grub-mkimage (host tool) and i386-pc modules
+sys-boot/grub

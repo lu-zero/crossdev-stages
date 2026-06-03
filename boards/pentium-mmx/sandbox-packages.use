@@ -1,0 +1,2 @@
+# Build grub with i386-pc (BIOS) platform support; no UEFI needed here
+sys-boot/grub grub_platforms_pc -grub_platforms_efi-64

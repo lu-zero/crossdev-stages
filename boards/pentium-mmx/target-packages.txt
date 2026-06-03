@@ -1,0 +1,12 @@
+# Packages cross-installed into the i586 target sysroot
+
+# Network & remote access (services enabled in BOOT_SERVICES)
+net-misc/openssh
+net-misc/dhcpcd
+
+# Disk utilities required by the grow-rootfs first-boot service
+sys-block/parted
+sys-fs/e2fsprogs
+
+# Minimal shell utilities
+sys-apps/busybox
