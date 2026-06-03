@@ -251,6 +251,10 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
 
     runner.run("mkdir -p /build/gen/root /build/gen/boot")?;
     runner.run("cp -a /target/. /build/gen/root/")?;
+    // unpack_tarball excludes ./dev to avoid permission errors in rootless containers.
+    // Recreate the empty mount-point directories so the kernel can mount devtmpfs,
+    // procfs, sysfs and tmpfs at boot.
+    runner.run("mkdir -p /build/gen/root/{dev,proc,sys,run,tmp}")?;
 
     runner.run(&format!(
         "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} \
