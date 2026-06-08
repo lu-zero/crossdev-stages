@@ -28,8 +28,27 @@ pub struct BoardConfig {
     pub u_boot_defconfig: Option<String>,
     pub u_boot_make_flags: Option<String>,   // extra make args
 
+    // ARM Trusted Firmware-A — BL31 for Rockchip / Amlogic SoCs
+    pub tfa_repo: Option<String>,
+    pub tfa_tag: Option<String>,
+    pub tfa_plat: Option<String>,
+
+    // Rockchip closed-source blob repo (DDR init etc., pre-built)
+    pub rkbin_repo: Option<String>,
+    pub rkbin_tag: Option<String>,
+    pub rkbin_ddr: Option<String>, // glob pattern for the DDR init blob
+
+    // Amlogic boot-FIP packaging repo (vendor BL2/BL30/BL301 + tools)
+    pub fip_repo: Option<String>,
+    pub fip_tag: Option<String>,
+
+    /// Ordered bootloader pipeline; empty → DEFAULT_PIPELINE
+    /// (`opensbi uboot`).  Per-board override via `BOOT_PIPELINE` array.
+    pub boot_pipeline: Vec<String>,
+
     // Firmware overlay
     pub firmware_repo: Option<String>,
+    pub firmware_tag: Option<String>,     // FIRMWARE_TAG; falls back to TAG
     pub firmware_overlay: Option<String>, // path inside firmware repo
     pub host_firmware_paths: Vec<String>, // host paths to copy into image
 
@@ -155,7 +174,21 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         u_boot_defconfig: kv.get("U_BOOT_DEFCONFIG").cloned(),
         u_boot_make_flags: kv.get("U_BOOT_MAKE_FLAGS").cloned(),
 
+        tfa_repo: kv.get("TFA_REPO").cloned(),
+        tfa_tag: kv.get("TFA_TAG").or_else(|| kv.get("TAG")).cloned(),
+        tfa_plat: kv.get("TFA_PLAT").cloned(),
+
+        rkbin_repo: kv.get("RKBIN_REPO").cloned(),
+        rkbin_tag: kv.get("RKBIN_TAG").cloned(),
+        rkbin_ddr: kv.get("RKBIN_DDR").cloned(),
+
+        fip_repo: kv.get("FIP_REPO").cloned(),
+        fip_tag: kv.get("FIP_TAG").or_else(|| kv.get("TAG")).cloned(),
+
+        boot_pipeline: arrays.get("BOOT_PIPELINE").cloned().unwrap_or_default(),
+
         firmware_repo: kv.get("FIRMWARE_REPO").cloned(),
+        firmware_tag: kv.get("FIRMWARE_TAG").or_else(|| kv.get("TAG")).cloned(),
         firmware_overlay: kv.get("BOARD_FIRMWARE_OVERLAY").cloned(),
         host_firmware_paths: arrays
             .get("HOST_FIRMWARE_PATHS")
