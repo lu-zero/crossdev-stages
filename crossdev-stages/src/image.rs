@@ -23,21 +23,20 @@ pub struct Build {
 
 impl Build {
     pub fn create(ws: &Workspace, board: &str) -> Result<Self> {
-        if let Ok(builds) = ws.list_builds() {
-            for dir in builds {
-                if let Some(b) = Self::open(dir.clone()) {
-                    if b.board == board && !b.is_done("packed") {
-                        tracing::info!("Resuming build: {}", dir);
-                        return Ok(b);
-                    }
-                }
-            }
+        // One build directory per board.  Reuse it across re-runs: the
+        // timestamp written at first create stays put, so a re-pack
+        // overwrites the same `*-<ts>.img.xz` instead of accumulating
+        // copies.  To start over (and pick up a fresh timestamp), prune
+        // the board's build dir first.
+        let dir = ws.builds_dir().join(board);
+        if let Some(b) = Self::open(dir.clone()) {
+            tracing::info!("Reusing build: {}", dir);
+            return Ok(b);
         }
-        let ts = Utc::now().format("%Y%m%dT%H%M%SZ");
-        let name = format!("{board}-{ts}");
-        let dir = ws.builds_dir().join(&name);
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join(".board"), board)?;
+        let ts = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        std::fs::write(dir.join(".timestamp"), &ts)?;
         Ok(Self {
             dir,
             board: board.to_string(),
@@ -49,6 +48,15 @@ impl Build {
             .ok()
             .map(|s| s.trim().to_string())?;
         Some(Self { dir, board })
+    }
+
+    /// Wall-clock build timestamp embedded in the produced image filename
+    /// (stable across resume — written once at create).
+    pub fn timestamp(&self) -> String {
+        std::fs::read_to_string(self.dir.join(".timestamp"))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|| Utc::now().format("%Y%m%dT%H%M%SZ").to_string())
     }
 
     fn marker(&self, step: &str) -> Utf8PathBuf {
@@ -343,7 +351,7 @@ fn default_pack(
         "/scripts/genimage.cfg".to_string()
     };
 
-    let img_name = board
+    let cfg_name = board
         .image_name
         .clone()
         .unwrap_or_else(|| format!("gentoo-linux-{}_dev-sdcard.img", board.name));
@@ -354,6 +362,16 @@ fn default_pack(
          --mkdosfs mkfs.vfat \
          --inputpath /build --outputpath /build --rootpath /build/gen"
     ))?;
+
+    // Stamp the build timestamp into the image filename so successive builds
+    // don't shadow each other when the user copies them out, e.g.
+    //   gentoo-linux-premier-p550_dev-sdcard-20260622T031736Z.img.xz
+    let ts = build.timestamp();
+    let img_name = match cfg_name.strip_suffix(".img") {
+        Some(stem) => format!("{stem}-{ts}.img"),
+        None => format!("{cfg_name}-{ts}"),
+    };
+    runner.run(&format!("mv /build/{cfg_name} /build/{img_name}"))?;
 
     let compression = board.compression.as_deref().unwrap_or("xz");
     let final_name = match compression {
