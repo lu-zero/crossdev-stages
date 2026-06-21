@@ -22,8 +22,10 @@ kver=$(ls /build/gen/root/lib/modules/ 2>/dev/null | head -1)
 mkdir -p "/build/gen/boot/zhihe/${kver}"
 mv /build/gen/boot/*.dtb "/build/gen/boot/zhihe/${kver}/" 2>/dev/null || true
 
-# Extlinux config — vendor u-boot SPL chain hands off to u-boot proper
-# which reads /boot/extlinux/extlinux.conf via CONFIG_SPL_FS_EXT4.
+# Extlinux config — vendor u-boot proper reads /extlinux/extlinux.conf from
+# the boot ext4 partition.  No INITRD line: the OSL kernel statically pulls
+# in eMMC / Ethernet / pinctrl / PMIC, mount-root-via-PARTUUID works directly
+# (PROVISION_RUNBOOK.md confirms this is the bench-validated path).
 mkdir -p /build/gen/boot/extlinux
 cat > /build/gen/boot/extlinux/extlinux.conf <<EXTEOF
 DEFAULT a210
@@ -33,8 +35,7 @@ LABEL a210
     MENU LABEL Zhihe A210 EVB (rv64gcv VLEN=128)
     LINUX /${BOOT_KERNEL_NAME:-Image}
     FDT /zhihe/${kver}/${BOOT_DTB_NAME:-a210-evb.dtb}
-    INITRD /${BOOT_RAMDISK_NAME:-initramfs.img}
-    APPEND root=${BOOT_ROOT_DEV:-/dev/mmcblk0p5} rw rootwait rootfstype=ext4 console=${BOOT_CONSOLE:-ttyS4,115200n8} earlycon=sbi
+    APPEND root=${BOOT_ROOT_DEV} rw rootwait rootfstype=ext4 console=${BOOT_CONSOLE:-ttyS4,115200n8} earlycon=sbi
 EXTEOF
 
 # Stage kernel Image alongside extlinux (vendor u-boot SPL FS path).
