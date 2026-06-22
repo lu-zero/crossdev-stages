@@ -5,7 +5,7 @@ set -e
 #   1. Build riscv-boot.itb FIT (kernel/initrd/dtb + fw_dynamic + u-boot)
 #   2. Wrap u-boot SPL with -rvbl header → spl-with-fit-rvbl.bin
 #   3. Wrap bootzero (vendor blob, if present) → bootzero-rvbl.bin
-#   4. Stage a210-evb.dtb under vendor-expected /boot path
+#   4. Stage a210-dev.dtb under vendor-expected /boot path
 #   5. Write extlinux.conf for u-boot to boot the kernel
 #
 # Vendor reference: zhihe-a210-u-boot/board/zhihe/common/script/
@@ -26,16 +26,19 @@ mv /build/gen/boot/*.dtb "/build/gen/boot/zhihe/${kver}/" 2>/dev/null || true
 # the boot ext4 partition.  No INITRD line: the OSL kernel statically pulls
 # in eMMC / Ethernet / pinctrl / PMIC, mount-root-via-PARTUUID works directly
 # (PROVISION_RUNBOOK.md confirms this is the bench-validated path).
+#
+# APPEND matches the production bootargs documented in PROVISION_RUNBOOK.md:
+#   console=ttyS4,115200 root=PARTUUID=…-0004 rw rootwait earlycon loglevel=4
 mkdir -p /build/gen/boot/extlinux
 cat > /build/gen/boot/extlinux/extlinux.conf <<EXTEOF
 DEFAULT a210
 TIMEOUT 30
 
 LABEL a210
-    MENU LABEL Zhihe A210 EVB (rv64gcv VLEN=128)
+    MENU LABEL Zhihe A210 (rv64gcv VLEN=128)
     LINUX /${BOOT_KERNEL_NAME:-Image}
-    FDT /zhihe/${kver}/${BOOT_DTB_NAME:-a210-evb.dtb}
-    APPEND root=${BOOT_ROOT_DEV} rw rootwait rootfstype=ext4 console=${BOOT_CONSOLE:-ttyS4,115200n8} earlycon=sbi
+    FDT /zhihe/${kver}/${BOOT_DTB_NAME:-a210-dev.dtb}
+    APPEND console=ttyS4,115200 root=${BOOT_ROOT_DEV} rw rootwait earlycon loglevel=4
 EXTEOF
 
 # Stage kernel Image alongside extlinux (vendor u-boot SPL FS path).
@@ -43,18 +46,18 @@ cp /build/linux/arch/riscv/boot/Image "/build/gen/boot/${BOOT_KERNEL_NAME:-Image
 
 # ── Build riscv-boot.itb FIT ───────────────────────────────────────────
 # FIT contains:
-#   - a210-evb.dtb     (load 0x8c000000)
+#   - a210-dev.dtb     (load 0x8c000000)
 #   - fw_dynamic.bin   (firmware, opensbi, gzip, load+entry 0x80000000)
 #   - u-boot.bin       (firmware, u-boot,  gzip, load+entry 0x90000000)
 # u-boot SPL reads this FIT via CONFIG_SPL_LOAD_FIT_FULL=y.
 ITB_STAGE=$(mktemp -d)
-cp "/build/gen/boot/zhihe/${kver}/${BOOT_DTB_NAME:-a210-evb.dtb}" "${ITB_STAGE}/a210-evb.dtb"
+cp "/build/gen/boot/zhihe/${kver}/${BOOT_DTB_NAME:-a210-dev.dtb}" "${ITB_STAGE}/${BOOT_DTB_NAME:-a210-dev.dtb}"
 cp /build/opensbi/build/platform/generic/firmware/fw_dynamic.bin "${ITB_STAGE}/fw_dynamic.bin"
 cp /build/u-boot/u-boot.bin "${ITB_STAGE}/u-boot.bin"
 gzip -fkn9 "${ITB_STAGE}/fw_dynamic.bin"
 gzip -fkn9 "${ITB_STAGE}/u-boot.bin"
 
-cat > "${ITB_STAGE}/riscv-boot.its" <<'ITSEOF'
+cat > "${ITB_STAGE}/riscv-boot.its" <<ITSEOF
 /dts-v1/;
 
 / {
@@ -62,9 +65,9 @@ cat > "${ITB_STAGE}/riscv-boot.its" <<'ITSEOF'
     #address-cells = <1>;
 
     images {
-        fdt-evb {
-            description = "A210 EVB DT";
-            data = /incbin/("a210-evb.dtb");
+        fdt-dev {
+            description = "A210 DEV DT";
+            data = /incbin/("${BOOT_DTB_NAME:-a210-dev.dtb}");
             type = "flat_dt";
             arch = "riscv";
             compression = "none";
@@ -96,10 +99,10 @@ cat > "${ITB_STAGE}/riscv-boot.its" <<'ITSEOF'
     };
 
     configurations {
-        default = "a210-evb";
-        a210-evb {
-            description = "A210 EVB";
-            fdt = "fdt-evb";
+        default = "a210-dev";
+        a210-dev {
+            description = "A210 DEV";
+            fdt = "fdt-dev";
             firmware = "opensbi-1";
             loadables = "u-boot-1";
         };

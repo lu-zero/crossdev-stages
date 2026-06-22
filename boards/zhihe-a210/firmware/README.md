@@ -39,6 +39,15 @@ Unpack and copy:
 - **bootzero2.bin**: used only by the `btz-with-spl-rvbl.bin` chain
   for full chip programming; our flash.sh does not require it.
 
+## sha256-pin policy
+
+Per the project-wide mirror convention (`docs/MIRRORS.md`) and matching
+OSL's own posture, we pin the **sha256 of each blob** without
+redistributing the blob itself.  When a verified copy is dropped into
+this directory, the build records its hash; subsequent rebuilds refuse
+mismatches.  Future work: capture and commit the canonical hashes from
+SDK v2.8.1 here so users can spot tampering on download.
+
 ## Vendor source reference
 
 The exact RVBL header format + wrap scripts live in vendor source at:

@@ -1,4 +1,4 @@
-# Zhihe A210 (a210-evb)
+# Zhihe A210 (a210-dev)
 
 Shanghai Zhihe A210 SoC — 8-core heterogeneous RISC-V: 4× T-Head C920
 (OoO) + 4× T-Head C908 (in-order), both at 1.9 GHz, identical ISA.
@@ -58,9 +58,10 @@ upstream — pinned to `v2.9.0` tags):
 | opensbi   | `git.osuosl.org/osuosl/zhihe-a210-opensbi.git`       | `v2.9.0`            |
 | buildroot | `git.osuosl.org/osuosl/zhihe-a210-buildroot.git`     | reference only      |
 
-LTS alternative: `KERNEL_TAG="osl/a210-6.6.x-lts"` (6.6.142 base) — more
-conservative if `osl/a210-mainline` regresses.  Vendor `develop` branches
-move; pin to the tags above.
+LTS alternative: `KERNEL_TAG="osl/a210-6.6.x-lts"` (6.6.141+ base) — more
+conservative if `osl/a210-mainline` regresses, and the branch that the
+T7 first-board validation actually ran on (`6.6.141-osl+`, 2026-06-15).
+Vendor `develop` branches move; pin to the tags above.
 
 ## Closed firmware blobs
 
@@ -89,21 +90,59 @@ then u-boot's own fastboot accepts the GPT + per-partition flashes.
 
 ## Partition layout
 
-GPT, single-slot (A side populated, B reserved for future A/B switch):
+OSL "flatten" layout (per `a210-linux/docs/PARTITIONS.md`) — four
+partitions instead of the vendor A/B-redundant nine:
 
-| name      | size      | populated | purpose                       |
-|-----------|-----------|-----------|-------------------------------|
-| factory   | 32K       | no        | OTP / MAC / board info        |
-| uboot_env | 32K       | no        | u-boot env (redundant pair)   |
-| boot_a    | 256M      | **yes**   | bootfs.ext4 (kernel + DTB)    |
-| boot_b    | 256M      | no        | reserved (A/B slot B)         |
-| system_a  | 2494M     | **yes**   | rootfs.ext4                   |
-| system_b  | 2494M     | no        | reserved (A/B slot B)         |
-| app_a/b   | 512M each | no        | reserved (vendor app slots)   |
-| data      | rest      | no        | reserved (vendor /data)       |
+| # | name      | size     | purpose                                          |
+|---|-----------|----------|--------------------------------------------------|
+| 1 | factory   | 16 KiB   | vendor OTP / MAC / `fnv` factory NVRAM (reserved) |
+| 2 | uboot_env | 16 KiB   | u-boot `saveenv` target (reserved)               |
+| 3 | boot      | 256 MiB  | ext4 `A210-BOOT`, PARTUUID `…-0003` (Image + DTB) |
+| 4 | rootfs    | rest     | ext4 `A210-ROOT`, PARTUUID `…-0004` (userland)   |
 
-Partition UUIDs match vendor `gpt_emmc.txt` so vendor recovery tooling
-still resolves names.  True A/B redundancy is a follow-up.
+Partitions 1–2 are deliberately reserved at the vendor offset/size so
+the board's `fnv` and `saveenv` resolve by name; their PARTUUIDs in this
+image will differ from the board-burned ones (`bcafe35e-…`, `9d8828c9-…`)
+and that is expected — see comments in `genimage.cfg`.
+
+Full A/B + overlay (vendor's `bootcount`/`bootlimit` rollback) is
+documented in `a210-linux/docs/AB_LAYOUT.md` as a future migration,
+deferred until flatten is bench-validated end-to-end.
+
+## Provisioning flow
+
+OSL fleet install is **netboot installer → eMMC flatten image**, per
+board, manual over serial (per `PROVISION_RUNBOOK.md`):
+
+1. Install server stages `Image`, `a210-dev.dtb`, `installer.cpio.gz`
+   over TFTP and a rootfs tarball over NFS.
+2. On each board: interrupt U-Boot, `dhcp` + `tftpboot` the three
+   payloads, `booti` with `install_server=<IP> board_id=<NN>` on the
+   cmdline.  The Debian initramfs installer (busybox, e2fsprogs, gdisk,
+   nfs-common, udhcpc) DHCPs `eth0`, NFS-mounts the export, runs
+   `partition-emmc.sh`, writes Image + dtb + rootfs, stamps
+   `/etc/osl/board-id`, and reboots.
+3. Operator persists the production `bootcmd`/`bootargs` (see
+   `board.conf` header) and the MAC pair, then `boot`.
+
+That flow is what OSL deploys to a full fleet.  Single-board users
+should just `dd` the produced eMMC image instead — vendor `booti`
+accepts our unsigned `Image` directly (vendor confirmed 2026-05-28).
+
+## MAC handling
+
+Factory MAC is **not** present in eFuse (vendor-confirmed); the
+`factory` partition stays empty out of the box.  Two options per
+`MAC_SCHEME.md`:
+
+- **Durable** (recommended): U-Boot factory-NVRAM — `fnv erase`,
+  `env set ethaddr 48:da:??:??:??:??`, `env set eth1addr 48:da:…`,
+  `fnv save`.  Prefix `48:da` is locally-administered.  **eth1 MUST
+  differ from eth0** — vendor's docs example mistakenly reused one MAC.
+- **Runtime fallback**: `osl-setmac.service` in the OSL Debian overlay
+  derives both MACs by SHA1 over `/etc/osl/board-id` (or
+  `machine-id`).  Whether we replicate that service in our image is
+  out of scope here.
 
 ## Console
 
@@ -114,11 +153,14 @@ still resolves names.  True A/B redundancy is a follow-up.
 - **NPU** (12 TOPS) — vendor blob only, no open driver.
 - **GPU** — vendor Vulkan blob; no Mesa support yet.
 - **HDMI/DisplayPort output** — vendor only; use serial console.
-- **A/B redundancy** — partition table reserves the slots but only the
-  A slot is populated.  Switch follow-up.
+- **A/B redundancy** — flatten layout intentionally drops vendor A/B;
+  see `AB_LAYOUT.md` for the future migration plan.
+- **MAC fallback service** — `osl-setmac.service` (OSL Debian overlay)
+  not yet ported to our Gentoo image; durable `fnv ethaddr/eth1addr`
+  is the recommended path.
 - **u-boot SPL RVBL build target** — vendor `CONFIG_BUILD_TARGET="zhihe-rvbl.bin"`
-  may produce a pre-wrapped SPL; we re-wrap from raw `u-boot-spl.bin` in
-  post-assemble for determinism.
+  may produce a pre-wrapped SPL; we re-wrap from raw `u-boot-spl.bin`
+  in post-assemble for determinism.
 
 ## References
 
@@ -130,4 +172,8 @@ still resolves names.  True A/B redundancy is a follow-up.
 - Flash script: `zhihe-a210-u-boot/board/zhihe/common/script/fastboot_images.sh`
 - RVBL header: `zhihe-a210-u-boot/board/zhihe/common/script/generate_firmware.sh`
 - FIT template: `zhihe-a210-u-boot/board/zhihe/a210-evb/riscv-boot.its`
+- Partition layout: `a210-linux/docs/PARTITIONS.md`, `docs/AB_LAYOUT.md`
+- Provisioning: `a210-linux/docs/PROVISION_RUNBOOK.md`
+- MAC scheme: `a210-linux/docs/MAC_SCHEME.md`
+- T7 validation: `a210-linux/docs/T7-VALIDATION.md` (PASSED 2026-06-15)
 - Vendor SDK (closed blobs): https://developer.zhcomputing.com/downloads/release/zhihesdk/v2.8.1/
