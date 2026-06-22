@@ -1,5 +1,6 @@
 mod board;
 mod bootloader;
+mod cflags;
 mod cli;
 mod container;
 mod error;
