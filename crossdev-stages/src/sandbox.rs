@@ -390,27 +390,31 @@ impl Sandbox {
         ))?;
 
         tracing::info!("Running crossdev (this takes a while)…");
-        let grub_ex_pkg = if board.grub_platforms.is_some() {
-            " --ex-pkg sys-boot/grub"
-        } else {
-            ""
-        };
         // rustc has no upstream target for riscv32-unknown-linux-gnu; skip rust-std on rv32.
         let rust_std_ex_pkg = if target_arch == "riscv32" {
             ""
         } else {
             " --ex-pkg sys-devel/rust-std"
         };
+        // grub is not an --ex-pkg: crossdev runs those through host portage,
+        // so the cross-CHOST grub would write /usr/bin/grub-* into the host
+        // paths and collide with the sandbox's own sys-boot/grub.  It goes in
+        // through ensure_grub_ex_pkg below, which cross-emerges it into
+        // /usr/<chost>/usr/bin/ with no host overlap.
         runner.run(&format!(
             "crossdev {chost} \
              --gcc {gcc_ver} \
-             --ex-pkg sys-devel/clang-crossdev-wrappers{rust_std_ex_pkg}{grub_ex_pkg}"
+             --ex-pkg sys-devel/clang-crossdev-wrappers{rust_std_ex_pkg}"
         ))?;
 
         // Switch cross compiler to the installed slot.
         runner.run(&format!(
             "gcc-config {chost}-{gcc_slot} && source /etc/profile"
         ))?;
+
+        // grub, if the board boots with one.  Before the markers below: a
+        // prefix marked complete has to have everything the board asked for.
+        self.ensure_grub_ex_pkg(board, &chost, &store_dir, &binpkgs_dir)?;
 
         // Stash the host-side toolchain payload in the store so a fresh
         // sandbox can replay it (see ensure_host_payload).  Must happen
