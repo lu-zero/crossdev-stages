@@ -1,0 +1,92 @@
+name: check
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Cancel earlier runs for the same branch/PR — only the latest matters.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: cargo build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'crossdev-stages -> ../target'
+      - name: Build
+        run: cargo build --workspace --release
+      - name: Test
+        run: cargo test --workspace
+      - name: Clippy (advisory)
+        run: cargo clippy --workspace --all-targets || true
+
+  boards:
+    name: board configs parse
+    needs: rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: 'crossdev-stages -> ../target'
+      - run: cargo build --release
+      - name: board list
+        run: ./target/release/crossdev-stages board list
+      - name: board info + dry-run image build for every board
+        run: |
+          set -e
+          fail=0
+          for b in boards/*/; do
+            name=$(basename "$b")
+            echo "::group::${name}"
+            if ! ./target/release/crossdev-stages board info "${name}"; then
+              echo "::error file=boards/${name}/board.conf::board info failed"
+              fail=1
+            fi
+            if ! ./target/release/crossdev-stages --dry-run image build --board "${name}"; then
+              echo "::error file=boards/${name}/board.conf::dry-run image build failed"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "${fail}"
+
+  shell:
+    name: shellcheck (boards/*.sh)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: shellcheck (warn level, advisory)
+        # Excludes:
+        #   SC1090/SC1091  — `source` of dynamic paths (board scripts source board.conf at runtime)
+        #   SC2086         — word-splitting noise; board scripts intentionally rely on it for $MAKEOPTS-like vars
+        #   SC2034         — unused vars; board.conf is a config file, vars read by Rust side
+        # Don't fail the workflow on shellcheck warnings yet — they will be tightened in a follow-up.
+        run: |
+          find boards -name '*.sh' -print0 \
+            | xargs -0 shellcheck -S warning \
+                -e SC1090 -e SC1091 -e SC2086 -e SC2034 \
+            || true
+
+  markdown:
+    name: markdownlint (advisory)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DavidAnson/markdownlint-cli2-action@v16
+        with:
+          globs: '**/*.md'
+        continue-on-error: true
