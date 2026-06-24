@@ -25,9 +25,11 @@ pub fn gentoo_arch(arch: &str) -> Result<&'static str> {
 
 /// Return the full CHOST triple for a given arch.
 /// x86 32-bit uses the "pc" vendor (Gentoo convention); others use "unknown".
+/// riscv32 uses musl libc (no Gentoo glibc rv32 stage3 exists).
 pub fn chost_for_arch(arch: &str) -> Result<String> {
     let vendor = if is_ix86(arch) { "pc" } else { "unknown" };
-    Ok(format!("{arch}-{vendor}-linux-gnu"))
+    let libc = if arch == "riscv32" { "musl" } else { "gnu" };
+    Ok(format!("{arch}-{vendor}-linux-{libc}"))
 }
 
 fn is_ix86(arch: &str) -> bool {
@@ -37,6 +39,7 @@ fn is_ix86(arch: &str) -> bool {
 /// Return the Gentoo profile path for an OS arch string.
 pub fn gentoo_profile(arch: &str) -> Result<&'static str> {
     Ok(match arch {
+        "riscv32" => "default/linux/riscv/23.0/rv32/ilp32/musl",
         a if a.starts_with("riscv") => "default/linux/riscv/23.0/rv64/lp64d",
         "x86_64" => "default/linux/amd64/23.0",
         "aarch64" => "default/linux/arm64/23.0",
@@ -70,6 +73,7 @@ pub fn default_cflags(arch: &str) -> &'static str {
         "x86_64" => "-O3 -march=x86-64 -pipe",
         "aarch64" => "-O3 -pipe",
         "riscv64" => "-O3 -march=rv64gc -pipe",
+        "riscv32" => "-Os -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medlow -pipe",
         _ => "-O3 -pipe",
     }
 }
@@ -114,9 +118,12 @@ pub fn llvm_target(arch: &str) -> Option<&'static str> {
 }
 
 /// Return the stage3 variant name for `client.get()`.
-/// For riscv64 this is "rv64_lp64d-openrc".
+/// For riscv64 this is "rv64_lp64d-openrc"; for riscv32 (soft-float, musl) "rv32_ilp32_musl-openrc".
+/// Note: Gentoo autobuilds may not publish an rv32 musl stage3; riscv32 boards bootstrap
+/// from scratch and don't rely on `setup`.
 pub fn stage_variant(arch: &str) -> &'static str {
     match arch {
+        "riscv32" => "rv32_ilp32_musl-openrc",
         a if a.starts_with("riscv") => "rv64_lp64d-openrc",
         "aarch64" => "arm64-openrc",
         "x86_64" => "amd64-openrc",

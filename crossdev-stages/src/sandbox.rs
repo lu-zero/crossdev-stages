@@ -395,11 +395,16 @@ impl Sandbox {
         } else {
             ""
         };
+        // rustc has no upstream target for riscv32-unknown-linux-gnu; skip rust-std on rv32.
+        let rust_std_ex_pkg = if target_arch == "riscv32" {
+            ""
+        } else {
+            " --ex-pkg sys-devel/rust-std"
+        };
         runner.run(&format!(
             "crossdev {chost} \
              --gcc {gcc_ver} \
-             --ex-pkg sys-devel/clang-crossdev-wrappers \
-             --ex-pkg sys-devel/rust-std{grub_ex_pkg}"
+             --ex-pkg sys-devel/clang-crossdev-wrappers{rust_std_ex_pkg}{grub_ex_pkg}"
         ))?;
 
         // Switch cross compiler to the installed slot.
