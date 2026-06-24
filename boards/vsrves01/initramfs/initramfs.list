@@ -1,0 +1,43 @@
+# gen_init_cpio spec for VSRVES01 stage-1 initramfs.
+#
+# Variables expected to be substituted (envsubst or sed -e) before being fed
+# to ${KSRC}/usr/gen_init_cpio:
+#   ${KSRC}        absolute path to the kernel source tree
+#   ${SCRIPTS}     absolute path to scripts/boards/vsrves01
+#
+# Format reference: linux/usr/gen_init_cpio.c
+#   file <name> <location> <mode> <uid> <gid>
+#   dir  <name> <mode> <uid> <gid>
+#   nod  <name> <mode> <uid> <gid> <dev_type> <maj> <min>
+#   slink <name> <target> <mode> <uid> <gid>
+
+# --- directories ------------------------------------------------------------
+dir /dev      0755 0 0
+dir /proc     0755 0 0
+dir /sys      0755 0 0
+dir /mnt      0755 0 0
+dir /boot     0755 0 0
+dir /bin      0755 0 0
+dir /sbin     0755 0 0
+dir /usr      0755 0 0
+dir /usr/bin  0755 0 0
+dir /usr/sbin 0755 0 0
+
+# --- device nodes (devtmpfs will repopulate later, but kernel needs these
+#     to exist before /dev is mounted) -------------------------------------
+nod /dev/console  0600 0 0 c 5   1
+nod /dev/null     0666 0 0 c 1   3
+nod /dev/tty      0666 0 0 c 5   0
+nod /dev/loop0    0660 0 0 b 7   0
+nod /dev/mmcblk0  0660 0 0 b 179 0
+
+# --- static busybox staged by override-kernel.sh ----------------------------
+file /bin/busybox ${KSRC}/usr/initramfs-busybox 0755 0 0
+
+# --- /init script -----------------------------------------------------------
+file /init ${SCRIPTS}/initramfs/init 0755 0 0
+
+# --- symlinks ---------------------------------------------------------------
+slink /linuxrc          /init         0755 0 0
+slink /sbin/init        /bin/busybox  0755 0 0
+slink /sbin/switch_root /bin/busybox  0755 0 0
