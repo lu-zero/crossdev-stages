@@ -74,7 +74,7 @@ index 00000000000000..da3ebf03094c73
 +
 +	  Note that the answer to this question doesn't directly affect the
 +	  kernel: saying N will just cause the configurator to skip all the
-+	  remaining Cadence network card questions. If you say Y, you will be
++	  remaining VLSI network card questions. If you say Y, you will be
 +	  asked for your specific card in the following questions.
 +
 +if NET_VENDOR_VLSI
