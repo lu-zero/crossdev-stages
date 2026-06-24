@@ -1,0 +1,108 @@
+From 0000000000000000000000000000000000000005 Mon Sep 17 00:00:00 2001
+From: Emil Renner Berthing <emil.renner.berthing@canonical.com>
+Date: Tue, 5 Aug 2025 16:49:31 +0200
+Subject: [PATCH 05/11] net: ethernet: add VLSI vendor directory
+
+Reserve drivers/net/ethernet/vlsi/ for the VLSI Solution Oy network
+drivers and wire the new sub-directory into the parent Kconfig and
+Makefile in the canonical alphabetical position (between "via" and
+"wangxun").
+
+The directory introduces two Kconfig symbols:
+
+  NET_VENDOR_VLSI - menu gate, default y
+  VLSI_MAC        - tristate, depends on COMMON_CLK, selects PHYLIB
+
+This patch contains only the build-system wiring; the actual
+driver source lands in the next patch in this series.
+
+Origin: esmil/linux vsrv branch 29b289977925 (split out)
+
+Co-developed-by: Emil Renner Berthing <emil.renner.berthing@canonical.com>
+Signed-off-by: Maciej Pijanka <maciej.pijanka@gmail.com>
+Signed-off-by: Emil Renner Berthing <emil.renner.berthing@canonical.com>
+Signed-off-by: Sungjoon Moon <sumoon@seoulsaram.org>
+---
+ drivers/net/ethernet/Kconfig       |  1 +
+ drivers/net/ethernet/Makefile      |  1 +
+ drivers/net/ethernet/vlsi/Kconfig  | 32 ++++++++++++++++++++++++++++++
+ drivers/net/ethernet/vlsi/Makefile |  6 ++++++
+ 4 files changed, 40 insertions(+)
+ create mode 100644 drivers/net/ethernet/vlsi/Kconfig
+ create mode 100644 drivers/net/ethernet/vlsi/Makefile
+
+diff --git a/drivers/net/ethernet/Kconfig b/drivers/net/ethernet/Kconfig
+--- a/drivers/net/ethernet/Kconfig
++++ b/drivers/net/ethernet/Kconfig
+@@ -199,6 +199,7 @@ source "drivers/net/ethernet/toshiba/Kconfig"
+ source "drivers/net/ethernet/tundra/Kconfig"
+ source "drivers/net/ethernet/vertexcom/Kconfig"
+ source "drivers/net/ethernet/via/Kconfig"
++source "drivers/net/ethernet/vlsi/Kconfig"
+ source "drivers/net/ethernet/wangxun/Kconfig"
+ source "drivers/net/ethernet/wiznet/Kconfig"
+ source "drivers/net/ethernet/xilinx/Kconfig"
+diff --git a/drivers/net/ethernet/Makefile b/drivers/net/ethernet/Makefile
+--- a/drivers/net/ethernet/Makefile
++++ b/drivers/net/ethernet/Makefile
+@@ -101,6 +101,7 @@ obj-$(CONFIG_NET_VENDOR_TOSHIBA) += toshiba/
+ obj-$(CONFIG_NET_VENDOR_TUNDRA) += tundra/
+ obj-$(CONFIG_NET_VENDOR_VERTEXCOM) += vertexcom/
+ obj-$(CONFIG_NET_VENDOR_VIA) += via/
++obj-$(CONFIG_NET_VENDOR_VLSI) += vlsi/
+ obj-$(CONFIG_NET_VENDOR_WANGXUN) += wangxun/
+ obj-$(CONFIG_NET_VENDOR_WIZNET) += wiznet/
+ obj-$(CONFIG_NET_VENDOR_XILINX) += xilinx/
+diff --git a/drivers/net/ethernet/vlsi/Kconfig b/drivers/net/ethernet/vlsi/Kconfig
+new file mode 100644
+index 00000000000000..da3ebf03094c73
+--- /dev/null
++++ b/drivers/net/ethernet/vlsi/Kconfig
+@@ -0,0 +1,32 @@
++# SPDX-License-Identifier: GPL-2.0-only
++#
++# VLSI device configuration
++#
++
++config NET_VENDOR_VLSI
++	bool "VLSI devices"
++	default y
++	help
++	  If you have a network (Ethernet) card belonging to this class, say Y.
++
++	  If unsure, say Y.
++
++	  Note that the answer to this question doesn't directly affect the
++	  kernel: saying N will just cause the configurator to skip all the
++	  remaining Cadence network card questions. If you say Y, you will be
++	  asked for your specific card in the following questions.
++
++if NET_VENDOR_VLSI
++
++config VLSI_MAC
++	tristate "VLSI ethernet support"
++	depends on COMMON_CLK
++	select PHYLIB
++	help
++	  The VLSI ethernet interface is found on their VSRVES01 chip.
++	  Say Y to include support chip.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be vlsi-mac.
++
++endif # NET_VENDOR_VLSI
+diff --git a/drivers/net/ethernet/vlsi/Makefile b/drivers/net/ethernet/vlsi/Makefile
+new file mode 100644
+index 00000000000000..3edf4cdcfbda1f
+--- /dev/null
++++ b/drivers/net/ethernet/vlsi/Makefile
+@@ -0,0 +1,6 @@
++# SPDX-License-Identifier: GPL-2.0
++#
++# Makefile for the VLSI network device driver.
++#
++
++obj-$(CONFIG_VLSI_MAC) += vlsi-mac.o
+-- 
+2.47.0
+
