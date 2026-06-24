@@ -1,0 +1,222 @@
+From 0000000000000000000000000000000000000004 Mon Sep 17 00:00:00 2001
+From: Emil Renner Berthing <emil.renner.berthing@canonical.com>
+Date: Tue, 22 Jul 2025 22:55:33 +0200
+Subject: [PATCH 04/11] riscv: dts: add VLSI VSRVSE01 CAT Board
+
+Introduce arch/riscv/boot/dts/vlsi/ holding the vsrvse01 SoC dtsi and
+the vsrvse01-catboard reference board overlay.  Also expose a new
+ARCH_VLSI Kconfig.socs choice (depends on 32BIT) and hook the new
+sub-directory into arch/riscv/boot/dts/Makefile.
+
+The SoC dtsi describes a single rv32imazicsr_zifencei core at 50 MHz
+with sv32 MMU, 64 MiB DRAM at 0x80000000, a Xilinx XPS interrupt
+controller, three ns16550a UARTs, a Xilinx UARTLite boot console and
+the integrated VSRVES01 ethernet MAC with its memory-mapped MDIO
+bus.  The catboard overlay pins the board MAC address, RGMII PHY mode
+and serial / ethernet aliases.
+
+Origin: esmil/linux vsrv branch 4e9050d0a6a7
+
+Signed-off-by: Emil Renner Berthing <emil.renner.berthing@canonical.com>
+Signed-off-by: Sungjoon Moon <sumoon@seoulsaram.org>
+---
+ arch/riscv/Kconfig.socs                       |   6 +
+ arch/riscv/boot/dts/Makefile                  |   1 +
+ arch/riscv/boot/dts/vlsi/Makefile             |   2 +
+ .../boot/dts/vlsi/vsrvse01-catboard.dts       |  29 +++++
+ arch/riscv/boot/dts/vlsi/vsrvse01.dtsi        | 114 ++++++++++++++++++
+ 5 files changed, 152 insertions(+)
+ create mode 100644 arch/riscv/boot/dts/vlsi/Makefile
+ create mode 100644 arch/riscv/boot/dts/vlsi/vsrvse01-catboard.dts
+ create mode 100644 arch/riscv/boot/dts/vlsi/vsrvse01.dtsi
+
+diff --git a/arch/riscv/Kconfig.socs b/arch/riscv/Kconfig.socs
+--- a/arch/riscv/Kconfig.socs
++++ b/arch/riscv/Kconfig.socs
+@@ -84,6 +84,12 @@ config ARCH_VIRT
+ 	help
+ 	  This enables support for QEMU Virt Machine.
+ 
++config ARCH_VLSI
++	bool "VLSI SoCs"
++	depends on 32BIT
++	help
++	  This enables support for VLSI SoC platform hardware.
++
+ config ARCH_CANAAN
+ 	bool "Canaan Kendryte SoC"
+ 	help
+diff --git a/arch/riscv/boot/dts/Makefile b/arch/riscv/boot/dts/Makefile
+--- a/arch/riscv/boot/dts/Makefile
++++ b/arch/riscv/boot/dts/Makefile
+@@ -10,3 +10,4 @@ subdir-y += sophgo
+ subdir-y += spacemit
+ subdir-y += starfive
+ subdir-y += thead
++subdir-y += vlsi
+diff --git a/arch/riscv/boot/dts/vlsi/Makefile b/arch/riscv/boot/dts/vlsi/Makefile
+new file mode 100644
+index 00000000000000..d17f5e71a29826
+--- /dev/null
++++ b/arch/riscv/boot/dts/vlsi/Makefile
+@@ -0,0 +1,2 @@
++# SPDX-License-Identifier: GPL-2.0
++dtb-$(CONFIG_ARCH_VLSI) += vsrvse01-catboard.dtb
+diff --git a/arch/riscv/boot/dts/vlsi/vsrvse01-catboard.dts b/arch/riscv/boot/dts/vlsi/vsrvse01-catboard.dts
+new file mode 100644
+index 00000000000000..adb6ba0fdf3fdb
+--- /dev/null
++++ b/arch/riscv/boot/dts/vlsi/vsrvse01-catboard.dts
+@@ -0,0 +1,29 @@
++// SPDX-License-Identifier: GPL-2.0
++/dts-v1/;
++
++#include "vsrvse01.dtsi"
++
++/ {
++	compatible = "vlsi,vsrvse01-catboard", "vlsi,vsrvse01";
++	model = "VSRV CAT Board";
++
++	aliases {
++		ethernet0 = &eth0;
++		serial0 = &uart0;
++		serial1 = &uart1;
++		serial2 = &uart2;
++	};
++};
++
++&eth0 {
++	mac-address = [ 76 73 72 76 65 73 ];
++	phy-handle = <&phy0>;
++	phy-mode = "rgmii";
++	status = "okay";
++};
++
++&mdio0 {
++	phy0: ethernet-phy@0 {
++		reg = <0>;
++	};
++};
+diff --git a/arch/riscv/boot/dts/vlsi/vsrvse01.dtsi b/arch/riscv/boot/dts/vlsi/vsrvse01.dtsi
+new file mode 100644
+index 00000000000000..024aec9e1eb018
+--- /dev/null
++++ b/arch/riscv/boot/dts/vlsi/vsrvse01.dtsi
+@@ -0,0 +1,114 @@
++// SPDX-License-Identifier: GPL-2.0
++/dts-v1/;
++
++/ {
++	compatible = "vlsi,vsrvse01";
++	#address-cells = <1>;
++	#size-cells = <1>;
++	model = "VLSI VSRVSE01 SoC";
++
++	cpus {
++		#address-cells = <1>;
++		#size-cells = <0>;
++		timebase-frequency = <50000000>;
++
++		cpu@0 {
++			compatible = "riscv";
++			reg = <0>;
++			clock-frequency = <50000000>;
++			device_type = "cpu";
++			mmu-type = "riscv,sv32";
++			riscv,isa-base = "rv32i";
++			riscv,isa-extensions = "i", "m", "a", "zicsr", "zifencei";
++
++			riscv_intc: interrupt-controller {
++				compatible = "riscv,cpu-intc";
++				interrupt-controller;
++				#interrupt-cells = <1>;
++			};
++		};
++	};
++
++	memory@80000000 {
++		reg = <0x80000000 0x4000000>;
++		device_type = "memory";
++	};
++
++	osc: oscillator {
++		compatible = "fixed-clock";
++		#clock-cells = <0>;
++		clock-frequency = <50000000>;
++		clock-output-names = "osc";
++	};
++
++	soc {
++		compatible = "simple-bus";
++		ranges;
++		#address-cells = <1>;
++		#size-cells = <1>;
++		interrupt-parent = <&irq_ctrl>;
++
++		irq_ctrl: interrupt-controller@10000000 {
++			compatible = "xlnx,xps-intc-1.00.a";
++			reg = <0x10000000 0x10000>;
++			#address-cells = <0>;
++			#interrupt-cells = <1>;
++			interrupt-controller;
++			interrupts-extended = <&riscv_intc 9>, <&riscv_intc 11>;
++			xlnx,kind-of-intr = <0x7ff>;
++			xlnx,num-intr-inputs = <11>;
++		};
++
++		uart0: serial@10200000 {
++			compatible = "ns16550a";
++			reg = <0x10200000 0x100>;
++			clocks = <&osc>;
++			fifo-size = <16>;
++			interrupts = <4>;
++			reg-shift = <2>;
++		};
++
++		uart1: serial@10200400 {
++			compatible = "ns16550a";
++			reg = <0x10200400 0x100>;
++			clocks = <&osc>;
++			fifo-size = <16>;
++			interrupts = <8>;
++			reg-shift = <2>;
++		};
++
++		uart2: serial@10200800 {
++			compatible = "ns16550a";
++			reg = <0x10200800 0x100>;
++			clocks = <&osc>;
++			fifo-size = <16>;
++			interrupts = <9>;
++			reg-shift = <2>;
++		};
++
++		bootuart: serial@12000000 {
++			compatible = "xlnx,xps-uartlite-1.00.a";
++			reg = <0x12000000 0x100>;
++			current-speed = <4166667>;
++			interrupts = <1>;
++			port-number = <0>;
++			xlnx,data-bits = <8>;
++			xlnx,use-parity = <0>;
++		};
++
++		eth0: ethernet@17000000 {
++			compatible = "vlsi,vsrves01-mac";
++			reg = <0x17000000 0x20000>;
++			clocks = <&osc>;
++			interrupts = <5>, <6>, <7>;
++			interrupt-names = "rx", "tx", "mdio";
++			max-speed = <100>;
++			status = "disabled";
++
++			mdio0: mdio {
++				#address-cells = <1>;
++				#size-cells = <0>;
++			};
++		};
++	};
++};
+-- 
+2.47.0
+

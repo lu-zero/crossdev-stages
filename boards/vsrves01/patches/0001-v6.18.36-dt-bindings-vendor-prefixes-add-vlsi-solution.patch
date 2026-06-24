@@ -1,0 +1,35 @@
+From 0000000000000000000000000000000000000001 Mon Sep 17 00:00:00 2001
+From: Emil Renner Berthing <emil.renner.berthing@canonical.com>
+Date: Wed, 6 Aug 2025 14:35:24 +0200
+Subject: [PATCH 01/11] dt-bindings: vendor-prefixes: add VLSI Solution Oy
+
+Register the "vlsi," device-tree compatible-string prefix for VLSI
+Solution Oy.  This vendor designs the VSRVSE01 family of RISC-V SoCs
+(rv32imazicsr_zifencei, sv32 MMU, in-house SBI firmware) that the
+subsequent patches in this series add support for.
+
+Inserted alphabetically between "vivax," and "vocore,".
+
+Origin: esmil/linux vsrv branch 9d8f6fc20277
+
+Signed-off-by: Emil Renner Berthing <emil.renner.berthing@canonical.com>
+Signed-off-by: Sungjoon Moon <sumoon@seoulsaram.org>
+---
+ Documentation/devicetree/bindings/vendor-prefixes.yaml | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/vendor-prefixes.yaml b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+--- a/Documentation/devicetree/bindings/vendor-prefixes.yaml
++++ b/Documentation/devicetree/bindings/vendor-prefixes.yaml
+@@ -1745,6 +1745,8 @@ patternProperties:
+     description: Vivante Corporation
+   "^vivax,.*":
+     description: Vivax brand by M SAN Grupa d.o.o.
++  "^vlsi,.*":
++    description: VLSI Solution Oy
+   "^vocore,.*":
+     description: VoCore Studio
+   "^voipac,.*":
+-- 
+2.47.0
+
