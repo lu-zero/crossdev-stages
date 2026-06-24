@@ -1,0 +1,75 @@
+#!/bin/sh
+# VSRVES01 stage-1 init: mount FAT /boot, find rootfs.ext4, switch_root
+# All commands resolved via busybox builtins.
+
+PATH=/bin:/sbin:/usr/bin:/usr/sbin
+export PATH
+
+banner() {
+	echo ""
+	echo "=================================================="
+	echo "  $*"
+	echo "=================================================="
+}
+
+panic() {
+	echo ""
+	echo "!! stage-1 init: $*"
+	echo "!! dropping to busybox sh; type 'exit' to reboot"
+	exec /bin/busybox sh
+}
+
+banner "VSRVES01 stage-1 init starting"
+
+# --- Mount pseudo-fs ---------------------------------------------------------
+/bin/busybox mkdir -p /proc /sys /dev /mnt /boot
+/bin/busybox mount -t proc     proc     /proc || panic "mount /proc failed"
+/bin/busybox mount -t sysfs    sysfs    /sys  || panic "mount /sys failed"
+/bin/busybox mount -t devtmpfs devtmpfs /dev  || panic "mount /dev failed"
+
+# --- Install busybox applets so 'mount', 'losetup', 'switch_root' work -------
+/bin/busybox --install -s /bin 2>/dev/null || true
+
+# --- Wait for eMMC ----------------------------------------------------------
+banner "waiting for /dev/mmcblk0 (max 15s)"
+i=0
+while [ $i -lt 30 ]; do
+	if [ -b /dev/mmcblk0 ]; then
+		echo "found /dev/mmcblk0 after ${i}*0.5s"
+		break
+	fi
+	/bin/busybox sleep 0.5
+	i=$((i + 1))
+done
+[ -b /dev/mmcblk0 ] || panic "/dev/mmcblk0 never appeared"
+
+# --- Mount FAT /boot --------------------------------------------------------
+banner "mounting /dev/mmcblk0 as vfat on /boot"
+/bin/busybox mount -t vfat -o ro /dev/mmcblk0 /boot \
+	|| panic "vfat mount of /dev/mmcblk0 failed"
+
+[ -f /boot/rootfs.ext4 ] || panic "/boot/rootfs.ext4 not present"
+
+# --- Attach loop ------------------------------------------------------------
+banner "attaching /boot/rootfs.ext4 to /dev/loop0"
+/bin/busybox losetup /dev/loop0 /boot/rootfs.ext4 \
+	|| panic "losetup /dev/loop0 failed"
+
+# --- Mount real root --------------------------------------------------------
+banner "mounting ext4 rootfs on /mnt"
+/bin/busybox mount -t ext4 /dev/loop0 /mnt \
+	|| panic "ext4 mount of /dev/loop0 failed"
+
+# Move FAT /boot into the new root so userspace can keep using it.
+/bin/busybox mkdir -p /mnt/boot
+/bin/busybox mount --move /boot /mnt/boot \
+	|| /bin/busybox umount /boot
+
+# --- Tear down pseudo-fs (devtmpfs gets re-mounted by openrc) ---------------
+/bin/busybox umount /proc
+/bin/busybox umount /sys
+/bin/busybox umount /dev
+
+banner "switching root -> /sbin/init"
+exec /bin/busybox switch_root /mnt /sbin/init
+panic "switch_root returned"

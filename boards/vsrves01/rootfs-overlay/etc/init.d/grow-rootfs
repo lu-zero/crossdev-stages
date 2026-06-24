@@ -1,0 +1,90 @@
+#!/sbin/openrc-run
+# Grow /boot/rootfs.ext4 to fill free space in the FAT /boot partition on
+# first boot, then refresh the loop device and resize ext4 online.
+#
+# Strategy (D2):
+#   1. Remount / rw.
+#   2. Remount /boot rw (mounted noauto by fstab; we mount it explicitly).
+#   3. Measure free space on FAT /boot.
+#   4. truncate -s NEW /boot/rootfs.ext4 to consume free space (minus headroom).
+#   5. losetup -c /dev/loop0 to pick up the new backing-file size.
+#   6. resize2fs /dev/loop0 to grow the live filesystem.
+#   7. Disable self from default runlevel; drop a stamp file.
+
+description="One-shot rootfs grow on first boot"
+
+depend() {
+	need localmount
+	before sshd
+}
+
+# Headroom kept free on FAT for kernel updates / future rootfs.ext4 churn.
+HEADROOM_BYTES=$((32 * 1024 * 1024))
+# Below this much free space, growing is not worth the risk.
+MIN_FREE_BYTES=$((64 * 1024 * 1024))
+STAMP=/var/lib/grow-rootfs.done
+
+start() {
+	if [ -e "${STAMP}" ]; then
+		einfo "rootfs already grown (${STAMP} exists)"
+		return 0
+	fi
+
+	ebegin "Growing rootfs.ext4 to fill FAT /boot"
+
+	mount -o remount,rw / \
+		|| { eerror "remount,rw / failed"; return 1; }
+
+	if ! mountpoint -q /boot; then
+		mount -t vfat -o rw /dev/mmcblk0 /boot \
+			|| { eerror "mount /boot rw failed"; return 1; }
+	else
+		mount -o remount,rw /boot \
+			|| { eerror "remount,rw /boot failed"; return 1; }
+	fi
+
+	if [ ! -f /boot/rootfs.ext4 ]; then
+		eerror "/boot/rootfs.ext4 missing"
+		return 1
+	fi
+	if [ ! -b /dev/loop0 ]; then
+		eerror "/dev/loop0 missing"
+		return 1
+	fi
+
+	local size_old free target
+	size_old=$(stat -c %s /boot/rootfs.ext4)
+	# df --output=avail is busybox-friendly when built with full df.
+	free=$(df -PB1 /boot | awk 'NR==2 {print $4}')
+
+	einfo "rootfs.ext4 currently ${size_old} bytes; /boot free ${free} bytes"
+
+	if [ "${free}" -lt "${MIN_FREE_BYTES}" ]; then
+		einfo "free space below ${MIN_FREE_BYTES}; skipping grow"
+		mkdir -p "$(dirname "${STAMP}")"
+		: > "${STAMP}"
+		return 0
+	fi
+
+	target=$((size_old + free - HEADROOM_BYTES))
+
+	einfo "truncating rootfs.ext4 to ${target} bytes"
+	truncate -s "${target}" /boot/rootfs.ext4 \
+		|| { eerror "truncate failed"; return 1; }
+
+	einfo "refreshing /dev/loop0"
+	losetup -c /dev/loop0 \
+		|| { eerror "losetup -c failed"; return 1; }
+
+	einfo "online resize2fs /dev/loop0"
+	resize2fs /dev/loop0 \
+		|| { eerror "resize2fs failed"; return 1; }
+
+	mkdir -p "$(dirname "${STAMP}")"
+	: > "${STAMP}"
+
+	# Take ourselves out of default so we never run again.
+	rc-update del grow-rootfs default 2>/dev/null || true
+
+	eend 0
+}
