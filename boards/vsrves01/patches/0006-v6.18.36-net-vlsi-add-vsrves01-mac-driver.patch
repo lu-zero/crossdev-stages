@@ -44,8 +44,8 @@ Signed-off-by: Maciej Pijanka <maciej.pijanka@gmail.com>
 Signed-off-by: Emil Renner Berthing <emil.renner.berthing@canonical.com>
 Signed-off-by: Sungjoon Moon <sumoon@seoulsaram.org>
 ---
- drivers/net/ethernet/vlsi/vlsi-mac.c | 1097 ++++++++++++++++++++++++++
- 1 file changed, 1097 insertions(+)
+ drivers/net/ethernet/vlsi/vlsi-mac.c | 1009 ++++++++++++++++++++++++++
+ 1 file changed, 1009 insertions(+)
  create mode 100644 drivers/net/ethernet/vlsi/vlsi-mac.c
 
 diff --git a/drivers/net/ethernet/vlsi/vlsi-mac.c b/drivers/net/ethernet/vlsi/vlsi-mac.c
@@ -53,7 +53,7 @@ new file mode 100644
 index 00000000000000..4d388666490525
 --- /dev/null
 +++ b/drivers/net/ethernet/vlsi/vlsi-mac.c
-@@ -0,0 +1,1097 @@
+@@ -0,0 +1,1009 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * vlsi-mac.c
@@ -237,7 +237,7 @@ index 00000000000000..4d388666490525
 +	struct vlsi_mac_private *priv = dev_get_drvdata(dev);
 +
 +	if (offset > 512)
-+		return -1;
++		return -EINVAL;
 +
 +	if (offset + size > 512)
 +		size = 512 - offset;
@@ -257,7 +257,7 @@ index 00000000000000..4d388666490525
 +	ssize_t ret = 0;
 +
 +	if (offset > 512)
-+		return -1;
++		return -EINVAL;
 +
 +	offset -= offset % sizeof(u32);
 +
@@ -395,94 +395,6 @@ index 00000000000000..4d388666490525
 +
 +	return ret;
 +}
-+
-+#if 0
-+static int vlsi_mac_mdio_init(struct vlsi_mac_private *priv)
-+{
-+	struct net_device *netdev = priv->netdev;
-+	unsigned long ndiv = clk_get_rate(priv->clk) / 3500000;
-+	uint32_t tmp;
-+	int try = 0;
-+
-+	if (ndiv > 0xffU) {
-+		netdev_warn(netdev,
-+			"sysclk too fast for setting desired mdio clk, forcing max divider\n");
-+		ndiv = 0xffU;
-+	}
-+	priv->mdio_divider = ndiv;
-+
-+	writel(ETH_MDIO_CF_CLKEN | priv->mdio_divider, &priv->regmap->mdio_cf);
-+	if (readl(&priv->regmap->mdio_cf) & ETH_MDIO_CF_CMD) {
-+		printk("MDIO active on init %x => ", priv->regmap->mdio_cf);
-+		writel(readl(&priv->regmap->mdio_cf) & ~ETH_MDIO_CF_CMD,
-+		       &priv->regmap->mdio_cf);
-+		printk(KERN_CONT "%x\n", priv->regmap->mdio_cf);
-+	}
-+
-+	priv->mii.phy_id_mask = 0x1f;
-+	priv->mii.reg_num_mask = 0x1f;
-+	priv->mii.dev = netdev;
-+	priv->mii.mdio_read = vlsi_mac_mdio_read;
-+	priv->mii.mdio_write = vlsi_mac_mdio_write;
-+
-+	priv->mii.supports_gmii = 0;
-+
-+mdio_phy_retry:
-+	/* now Talk to PHY */
-+	tmp = _mdio_read(priv, priv->mii.phy_id, MII_PHYSID1) << 16 |
-+	      _mdio_read(priv, priv->mii.phy_id, MII_PHYSID2);
-+	if (tmp == 0xffffffff) { /* phy stuck? */
-+		if (try == 0)
-+			printk("PHY transciver seems to be stuck, attempting to reset..");
-+		printk(KERN_CONT "(try %d)", ++try);
-+		_mdio_write(priv, priv->mii.phy_id, 31, 0x2);
-+		_mdio_write(priv, priv->mii.phy_id, MII_BMCR, 0x8000);
-+		mdelay(10);
-+		if (try < 3)
-+			goto mdio_phy_retry;
-+		return -ENODEV;
-+	} else if ((tmp & 0xfffffff0) ==
-+		   0x00221640) { /* KSZ9131RNX as it should be */
-+		uint32_t tmp2;
-+		if (try != 0)
-+			printk(KERN_CONT "OK\n");
-+
-+		_mdio_write(priv, priv->mii.phy_id, 25, 2);		/* MDIO Drive = 2 (push-pull) */
-+		_mdio_write(priv, priv->mii.phy_id, 26, 0x4000);        /* LED Mode = BIT(14) (KSZ9031 mode) */
-+		_mdio_write(priv, priv->mii.phy_id, 23, 0x1003);	/* LED Behaviour = BIT(12) | BIT(1) | BIT(0) (pulse enable, link-only/duplex-only) */
-+		_mdio_write(priv, priv->mii.phy_id, 30, 0x100);         /* External Loopback = BIT(8) (unknown) */
-+		_mdio_write(priv, priv->mii.phy_id, 22, (14 << 4) | 15);/* LED Mode Select = LED2:off LED1:on */
-+		/* MMD 2.0 read */
-+		_mdio_write(priv, priv->mii.phy_id, 13, 2);		/* MMD Access Control = address, 2 */
-+		_mdio_write(priv, priv->mii.phy_id, 14, 0);		/* MMD Addr/Data = 0 */
-+		_mdio_write(priv, priv->mii.phy_id, 13, 0x4002);        /* MMD Access Control = data no post inc, 2 */
-+		tmp2 = _mdio_read(priv, priv->mii.phy_id, 14);		/* from MMD Addr/Data */
-+		tmp2 ^= 0x10; /* flip 3 color led mode bit */
-+		_mdio_write(priv, priv->mii.phy_id, 13, 0x4002);	/* MMD Access Control = data no post inc, 2 */
-+		_mdio_write(priv, priv->mii.phy_id, 14, tmp2);		/* to MMD Addr/Data */
-+
-+		/* reconfigure leds */
-+		_mdio_write(priv, priv->mii.phy_id, 26, 0x2000);	/* LED Mode = BIT(13) (Extended mode, unknown) */
-+		/* led pulse stretch| led nocombine */
-+		_mdio_write(priv, priv->mii.phy_id, 23,
-+			    0x0000 | (0x3 << 10) | (0x3 << 5) | 0x3);	/* LED Behaviour =  50 ms pulse-stretch, LED2:pulse-stretch LED1:puls-stretch, link-only/duplex-only */
-+		_mdio_write(priv, priv->mii.phy_id, 22, 0xee);		/* LED Mode Select = LED2:on LED1:on */
-+	}
-+
-+	_mdio_write(priv, priv->mii.phy_id, MII_CTRL1000, 0x0);		/* Auto-neg Master/Slave Control = normal mode, no manual configuration, single-port, phy is not 1000BASE-T full duplex capable */
-+	tmp = _mdio_read(priv, priv->mii.phy_id, MII_ADVERTISE);
-+	_mdio_write(priv, priv->mii.phy_id, MII_ADVERTISE,		/* Auto-neg Advertisement = 100BASE-X full duplex, 10BASE-T full duplex, IEE802.3 */
-+		    0x41 | (force10mbps ? 0 : 0x100));
-+
-+	if (tmp != _mdio_read(priv, priv->mii.phy_id, MII_ADVERTISE)) { /* if changed */
-+		_mdio_write(priv, priv->mii.phy_id, MII_BMCR,
-+			    BMCR_FULLDPLX | BMCR_ANENABLE | BMCR_ANRESTART);
-+		mdelay(1);
-+	}
-+
-+	return 0;
-+}
-+#endif
 +
 +/* more internal helpers */
 +static void vlsi_mac_updatemtu(struct vlsi_mac_private *priv, int mtu)
