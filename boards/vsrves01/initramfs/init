@@ -1,75 +1,33 @@
-#!/bin/sh
-# VSRVES01 stage-1 init: mount FAT /boot, find rootfs.ext4, switch_root
-# All commands resolved via busybox builtins.
+#!/bin/busybox sh
+# VSRVES01 stage-1 init.
+#
+# The cpio carries just busybox + this script + /image.sqfs.  We loop-
+# mount the squashfs, hop in via switch_root, and let openrc take over.
+# The squashfs holds the full Gentoo userland; keeping it compressed at
+# runtime means ~25-30 MiB of RAM instead of ~80 MiB of extracted files
+# (squashfs decompresses one 4 KiB block per file-page on demand).
 
-PATH=/bin:/sbin:/usr/bin:/usr/sbin
-export PATH
+/bin/busybox --install -s
 
-banner() {
-	echo ""
-	echo "=================================================="
-	echo "  $*"
-	echo "=================================================="
-}
+mount -t devtmpfs devtmpfs /dev
+echo "vsrves01-init: devtmpfs mounted" >/dev/console
 
-panic() {
-	echo ""
-	echo "!! stage-1 init: $*"
-	echo "!! dropping to busybox sh; type 'exit' to reboot"
-	exec /bin/busybox sh
-}
+mkdir -p /mnt
+losetup /dev/loop0 /image.sqfs
+echo "vsrves01-init: losetup ok" >/dev/console
 
-banner "VSRVES01 stage-1 init starting"
+mount -t squashfs -o ro /dev/loop0 /mnt
+echo "vsrves01-init: squashfs mounted" >/dev/console
 
-# --- Mount pseudo-fs ---------------------------------------------------------
-/bin/busybox mkdir -p /proc /sys /dev /mnt /boot
-/bin/busybox mount -t proc     proc     /proc || panic "mount /proc failed"
-/bin/busybox mount -t sysfs    sysfs    /sys  || panic "mount /sys failed"
-/bin/busybox mount -t devtmpfs devtmpfs /dev  || panic "mount /dev failed"
+# Create + populate the pseudo-fs mountpoints INSIDE the new root, then
+# mount or move our existing mounts into them so openrc sysinit starts
+# with /dev /proc /sys already live.  busybox switch_root drops any
+# mount under the old rootfs, so without these moves /dev is gone and
+# /sbin/agetty has nothing to open.
+mkdir -p /mnt/dev /mnt/proc /mnt/sys /mnt/run /mnt/tmp
+mount --move /dev /mnt/dev
+mount -t proc  proc  /mnt/proc
+mount -t sysfs sysfs /mnt/sys
+echo "vsrves01-init: dev/proc/sys ready, switch_root" >/mnt/dev/console
 
-# --- Install busybox applets so 'mount', 'losetup', 'switch_root' work -------
-/bin/busybox --install -s /bin 2>/dev/null || true
-
-# --- Wait for eMMC ----------------------------------------------------------
-banner "waiting for /dev/mmcblk0 (max 15s)"
-i=0
-while [ $i -lt 30 ]; do
-	if [ -b /dev/mmcblk0 ]; then
-		echo "found /dev/mmcblk0 after ${i}*0.5s"
-		break
-	fi
-	/bin/busybox sleep 0.5
-	i=$((i + 1))
-done
-[ -b /dev/mmcblk0 ] || panic "/dev/mmcblk0 never appeared"
-
-# --- Mount FAT /boot --------------------------------------------------------
-banner "mounting /dev/mmcblk0 as vfat on /boot"
-/bin/busybox mount -t vfat -o ro /dev/mmcblk0 /boot \
-	|| panic "vfat mount of /dev/mmcblk0 failed"
-
-[ -f /boot/rootfs.ext4 ] || panic "/boot/rootfs.ext4 not present"
-
-# --- Attach loop ------------------------------------------------------------
-banner "attaching /boot/rootfs.ext4 to /dev/loop0"
-/bin/busybox losetup /dev/loop0 /boot/rootfs.ext4 \
-	|| panic "losetup /dev/loop0 failed"
-
-# --- Mount real root --------------------------------------------------------
-banner "mounting ext4 rootfs on /mnt"
-/bin/busybox mount -t ext4 /dev/loop0 /mnt \
-	|| panic "ext4 mount of /dev/loop0 failed"
-
-# Move FAT /boot into the new root so userspace can keep using it.
-/bin/busybox mkdir -p /mnt/boot
-/bin/busybox mount --move /boot /mnt/boot \
-	|| /bin/busybox umount /boot
-
-# --- Tear down pseudo-fs (devtmpfs gets re-mounted by openrc) ---------------
-/bin/busybox umount /proc
-/bin/busybox umount /sys
-/bin/busybox umount /dev
-
-banner "switching root -> /sbin/init"
-exec /bin/busybox switch_root /mnt /sbin/init
-panic "switch_root returned"
+exec switch_root /mnt /sbin/init

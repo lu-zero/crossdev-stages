@@ -1,0 +1,51 @@
+# Per-atom USE flag overrides applied to the target sysroot before
+# cross_emerge runs target-packages.txt.  Same format as
+# sandbox-packages.use: "<atom> <flag> [-flag] ...".
+
+# busybox: static + mdev for rescue/applet use.  NO make-symlinks
+# (real coreutils/util-linux/bash provide /bin/{ls,cat,sh,...} — we
+# don't want busybox symlinks colliding with the GNU binaries).
+#
+# +mdev: busybox-with-mdev satisfies virtual/dev-manager (alternative
+# providers — systemd/eudev/mdevd — either don't build on rv32-musl
+# or are last_rite'd).  We don't actually run mdev; devtmpfs handles
+# /dev population.
+sys-apps/busybox static mdev -make-symlinks -pam -syslogd -klogd
+
+# fastfetch: disable everything that drags in graphics or capability
+# libs.  We just want the CPU/mem/uptime block on a serial console.
+app-misc/fastfetch -vulkan -opengl -wayland -X -ddc -chafa -imagemagick -rpm -nm -dbus
+
+# dropbear: tiny default; turn off pam (we use blank-root login).
+net-misc/dropbear -pam
+
+# htop: keep ncurses, drop optional bloat.
+sys-process/htop -hwloc -openvz -unicode
+
+# file: avoid pulling python/zlib-extras.
+sys-apps/file -python -zlib
+
+# iperf3: defaults are already minimal.
+
+# openrc: disable USE flags that drag in the systemd-utils dependency
+# tree on rv32-musl.  Even with these off, dhcpcd[udev] (default-on)
+# would pull virtual/udev → systemd-utils.  See dhcpcd line below.
+#
+# Drop pam (no PAM stack), selinux, audit — size + dep wins.
+sys-apps/openrc -netifrc -tmpfiles -pam -selinux -audit
+
+# dhcpcd: USE=udev is default-on and pulls virtual/udev → systemd-utils
+# (unbuildable under rv32-musl, and we don't need udev anyway — no
+# hotplug, no /dev/disk/by-* on this board).
+net-misc/dhcpcd -udev
+
+# Global -udev / -systemd for safety: anything else with an optional
+# udev USE flag (util-linux, procps, ...) drops it.  We don't ship
+# udev or systemd on this image, period.
+*/* -udev -systemd
+
+# busybox[static] pulls openssh's libcrypt link path, which needs
+# static-libs on libxcrypt + the virtual.  Without these flags, the
+# resolver fails with "USE changes are necessary to proceed".
+virtual/libcrypt static-libs
+sys-libs/libxcrypt static-libs

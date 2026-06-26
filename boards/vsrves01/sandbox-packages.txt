@@ -1,0 +1,4 @@
+# Host-side tools needed by the board's override scripts.
+# mksquashfs is invoked by override-kernel.sh stage 2.3 to pack the
+# squashfs payload that lives inside the kernel-embedded cpio.
+sys-fs/squashfs-tools
