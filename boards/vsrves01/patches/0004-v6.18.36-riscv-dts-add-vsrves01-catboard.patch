@@ -1,10 +1,10 @@
 From 0000000000000000000000000000000000000004 Mon Sep 17 00:00:00 2001
 From: Emil Renner Berthing <emil.renner.berthing@canonical.com>
 Date: Tue, 22 Jul 2025 22:55:33 +0200
-Subject: [PATCH 04/11] riscv: dts: add VLSI VSRVSE01 CAT Board
+Subject: [PATCH 04/11] riscv: dts: add VLSI VSRVES01 CAT Board
 
-Introduce arch/riscv/boot/dts/vlsi/ holding the vsrvse01 SoC dtsi and
-the vsrvse01-catboard reference board overlay.  Also expose a new
+Introduce arch/riscv/boot/dts/vlsi/ holding the vsrves01 SoC dtsi and
+the vsrves01-catboard reference board overlay.  Also expose a new
 ARCH_VLSI Kconfig.socs choice (depends on 32BIT) and hook the new
 sub-directory into arch/riscv/boot/dts/Makefile.
 
@@ -23,12 +23,12 @@ Signed-off-by: Sungjoon Moon <sumoon@seoulsaram.org>
  arch/riscv/Kconfig.socs                       |   6 +
  arch/riscv/boot/dts/Makefile                  |   1 +
  arch/riscv/boot/dts/vlsi/Makefile             |   2 +
- .../boot/dts/vlsi/vsrvse01-catboard.dts       |  29 +++++
- arch/riscv/boot/dts/vlsi/vsrvse01.dtsi        | 114 ++++++++++++++++++
+ .../boot/dts/vlsi/vsrves01-catboard.dts       |  29 +++++
+ arch/riscv/boot/dts/vlsi/vsrves01.dtsi        | 114 ++++++++++++++++++
  5 files changed, 152 insertions(+)
  create mode 100644 arch/riscv/boot/dts/vlsi/Makefile
- create mode 100644 arch/riscv/boot/dts/vlsi/vsrvse01-catboard.dts
- create mode 100644 arch/riscv/boot/dts/vlsi/vsrvse01.dtsi
+ create mode 100644 arch/riscv/boot/dts/vlsi/vsrves01-catboard.dts
+ create mode 100644 arch/riscv/boot/dts/vlsi/vsrves01.dtsi
 
 diff --git a/arch/riscv/Kconfig.socs b/arch/riscv/Kconfig.socs
 --- a/arch/riscv/Kconfig.socs
@@ -61,20 +61,20 @@ index 00000000000000..d17f5e71a29826
 +++ b/arch/riscv/boot/dts/vlsi/Makefile
 @@ -0,0 +1,2 @@
 +# SPDX-License-Identifier: GPL-2.0
-+dtb-$(CONFIG_ARCH_VLSI) += vsrvse01-catboard.dtb
-diff --git a/arch/riscv/boot/dts/vlsi/vsrvse01-catboard.dts b/arch/riscv/boot/dts/vlsi/vsrvse01-catboard.dts
++dtb-$(CONFIG_ARCH_VLSI) += vsrves01-catboard.dtb
+diff --git a/arch/riscv/boot/dts/vlsi/vsrves01-catboard.dts b/arch/riscv/boot/dts/vlsi/vsrves01-catboard.dts
 new file mode 100644
 index 00000000000000..adb6ba0fdf3fdb
 --- /dev/null
-+++ b/arch/riscv/boot/dts/vlsi/vsrvse01-catboard.dts
++++ b/arch/riscv/boot/dts/vlsi/vsrves01-catboard.dts
 @@ -0,0 +1,29 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/dts-v1/;
 +
-+#include "vsrvse01.dtsi"
++#include "vsrves01.dtsi"
 +
 +/ {
-+	compatible = "vlsi,vsrvse01-catboard", "vlsi,vsrvse01";
++	compatible = "vlsi,vsrves01-catboard", "vlsi,vsrves01";
 +	model = "VSRV CAT Board";
 +
 +	aliases {
@@ -97,20 +97,20 @@ index 00000000000000..adb6ba0fdf3fdb
 +		reg = <0>;
 +	};
 +};
-diff --git a/arch/riscv/boot/dts/vlsi/vsrvse01.dtsi b/arch/riscv/boot/dts/vlsi/vsrvse01.dtsi
+diff --git a/arch/riscv/boot/dts/vlsi/vsrves01.dtsi b/arch/riscv/boot/dts/vlsi/vsrves01.dtsi
 new file mode 100644
 index 00000000000000..024aec9e1eb018
 --- /dev/null
-+++ b/arch/riscv/boot/dts/vlsi/vsrvse01.dtsi
++++ b/arch/riscv/boot/dts/vlsi/vsrves01.dtsi
 @@ -0,0 +1,114 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/dts-v1/;
 +
 +/ {
-+	compatible = "vlsi,vsrvse01";
++	compatible = "vlsi,vsrves01";
 +	#address-cells = <1>;
 +	#size-cells = <1>;
-+	model = "VLSI VSRVSE01 SoC";
++	model = "VLSI VSRVES01 SoC";
 +
 +	cpus {
 +		#address-cells = <1>;
