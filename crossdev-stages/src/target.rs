@@ -263,12 +263,26 @@ impl Target {
 
         let src_link = src_portage.join("make.profile");
         let dst_link = portage_dir.join("make.profile");
-        // Only copy the profile symlink if the target doesn't already have one.
-        // The target may need a different profile flavour than the crossdev
-        // prefix (e.g. merged-usr target vs split-usr prefix on rv32-musl).
-        if src_link.is_symlink() && !dst_link.is_symlink() && !dst_link.exists() {
+        if src_link.is_symlink() {
+            // A real (non-symlink) /bin marks a deliberately split-usr
+            // target: keep whatever profile it has (copy verbatim only if
+            // none is set).  Merged-usr and fresh (pre-baselayout) targets
+            // get the translated link, overwritten every time — a stale
+            // symlink in a re-bootstrapped target would silently use the
+            // wrong profile.
+            let split_usr_target = std::fs::symlink_metadata(self.dir.join("bin"))
+                .map(|m| !m.file_type().is_symlink())
+                .unwrap_or(false);
             let link_target = std::fs::read_link(&src_link)?;
-            std::os::unix::fs::symlink(&link_target, &dst_link)?;
+            let translated = translate_profile_link(&link_target, split_usr_target);
+            if split_usr_target {
+                if !dst_link.is_symlink() && !dst_link.exists() {
+                    std::os::unix::fs::symlink(&translated, &dst_link)?;
+                }
+            } else {
+                let _ = std::fs::remove_file(&dst_link);
+                std::os::unix::fs::symlink(&translated, &dst_link)?;
+            }
         }
 
         Ok(())
@@ -291,6 +305,20 @@ fn guard_provider(dir: &camino::Utf8Path, name: &str, provider: &str) -> Result<
         });
     }
     Ok(())
+}
+
+/// Profile symlink to plant in the target, derived from the crossdev
+/// prefix's link.  Crossdev prefixes use split-usr profiles (the prefix
+/// layout mandates it — /usr/{chost}/lib is a sibling of /usr/{chost}/
+/// usr/lib); a merged-usr target must drop the `split-usr` segment or
+/// baselayout creates /bin as a real dir and every subsequent emerge
+/// collides.  A split-usr target keeps the link verbatim.
+fn translate_profile_link(link: &std::path::Path, split_usr_target: bool) -> std::path::PathBuf {
+    if split_usr_target {
+        link.to_path_buf()
+    } else {
+        link.to_string_lossy().replace("/split-usr/", "/").into()
+    }
 }
 
 /// Remove a target directory (via hakoniwa to handle root-owned files).
@@ -332,4 +360,36 @@ pub struct TargetInfo {
     pub arch: String,
     pub stage1: bool,
     pub updated: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::translate_profile_link;
+    use std::path::Path;
+
+    #[test]
+    fn profile_link_drops_split_usr_for_merged_target() {
+        let link = Path::new(
+            "../../var/db/repos/gentoo/profiles/default/linux/riscv/23.0/split-usr/rv32/ilp32/musl",
+        );
+        assert_eq!(
+            translate_profile_link(link, false),
+            Path::new("../../var/db/repos/gentoo/profiles/default/linux/riscv/23.0/rv32/ilp32/musl")
+        );
+    }
+
+    #[test]
+    fn profile_link_kept_verbatim_for_split_usr_target() {
+        let link = Path::new(
+            "../../var/db/repos/gentoo/profiles/default/linux/riscv/23.0/split-usr/rv32/ilp32/musl",
+        );
+        assert_eq!(translate_profile_link(link, true), link);
+    }
+
+    #[test]
+    fn profile_link_without_split_usr_segment_is_unchanged() {
+        let link =
+            Path::new("../../var/db/repos/gentoo/profiles/default/linux/riscv/23.0/rv64/lp64d");
+        assert_eq!(translate_profile_link(link, false), link);
+    }
 }

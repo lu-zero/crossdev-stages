@@ -824,7 +824,7 @@ fn install_overlay(
 
 /// Recursively copy directory `src` into `dst`, overwriting files.
 /// Symlinks and other special entries are rejected.
-fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
+pub(crate) fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
@@ -841,7 +841,7 @@ fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
         } else {
             return Err(Error::CommandFailed {
                 code: 1,
-                reason: format!("unsupported entry in portage overlay (symlink?): {from}"),
+                reason: format!("unsupported entry in copied tree (symlink?): {from}"),
             });
         }
     }

@@ -11,6 +11,10 @@ use crate::sandbox::Sandbox;
 use crate::target::Target;
 use crate::workspace::Workspace;
 
+/// Where `boards/<board>/` is bind-mounted read-only, so config the cross
+/// prefix needs can be copied in from inside the container.
+const BOARD_DIR_IN_CONTAINER: &str = "/.board-config";
+
 fn project_root(boards_root: &Utf8Path) -> Utf8PathBuf {
     boards_root.parent().unwrap_or(boards_root).to_path_buf()
 }
@@ -432,31 +436,70 @@ fn default_deps(
     defaults_root: &Utf8Path,
 ) -> Result<()> {
     let board_dir = boards_root.join(&board.name);
+
+    // Two portage config roots see a board's target packages: the cross
+    // prefix's, which `{chost}-emerge` reads (PORTAGE_CONFIGROOT=/usr/<chost>),
+    // and the target's, which portage reads once the image boots.  Board
+    // portage config goes into both, so it does not depend on which one is in
+    // play.  The cross prefix is an overlay mount, so its half is written
+    // through the runner: a host-side write into sandbox/usr/<chost> lands
+    // under the mount, where nothing in the container can read it.
+    let cross_portage = format!("/usr/{}/etc/portage", board.chost());
+    let target_portage = target.dir.join("etc/portage");
+    let target_runner = sandbox
+        .runner_for_board(ws, &board.arch, board)?
+        .with_target(&target.dir)
+        .with_binpkgs(&board_binpkgs_dir(ws, board)?)
+        .with_extra_ro(&board_dir, BOARD_DIR_IN_CONTAINER);
+
+    let board_patches = board_dir.join("portage-patches");
+    if board_patches.is_dir() {
+        crate::sandbox::copy_tree(&board_patches, &target_portage.join("patches"))?;
+        target_runner.run(&format!(
+            "mkdir -p {cross_portage}/patches && \
+             cp -a {BOARD_DIR_IN_CONTAINER}/portage-patches/. {cross_portage}/patches/"
+        ))?;
+    }
+
+    // package.provided cuts a dep chain off at an atom that does not
+    // cross-build for the target: virtual/udev pulling in
+    // sys-apps/systemd-utils on rv32-musl, say.
+    let board_provided = board_dir.join("package.provided");
+    if board_provided.is_file() {
+        let profile_dir = target_portage.join("profile");
+        std::fs::create_dir_all(&profile_dir)?;
+        std::fs::copy(&board_provided, profile_dir.join("package.provided"))?;
+        target_runner.run(&format!(
+            "mkdir -p {cross_portage}/profile && \
+             cp {BOARD_DIR_IN_CONTAINER}/package.provided \
+             {cross_portage}/profile/package.provided"
+        ))?;
+    }
+
     // Target packages: defaults UNION board extras MINUS board `-atom` lines.
     let target_pkgs = crate::package_list::merge(
         crate::package_list::read_required(&defaults_root.join("target-packages.txt"))?,
         crate::package_list::read_optional(&board_dir.join("target-packages.txt"))?,
     );
     if !target_pkgs.is_empty() {
+        let board_use = board_dir.join("target-packages.use");
+        crate::package_list::write_accept_keywords(&target_pkgs, &target_portage)?;
+        crate::package_list::write_package_use(&board_use, &target_portage)?;
         // The keyword a line asks for has to be written where the cross emerge
-        // will look for it: `{chost}-emerge` reads PORTAGE_CONFIGROOT=
-        // /usr/{chost}, not the sandbox's own /etc/portage.  Without this a
-        // line like `sys-boot/syslinux **` gets its atom emerged and its
-        // keyword silently dropped, and the emerge fails on a masked package.
-        let target_runner = sandbox
-            .runner_for_board(ws, &board.arch, board)?
-            .with_target(&target.dir)
-            .with_binpkgs(&board_binpkgs_dir(ws, board)?);
-        // Written through the runner, not on the host: /usr/<chost> is an
-        // overlay mount and a host-side write lands under it, where nothing in
-        // the container can read it.  This is where `{chost}-emerge` looks
-        // (PORTAGE_CONFIGROOT=/usr/<chost>), so a line like
-        // `sys-boot/syslinux **` gets its keyword here or nowhere.
-        if let Some(script) = crate::package_list::accept_keywords_script(
-            &target_pkgs,
-            &format!("/usr/{}/etc/portage", board.chost()),
-        ) {
+        // will look for it.  Without this a line like `sys-boot/syslinux **`
+        // gets its atom emerged and its keyword silently dropped, and the
+        // emerge fails on a masked package.
+        if let Some(script) =
+            crate::package_list::accept_keywords_script(&target_pkgs, &cross_portage)
+        {
             target_runner.run(&script)?;
+        }
+        if board_use.is_file() {
+            target_runner.run(&format!(
+                "mkdir -p {cross_portage}/package.use && \
+                 cp {BOARD_DIR_IN_CONTAINER}/target-packages.use \
+                 {cross_portage}/package.use/board"
+            ))?;
         }
 
         let portage = Portage::new(&target_runner);
