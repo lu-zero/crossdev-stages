@@ -4,6 +4,17 @@ use crate::container::SandboxRunner;
 use crate::error::Result;
 use crate::stage::{all_llvm_targets, default_cflags, gentoo_arch, llvm_target};
 
+/// Single-quote each atom so portage-style operators (`>=`, `<`, `=`) and
+/// SLOT colons survive bash interpretation when the atom list is spliced
+/// into a `format!`'d shell command.  Atoms never contain single quotes.
+fn shell_quote_atoms(atoms: &[&str]) -> String {
+    atoms
+        .iter()
+        .map(|a| format!("'{a}'"))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Single supported llvm slot; dev-lang/rust-1.95.0 has `LLVM_COMPAT=( 22 )`.
 pub const LLVM_SLOT: &str = "22";
 
@@ -297,7 +308,7 @@ impl<'a> Portage<'a> {
     /// `--changed-use` so a board's `sandbox-packages.use` also applies to
     /// packages that are already installed with different flags.
     pub fn emerge(&self, packages: &[&str]) -> Result<()> {
-        let pkgs = packages.join(" ");
+        let pkgs = shell_quote_atoms(packages);
         self.run_emerge(&format!("emerge -b -k --changed-use {pkgs}"))
     }
 
@@ -332,13 +343,13 @@ impl<'a> Portage<'a> {
     /// Cross-emerge packages into the target stage (mounted at `/target`).
     /// Uses `{chost}-emerge` which crossdev installs.
     pub fn cross_emerge(&self, chost: &str, packages: &[&str]) -> Result<()> {
-        let pkgs = packages.join(" ");
+        let pkgs = shell_quote_atoms(packages);
         self.run_emerge(&format!("ROOT=/target {chost}-emerge -b -k {pkgs}"))
     }
 
     /// Cross-emerge with `USE=build` for bootstrapping (baselayout, portage).
     pub fn cross_emerge_build(&self, chost: &str, packages: &[&str]) -> Result<()> {
-        let pkgs = packages.join(" ");
+        let pkgs = shell_quote_atoms(packages);
         self.run_emerge(&format!(
             "USE=build ROOT=/target {chost}-emerge -b -k {pkgs}"
         ))
@@ -348,7 +359,7 @@ impl<'a> Portage<'a> {
     /// the crossdev prefix (`/usr/{chost}`) rather than `/target`.
     /// Used for updating the cross-toolchain itself (gcc, binutils-libs, @system).
     pub fn cross_emerge_crossdev(&self, chost: &str, packages: &[&str]) -> Result<()> {
-        let pkgs = packages.join(" ");
+        let pkgs = shell_quote_atoms(packages);
         self.run_emerge(&format!("{chost}-emerge -b -k {pkgs}"))
     }
 }
