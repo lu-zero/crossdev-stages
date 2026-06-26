@@ -1,0 +1,75 @@
+# Packages cross-emerged into /target.  This is the single source of
+# truth for what ends up on the board: override-kernel.sh runs
+# `emerge -e @system` to rebuild the stock stage3 with our CFLAGS (no
+# C extension), then `emerge` over this list, then `mksquashfs /target`
+# directly — no separate cherry-pick list.
+#
+# Phram-rootfs architecture (see override-assemble.sh): the sqfs is
+# loaded by vendor's DDRLoad to a 64 MiB DDR region at 0x84000000 and
+# mounted by the kernel via phram+squashfs.  We have room for a full
+# Gentoo userland — no need to lean on busybox applets like the cpio
+# embed path did.
+
+# Init chain.  See target-packages.use for the openrc USE-flag dance
+# that keeps systemd-utils out of the resolve on rv32-musl.
+sys-apps/baselayout
+sys-apps/sysvinit
+sys-apps/openrc
+
+# busybox 1.38: kept for emergency rescue + occasional `busybox foo`
+# applet use.  1.36.x fails to build on Linux 6.x rv32 (kernel dropped
+# 32-bit-only time syscalls for Y2038; 1.36 hwclock.c / i2c_tools.c
+# reference them unconditionally).  1.38 is unkeyworded — `**` accepts.
+=sys-apps/busybox-1.38.0 **
+
+# musl libc.
+sys-libs/musl
+
+# Real GNU userland — coreutils, util-linux (lscpu, dmesg, lsblk),
+# grep, sed, gawk, findutils, procps, less, iproute2, iputils.
+sys-apps/coreutils
+sys-apps/util-linux
+sys-apps/grep
+sys-apps/sed
+sys-apps/gawk
+sys-apps/findutils
+sys-apps/which
+sys-process/procps
+sys-apps/less
+sys-apps/file
+sys-apps/iproute2
+net-misc/iputils
+
+# Real bash + readline (fastfetch / neofetch are bash scripts).
+app-shells/bash
+sys-libs/ncurses
+sys-libs/readline
+
+# SSH (dropbear, unkeyworded upstream).
+net-misc/dropbear **
+
+# DHCP client = busybox udhcpc (NOT net-misc/dhcpcd — that's heavy +
+# multi-second event loop spins the rv32 core at 100% before timing
+# out on the AUI ethernet driver's link-up notification).  Driven by
+# /etc/local.d/network.start (in initramfs-overlay) which calls
+# `udhcpc -i eth0 -b -t 5 -T 2`.
+
+# Compression suite.
+app-arch/tar
+app-arch/gzip
+app-arch/bzip2
+app-arch/xz-utils
+app-arch/zstd
+
+# Demo eye-candy + ssh-friendly diagnostics.
+app-misc/fastfetch
+app-misc/neofetch
+sys-process/htop
+net-misc/iperf:3
+sys-process/lsof
+app-misc/tmux
+app-editors/nano
+app-text/tree
+
+# dev-debug/strace OMITTED — upstream "architecture riscv32 is not
+# supported by strace" (configure errors out).

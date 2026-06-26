@@ -1,0 +1,8 @@
+#!/bin/sh
+# Bring up eth0 + grab DHCP lease via busybox udhcpc.
+# Light-weight replacement for net-misc/dhcpcd which spins the 98 MHz
+# rv32 core to 100 % for ~75 s on link-up (watchdog soft lockup).
+ip link set lo up
+ip addr add 127.0.0.1/8 dev lo 2>/dev/null
+ip link set eth0 up
+busybox udhcpc -i eth0 -b -t 5 -T 2 -q 2>&1 | head -1 &
