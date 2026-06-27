@@ -1,0 +1,6 @@
+# Sandbox packages for premier-p550
+# sys-boot/grub provides grub-mkimage (host x86_64 binary).
+# Cross-prefix grub (with grub_platforms_riscv64-efi modules) is installed
+# automatically by sandbox.rs via `crossdev --ex-pkg sys-boot/grub` because
+# board.conf sets GRUB_PLATFORMS=riscv64-efi.
+sys-boot/grub

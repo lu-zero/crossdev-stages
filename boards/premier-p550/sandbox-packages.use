@@ -1,0 +1,4 @@
+# Host grub: only need the grub-mkimage tool itself; module ABI doesn't
+# matter on the host side.  Pick i386-pc (cheap, no UEFI build) just to
+# satisfy the ebuild's "at least one platform" requirement.
+sys-boot/grub grub_platforms_pc -grub_platforms_efi-64
