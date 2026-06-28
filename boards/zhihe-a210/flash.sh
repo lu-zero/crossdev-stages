@@ -43,16 +43,26 @@ else
     sleep 5
 fi
 
-# Stage 3: flash GPT then per-partition.  Names match genimage.cfg /
-# vendor `gpt_emmc.txt` (`flash boot` ↔ boot_a in A-slot, etc.).
-echo "[*] flashing GPT"
-fastboot ${device} flash gpt gentoo-linux-zhihe-a210_dev-emmc.img || { echo $FAIL; exit 1; }
+# Stage 3: flash GPT then per-partition using the GPT-defined names.
+# We don't follow vendor's A/B aliasing — flat layout, names match genimage.cfg.
+#
+# Vendor u-boot's `flash gpt` expects only the 17408-byte GPT structure
+# (protective MBR + GPT header + entries = first 34 sectors), NOT a full
+# disk image — sending the whole .img triggers `(remote: '10205000')`.
+# Extract gpt.img on first run if not already present.
+if [ ! -f gpt.img ]; then
+    echo "[*] extracting GPT (first 34 sectors of disk image)"
+    dd if=gentoo-linux-zhihe-a210_dev-emmc.img of=gpt.img bs=512 count=34 status=none
+fi
+
+echo "[*] flashing GPT (gpt.img, 17408 B)"
+fastboot ${device} flash gpt gpt.img || { echo $FAIL; exit 1; }
 
 echo "[*] flashing boot (bootfs.ext4)"
-fastboot ${device} flash boot_a bootfs.ext4 || { echo $FAIL; exit 1; }
+fastboot ${device} flash boot bootfs.ext4 || { echo $FAIL; exit 1; }
 
-echo "[*] flashing system (rootfs.ext4)"
-fastboot ${device} flash system_a rootfs.ext4 || { echo $FAIL; exit 1; }
+echo "[*] flashing rootfs (rootfs.ext4)"
+fastboot ${device} flash rootfs rootfs.ext4 || { echo $FAIL; exit 1; }
 
 echo "[*] rebooting..."
 fastboot ${device} reboot
