@@ -78,15 +78,117 @@ repo.  See `firmware/README.md` for the download path.
 
 ## Flash
 
+### Bundle layout
+
+`crossdev-stages image export --board zhihe-a210 --all` produces this
+tree (until the recursive-export change lands you also need to copy
+`u-boot/spl-with-fit-rvbl.bin` from the build dir and drop
+`firmware/bootzero-rvbl.bin` manually):
+
+```
+<bundle>/
+├── flash.sh
+├── gentoo-linux-zhihe-a210_dev-emmc.img       # GPT image (uncompressed)
+├── bootfs.ext4                                # boot partition (256 MiB)
+├── rootfs.ext4                                # rootfs partition
+└── u-boot/
+    ├── bootzero-rvbl.bin                      # vendor blob (DDR init)
+    └── spl-with-fit-rvbl.bin                  # OUR build: SPL + opensbi + u-boot
+```
+
+If `image export` gave you `*.img.xz`, decompress and rename so flash.sh
+finds it:
+
 ```sh
-# Board off → hold Flash button → connect USB-C → power on
-cd <bundle dir from `crossdev-stages image export --board zhihe-a210 --all`>
+unxz gentoo-linux-zhihe-a210_dev-emmc-*.img.xz
+mv   gentoo-linux-zhihe-a210_dev-emmc-*.img  gentoo-linux-zhihe-a210_dev-emmc.img
+```
+
+### Host prerequisites
+
+- `fastboot` CLI (`emerge dev-util/android-tools`, `pacman -S android-tools`,
+  or `apt install fastboot`)
+- USB-A → USB-C cable to the board
+- 12 V DC power supply
+
+### Enter fastboot mode
+
+Vendor BOOT_SEL=000 USB recovery path:
+
+1. Board powered off.
+2. **Hold the Flash button**, **press Reset**, plug in USB-A to host.
+3. Apply 12 V DC.
+4. Verify host sees the board: `fastboot devices` — should list one
+   device (any string, vendor reports `product: a2*`).
+
+### Flash
+
+```sh
+cd <bundle dir>
 sudo ./flash.sh
 ```
 
-Two-stage fastboot bring-up handled automatically — bootzero-rvbl.bin
-brings up DDR, spl-with-fit-rvbl.bin loads SPL+opensbi+u-boot into RAM,
-then u-boot's own fastboot accepts the GPT + per-partition flashes.
+`flash.sh` walks the vendor recovery chain — same shape as
+`board/zhihe/common/script/fastboot_images.sh` but trimmed to our
+4-partition flatten layout:
+
+1. `fastboot flash ram u-boot/bootzero-rvbl.bin` → DDR up
+2. `fastboot reboot`
+3. `fastboot flash ram u-boot/spl-with-fit-rvbl.bin` → SPL → opensbi → u-boot
+4. `fastboot reboot` (now in u-boot fastboot)
+5. `dd if=*-emmc.img of=gpt.img bs=512 count=34` (extracted on first run)
+6. `fastboot flash gpt    gpt.img`         (17408 B — GPT header only)
+7. `fastboot flash boot   bootfs.ext4`
+8. `fastboot flash rootfs rootfs.ext4`
+9. `fastboot reboot`
+
+Sending the **full** disk image to `fastboot flash gpt` triggers
+`(remote: '10205000')` — vendor u-boot's gpt handler expects only the
+17408-byte GPT structure (LBA 0–33: protective MBR + GPT header +
+entries).  flash.sh extracts that on the fly.
+
+If the board is already in u-boot fastboot mode from an earlier run
+(`getvar product` reports `a2*`), stages 1–4 are skipped.
+
+### First-boot env setup (one-time, over serial)
+
+Connect serial console (`ttyS4 @ 115200 8N1`), interrupt u-boot
+autoboot, then:
+
+```text
+=> setenv bootargs 'console=ttyS4,115200 root=PARTUUID=0510b001-0000-4710-a210-000000000004 rw rootwait earlycon loglevel=4'
+=> setenv bootcmd 'ext4load mmc 0:3 ${kernel_addr} Image; ext4load mmc 0:3 ${dtb_addr} a210-dev.dtb; booti ${kernel_addr} - ${dtb_addr}'
+=> saveenv
+=> boot
+```
+
+MAC setup is separate — see `MAC handling` below.
+
+### Dumping eMMC before flashing (optional backup)
+
+Stock A210 u-boot has only `fastboot flash` enabled, **not**
+`fastboot fetch` / `oem dump` / UMS, so you **cannot read eMMC back via
+fastboot alone**. Two options:
+
+1. **Add UMS to u-boot** — append to `a210_evb_defconfig`:
+   ```
+   CONFIG_CMD_UMS=y
+   CONFIG_USB_FUNCTION_MASS_STORAGE=y
+   ```
+   Rebuild `spl-with-fit-rvbl.bin`, `fastboot flash ram` + reboot into
+   u-boot, then at the prompt:
+   ```text
+   => ums 0 mmc 0      # whole user area as /dev/sdX
+   => ums 0 mmc 0.1    # boot0 hw partition
+   => ums 0 mmc 0.2    # boot1 hw partition
+   ```
+   On the host: `dd if=/dev/sdX of=a210-emmc.img bs=4M conv=fsync status=progress`.
+   Dump twice, compare `sha256sum`.
+
+2. **Boot a rescue initramfs via `fastboot flash ram`** (same path as
+   VSRVES01's phram-rootfs), then `dd /dev/mmcblk0 | nc host 9000` or
+   write to a USB stick. More work; useful if you also want live GPT
+   inspection.
 
 ## Partition layout
 
