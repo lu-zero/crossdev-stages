@@ -40,12 +40,20 @@ start() {
         return 0
     fi
 
+    if command -v sgdisk >/dev/null 2>&1; then
+        ebegin "Relocating GPT backup to disk end"
+        sgdisk -e "$disk" >/dev/null 2>&1
+        eend 0
+    fi
+
     ebegin "Growing partition $part on $disk to disk end"
-    parted -s "$disk" resizepart "$part" 100% || {
+    echo Yes | parted ---pretend-input-tty "$disk" resizepart "$part" 100% >/dev/null 2>&1 || {
         eend $? "parted resizepart failed"
         return 0
     }
     eend 0
+
+    partx -u "$disk" >/dev/null 2>&1 || partprobe "$disk" >/dev/null 2>&1 || true
 
     ebegin "Resizing ext4 on $src"
     resize2fs "$src" || {
