@@ -188,19 +188,26 @@ fn default_deps(
         }
     }
 
-    let target_pkgs = boards_root.join(&board.name).join("target-packages.txt");
-    if target_pkgs.exists() {
-        let content = std::fs::read_to_string(&target_pkgs)?;
-        let pkgs: Vec<&str> = content
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect();
-        if !pkgs.is_empty() {
-            let target_runner = board_runner(sandbox, board).with_target(&target.dir);
-            let portage = Portage::new(&target_runner);
-            portage.cross_emerge(&board.chost(), &pkgs)?;
+    let mut all_pkgs: Vec<String> = Vec::new();
+    for path in [
+        boards_root.join("defaults").join("target-packages.txt"),
+        boards_root.join(&board.name).join("target-packages.txt"),
+    ] {
+        if path.exists() {
+            let content = std::fs::read_to_string(&path)?;
+            for line in content.lines() {
+                let l = line.trim();
+                if !l.is_empty() && !l.starts_with('#') {
+                    all_pkgs.push(l.to_string());
+                }
+            }
         }
+    }
+    if !all_pkgs.is_empty() {
+        let pkgs: Vec<&str> = all_pkgs.iter().map(String::as_str).collect();
+        let target_runner = board_runner(sandbox, board).with_target(&target.dir);
+        let portage = Portage::new(&target_runner);
+        portage.cross_emerge(&board.chost(), &pkgs)?;
     }
 
     Ok(())
@@ -309,7 +316,7 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
 
     if let (Some(tty), Some(baud)) = (&board.serial_tty, &board.serial_baud) {
         runner.run(&format!(
-            "echo 'x1:12345:respawn:/sbin/agetty {baud} {tty} linux' \
+            "echo 'x1:12345:respawn:/sbin/agetty -L {baud} {tty} linux' \
              >> /build/gen/root/etc/inittab"
         ))?;
     }
