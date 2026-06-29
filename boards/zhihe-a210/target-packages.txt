@@ -8,8 +8,28 @@ net-misc/ntp
 # Initramfs / boot
 sys-apps/busybox
 
+# Shell + completion
+app-shells/bash
+sys-libs/readline
+sys-libs/ncurses
+
+# Coreutils / userland
+sys-apps/coreutils
+sys-apps/util-linux
+sys-apps/grep
+sys-apps/sed
+sys-apps/gawk
+sys-apps/findutils
+sys-apps/which
+sys-process/procps
+sys-apps/less
+sys-apps/file
+sys-apps/iproute2
+net-misc/iputils
+
 # Dev tools
 app-editors/vim
+app-editors/nano
 dev-vcs/git
 dev-debug/strace
 net-misc/curl
@@ -17,8 +37,21 @@ net-misc/wget
 
 # System tools
 sys-process/htop
-sys-apps/file
+sys-process/lsof
 app-misc/screen
+app-misc/tmux
+app-text/tree
+net-misc/iperf:3
+
+# Eye-candy / diagnostics
+app-misc/fastfetch
+
+# Compression
+app-arch/tar
+app-arch/gzip
+app-arch/bzip2
+app-arch/xz-utils
+app-arch/zstd
 
 # Build systems
 dev-build/meson

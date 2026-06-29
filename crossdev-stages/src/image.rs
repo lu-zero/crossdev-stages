@@ -316,7 +316,7 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
 
     if let (Some(tty), Some(baud)) = (&board.serial_tty, &board.serial_baud) {
         runner.run(&format!(
-            "echo 'x1:12345:respawn:/sbin/agetty -L {baud} {tty} linux' \
+            "echo 'x1:12345:respawn:/sbin/agetty {baud} {tty} linux' \
              >> /build/gen/root/etc/inittab"
         ))?;
     }
