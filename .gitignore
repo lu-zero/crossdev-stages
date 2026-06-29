@@ -3,3 +3,12 @@ target/
 k230-build*.log
 *.log
 Cargo.lock
+
+# Vendor closed firmware blobs (NOT redistributable, see firmware/README.md)
+boards/*/firmware/vendor/
+boards/zhihe-a210/firmware/a210-aon.bin
+boards/zhihe-a210/firmware/bootzero2.bin
+
+# Build artifacts staged into bundle
+boards/*/uboot_env.img
+boards/*/gpt.img
