@@ -1,0 +1,4 @@
+sys-block/parted
+sys-fs/e2fsprogs
+app-text/wgetpaste
+sys-apps/gptfdisk
