@@ -137,9 +137,13 @@ fn default_deps(
 ) -> Result<()> {
     // Sandbox extras: defaults are already installed during prepare; only the
     // board's own extras (e.g. grub for pentium-mmx) need emerging here.
+    // merge() with an empty base means a `-atom` line here can only cancel
+    // the board's own extras, never uninstall a prepare-time default.
     let board_dir = boards_root.join(&board.name);
-    let board_sandbox =
-        crate::package_list::read_optional(&board_dir.join("sandbox-packages.txt"))?;
+    let board_sandbox = crate::package_list::merge(
+        Vec::new(),
+        crate::package_list::read_optional(&board_dir.join("sandbox-packages.txt"))?,
+    );
     if !board_sandbox.is_empty() {
         let portage_dir = sandbox.dir.join("etc/portage");
         crate::package_list::write_accept_keywords(&board_sandbox, &portage_dir)?;
@@ -153,12 +157,11 @@ fn default_deps(
         portage.emerge(&crate::package_list::atoms(&board_sandbox))?;
     }
 
-    // Target packages: defaults + board-specific, emerged together.
-    let mut target_pkgs =
-        crate::package_list::read_required(&defaults_root.join("target-packages.txt"))?;
-    target_pkgs.extend(crate::package_list::read_optional(
-        &board_dir.join("target-packages.txt"),
-    )?);
+    // Target packages: defaults UNION board extras MINUS board `-atom` lines.
+    let target_pkgs = crate::package_list::merge(
+        crate::package_list::read_required(&defaults_root.join("target-packages.txt"))?,
+        crate::package_list::read_optional(&board_dir.join("target-packages.txt"))?,
+    );
     if !target_pkgs.is_empty() {
         let target_runner = board_runner(sandbox, board).with_target(&target.dir);
         let portage = Portage::new(&target_runner);
