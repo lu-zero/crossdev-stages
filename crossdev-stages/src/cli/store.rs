@@ -33,6 +33,7 @@ fn gc(ws: &Workspace, boards_root: &Utf8Path, force: bool) -> Result<()> {
     let entries = walk_store(ws);
     let binpkgs_entries = walk_binpkgs(ws);
     let live = live_set(ws, boards_root)?;
+    ensure_live_nonempty(&live, boards_root)?;
 
     let unused = unused_entries(entries, &live.store);
     let unused_binpkgs = unused_entries(binpkgs_entries, &live.binpkgs);
@@ -191,6 +192,20 @@ pub fn board_store_keys(board: &BoardConfig, default_specs: &[String]) -> Vec<Ut
         .collect()
 }
 
+/// An empty live set means no boards were found (wrong --project-dir?):
+/// the store is global (XDG cache) while the live set comes from ./boards,
+/// so proceeding would classify every store entry as unused and, with
+/// --force, wipe the entire store.
+fn ensure_live_nonempty(live: &LiveSet, boards_root: &Utf8Path) -> Result<()> {
+    if live.store.is_empty() {
+        return Err(Error::CommandFailed {
+            code: 1,
+            reason: format!("no boards found under {boards_root}; refusing to gc"),
+        });
+    }
+    Ok(())
+}
+
 /// Everything the project's boards can still reach: store keys
 /// (`<chost>/<cflags-hash>-gcc<spec>`) and binpkg cache dirs
 /// (`<chost>/<cflags-hash>`, gcc-spec independent).
@@ -339,6 +354,29 @@ mod tests {
             keys,
             vec![Utf8PathBuf::from(chost).join("fedcba9876543210")]
         );
+    }
+
+    #[test]
+    fn empty_live_set_refuses_to_gc() {
+        // No boards -> empty live set -> every store entry would classify
+        // as unused; gc must refuse instead of wiping the global store.
+        let live = LiveSet {
+            store: BTreeSet::new(),
+            binpkgs: BTreeSet::new(),
+        };
+        assert!(ensure_live_nonempty(&live, Utf8Path::new("/nowhere/boards")).is_err());
+
+        let nonempty = LiveSet {
+            store: [store_key(
+                "riscv64-unknown-linux-gnu",
+                "0123456789abcdef",
+                "15",
+            )]
+            .into_iter()
+            .collect(),
+            binpkgs: BTreeSet::new(),
+        };
+        assert!(ensure_live_nonempty(&nonempty, Utf8Path::new("/nowhere/boards")).is_ok());
     }
 
     #[test]
