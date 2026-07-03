@@ -29,6 +29,12 @@ pub enum Error {
     #[error("required package list not found: {0}")]
     PackageListNotFound(camino::Utf8PathBuf),
 
+    #[error("subtraction line '-{atom}' not allowed in defaults list {file} (only board lists may subtract)")]
+    SubtractionInDefaults {
+        file: camino::Utf8PathBuf,
+        atom: String,
+    },
+
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 }

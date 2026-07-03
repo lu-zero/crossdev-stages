@@ -153,8 +153,15 @@ sibling helpers.
   image's sysroot during `deps` (required).
 
 Per-board lists (`boards/<name>/sandbox-packages.txt`, `target-packages.txt`)
-are additive extras on top of the defaults; there is no subtraction
-mechanism, so the defaults must stay small and universal.
+overlay the defaults.  The effective target set is
+`defaults/target-packages.txt` UNION `boards/<name>/target-packages.txt`
+MINUS the board's `-atom` lines (e.g. `-app-misc/fastfetch`) — every part
+is a plain file.  Subtracting an atom not in the merged set warns and does
+nothing; `-atom` lines in a defaults file are rejected with an error, since
+defaults define the base and only boards subtract.  Heavy per-board opt-ins
+(mold, go, cmake, rust, iw, wpa_supplicant) are deliberately not defaults.
+Sandbox defaults are installed at prepare time, so a `-atom` in a board's
+`sandbox-packages.txt` can only cancel the board's own extras.
 
 List lines are `atom [keywords]`: an optional keyword override (e.g.
 `sys-boot/syslinux **`) is written to `etc/portage/package.accept_keywords/`
