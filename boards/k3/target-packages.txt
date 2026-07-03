@@ -1,7 +1,6 @@
 # K3 extras on top of defaults/target-packages.txt
 
-# Dev tools
-dev-vcs/git
+# Dev tools (git is in defaults)
 dev-debug/strace
 dev-debug/gdb
 net-misc/curl
