@@ -24,4 +24,5 @@ pub mod sandbox;
 pub mod source_cache;
 pub mod stage;
 pub mod target;
+pub mod toolchain;
 pub mod workspace;
