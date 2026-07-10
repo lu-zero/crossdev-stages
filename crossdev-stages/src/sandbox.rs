@@ -158,10 +158,11 @@ impl Sandbox {
     /// `BOARD_GCC_VERSION` get separate prefixes instead of ping-ponging
     /// full rebuilds inside one dir.
     ///
-    /// GCC version resolution order: CLI `gcc_version` > `board.gcc_version`
-    /// > highest installed slot.  The spec is either a bare slot number
-    /// ("15") or a version prefix ("15.2", "15.2.1_p20260214").  Prefixes
-    /// use portage's `=pkg-ver*` glob, so "15.2" matches any 15.2.x snapshot.
+    /// GCC version resolution order: CLI `gcc_version`, then
+    /// `board.gcc_version`, then highest installed slot.  The spec is either
+    /// a bare slot number ("15") or a version prefix ("15.2",
+    /// "15.2.1_p20260214").  Prefixes use portage's `=pkg-ver*` glob, so
+    /// "15.2" matches any 15.2.x snapshot.
     ///
     /// Idempotent: a store dir carrying `.complete` is never rebuilt (a
     /// different gcc spec or CFLAGS keys a different dir), and never
@@ -237,7 +238,11 @@ impl Sandbox {
                 tracing::info!(
                     "Crossdev prefix at {store_dir} complete (gcc-{existing}), skipping."
                 );
-                std::fs::write(&sandbox_marker, &existing)?;
+                // A sandbox that never ran this setup (fresh unpack, or one
+                // last used with a different gcc) lacks the host-side
+                // compiler driver for this store; replay it before anything
+                // runs {chost}-emerge.  Maintains the sandbox marker.
+                self.ensure_host_payload(target_arch, &chost, &store_dir)?;
                 // Ensure any board-required ex-pkgs are present even on the skip path.
                 self.ensure_grub_ex_pkg(board, &chost, &store_dir, &binpkgs_dir)?;
                 return Ok(());
@@ -374,9 +379,16 @@ impl Sandbox {
             "gcc-config {chost}-{gcc_slot} && source /etc/profile"
         ))?;
 
+        // Stash the host-side toolchain payload in the store so a fresh
+        // sandbox can replay it (see ensure_host_payload).  Must happen
+        // before `.complete` -- a store without the payload is not usable
+        // from any sandbox but this one.
+        self.capture_host_payload(&runner, &chost)?;
+
         // Two markers, written only now that the prefix is fully built:
         // store `.complete` (exact gcc PVR; runner_for_chost requires it)
-        // and per-sandbox `.crossdev-<arch>` (last-used gcc, informational).
+        // and per-sandbox `.crossdev-<arch>` (gcc of the toolchain whose
+        // host payload this sandbox currently carries).
         std::fs::write(&complete_marker, &gcc_ver)?;
         std::fs::write(&sandbox_marker, &gcc_ver)?;
         tracing::info!("Crossdev prefix at {store_dir} complete (gcc-{gcc_ver}).");
@@ -417,6 +429,10 @@ impl Sandbox {
                 reason: format!("store {store_dir} is not complete; run setup_crossdev first"),
             });
         }
+        // The store only captures /usr/<chost>/; the compiler driver and
+        // friends live on the sandbox rootfs.  Replay them if this sandbox
+        // doesn't carry them (fresh unpack, or last used with another gcc).
+        self.ensure_host_payload(target_arch, &chost, &store_dir)?;
         let portage_db_dir = store_dir.join(".portage-db");
         let binpkgs_cross_dir = store_dir.join(".binpkgs-cross");
         std::fs::create_dir_all(&portage_db_dir)?;
@@ -468,6 +484,77 @@ impl Sandbox {
     }
 
     // ── Private helpers ──────────────────────────────────────────────────────
+
+    /// Tar everything crossdev installed OUTSIDE `/usr/<chost>/` into
+    /// `<store>/.host-payload.tar`.
+    ///
+    /// The store bind captures only the prefix; the compiler itself lands
+    /// on the setup sandbox's rootfs: the gcc driver + cc1
+    /// (`/usr/<host-chost>/<chost>/gcc-bin/`, `/usr/lib/gcc/<chost>/`,
+    /// `/usr/libexec/gcc/<chost>/`), the gcc-config/binutils-config wrapper
+    /// symlinks and crossdev's emerge wrappers in `/usr/bin/<chost>-*`,
+    /// `/etc/env.d/{gcc,binutils}/` entries, and the crossdev overlay repo.
+    /// Enumerated from the cross-<chost>/* VDB CONTENTS (exact package
+    /// payload) plus globs for the config-tool-generated state that no
+    /// package owns.  `runner` must have the store bound at /usr/<chost>/.
+    fn capture_host_payload(&self, runner: &SandboxRunner, chost: &str) -> Result<()> {
+        tracing::info!("Capturing host-side toolchain payload for {chost} into the store…");
+        runner.run(&format!(
+            "{{ sed -n -e 's|^obj \\(/.*\\) [0-9a-f]* [0-9]*$|\\1|p' \
+                    -e 's|^sym \\(/.*\\) -> .*|\\1|p' \
+                    -e 's|^dir \\(/.*\\)$|\\1|p' \
+                 /var/db/pkg/cross-{chost}/*/CONTENTS; \
+               find /usr/bin -maxdepth 1 -name '{chost}-*'; \
+               find /etc/env.d -name '*{chost}*'; \
+               find /var/db/repos/crossdev /etc/portage/repos.conf; \
+             }} 2>/dev/null | grep -v '^/usr/{chost}/' | sort -u \
+             | tar -cpf /usr/{chost}/.host-payload.tar \
+                   --no-recursion --ignore-failed-read -T -"
+        ))
+    }
+
+    /// Replay a store's `.host-payload.tar` onto this sandbox's rootfs when
+    /// the sandbox doesn't already carry that exact toolchain (checked via
+    /// the `/usr/bin/<chost>-gcc` wrapper and the `.crossdev-<arch>` marker
+    /// against the gcc PVR recorded in the store's `.complete`).  Idempotent;
+    /// alternating between stores of the same chost re-points the wrapper
+    /// symlinks each time.
+    fn ensure_host_payload(
+        &self,
+        target_arch: &str,
+        chost: &str,
+        store_dir: &Utf8Path,
+    ) -> Result<()> {
+        let recorded = std::fs::read_to_string(store_dir.join(".complete"))
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+        let marker = self.dir.join(format!(".crossdev-{target_arch}"));
+        let marker_matches = std::fs::read_to_string(&marker)
+            .map(|s| s.trim() == recorded)
+            .unwrap_or(false);
+        // symlink_metadata, not exists(): the wrapper is an absolute
+        // symlink that only resolves inside the sandbox root.
+        let driver_present =
+            std::fs::symlink_metadata(self.dir.join(format!("usr/bin/{chost}-gcc"))).is_ok();
+        if driver_present && marker_matches {
+            return Ok(());
+        }
+        let payload = store_dir.join(".host-payload.tar");
+        if !payload.is_file() {
+            return Err(Error::CommandFailed {
+                code: 1,
+                reason: format!(
+                    "sandbox lacks the {chost} toolchain and store {store_dir} has no \
+                     .host-payload.tar; delete the store dir and re-run setup"
+                ),
+            });
+        }
+        tracing::info!("Replaying host-side toolchain payload for {chost} (gcc-{recorded})…");
+        let runner = self.runner().with_extra_ro(store_dir, "/.store-payload");
+        runner.run("tar -xpf /.store-payload/.host-payload.tar -C / && env-update")?;
+        std::fs::write(&marker, &recorded)?;
+        Ok(())
+    }
 
     /// Install `sys-boot/grub` into the store-resident crossdev prefix if the
     /// board needs it and it isn't already there.  Uses `{chost}-emerge`

@@ -69,6 +69,14 @@ impl SandboxRunner {
         self
     }
 
+    /// Add an arbitrary read-only bind mount.  Used to expose a store dir
+    /// while replaying its host-side toolchain payload into a sandbox.
+    pub fn with_extra_ro(mut self, host_path: &Utf8Path, container_path: &str) -> Self {
+        self.extra_ro
+            .push((host_path.to_path_buf(), container_path.to_string()));
+        self
+    }
+
     pub fn log_dir(&self) -> &Utf8Path {
         &self.log_dir
     }
