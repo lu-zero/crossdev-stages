@@ -422,7 +422,9 @@ impl Sandbox {
         gcc_spec: &str,
     ) -> Result<SandboxRunner> {
         let chost = crate::stage::chost_for_arch(target_arch)?;
-        let store_dir = ws.store_dir().join(store_key(&chost, cflags_hash, gcc_spec));
+        let store_dir = ws
+            .store_dir()
+            .join(store_key(&chost, cflags_hash, gcc_spec));
         if !store_dir.join(".complete").exists() {
             return Err(Error::CommandFailed {
                 code: 1,

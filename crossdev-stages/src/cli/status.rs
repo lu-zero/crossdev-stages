@@ -164,7 +164,9 @@ fn list_stores(ws: &Workspace) -> Vec<StoreEntry> {
             });
         }
     }
-    entries.sort_by(|a, b| (a.chost.as_str(), a.key.as_str()).cmp(&(b.chost.as_str(), b.key.as_str())));
+    entries.sort_by(|a, b| {
+        (a.chost.as_str(), a.key.as_str()).cmp(&(b.chost.as_str(), b.key.as_str()))
+    });
     entries
 }
 

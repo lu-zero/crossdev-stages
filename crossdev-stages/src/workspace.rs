@@ -350,7 +350,11 @@ mod tests {
         );
         // Version-prefix specs key verbatim.
         assert_eq!(
-            store_key("aarch64-unknown-linux-gnu", "00ff00ff00ff00ff", "15.2.1_p20260214"),
+            store_key(
+                "aarch64-unknown-linux-gnu",
+                "00ff00ff00ff00ff",
+                "15.2.1_p20260214"
+            ),
             Utf8PathBuf::from("aarch64-unknown-linux-gnu/00ff00ff00ff00ff-gcc15.2.1_p20260214"),
         );
     }

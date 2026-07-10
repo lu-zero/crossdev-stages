@@ -62,6 +62,8 @@ mod tests {
     fn hash_is_16_lowercase_hex() {
         let (_, h) = canonicalize("-O2 -march=rv64gc_zba_zbb");
         assert_eq!(h.len(), 16);
-        assert!(h.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
+        assert!(h
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
     }
 }
