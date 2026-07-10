@@ -54,6 +54,11 @@ impl Sandbox {
     /// as the `crossdev-stages` portage overlay (for opt-in extras like the
     /// ESOS firmware ebuilds).
     pub fn prepare(&self, mirror: Option<&str>, defaults_root: &Utf8Path, bare: bool) -> Result<()> {
+        // The overlay refreshes on every prepare, even on an already-prepared
+        // sandbox: defaults/overlay/ is the source of truth and the copy is
+        // cheap and idempotent.
+        install_overlay(&self.dir, defaults_root)?;
+
         if self.dir.join(".prepared").exists() {
             tracing::info!("Sandbox already prepared, skipping.");
             return Ok(());
@@ -76,8 +81,6 @@ impl Sandbox {
 
         // No gcc pin in the host sandbox — stage3's default gcc runs portage itself.
         crate::portage::write_version_pins(&self.dir.join("etc/portage"), None)?;
-
-        install_overlay(&self.dir, defaults_root)?;
 
         if bare {
             sync_portage_tree(&self.runner())?;
