@@ -286,10 +286,7 @@ mod tests {
 
     #[test]
     fn nested_layout_yields_marked_leaves_only() {
-        let marked = [
-            "/builds/k1/20260101T000000Z",
-            "/builds/k1/20260202T000000Z",
-        ];
+        let marked = ["/builds/k1/20260101T000000Z", "/builds/k1/20260202T000000Z"];
         let leaves = build_leaves(
             Utf8PathBuf::from("/builds/k1"),
             |p| marked.contains(&p.as_str()),

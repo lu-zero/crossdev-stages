@@ -173,11 +173,7 @@ impl ManifestBuilder {
         }
     }
 
-    pub fn write(
-        self,
-        runner: &SandboxRunner,
-        out_path: &Utf8Path,
-    ) -> Result<Utf8PathBuf> {
+    pub fn write(self, runner: &SandboxRunner, out_path: &Utf8Path) -> Result<Utf8PathBuf> {
         let toolchain = self.read_toolchain(runner)?;
         let configs = self.read_configs(runner);
         // Read the `.stage3` marker Target::create writes, falling back
@@ -214,12 +210,11 @@ impl ManifestBuilder {
             sources: self.sources,
             configs,
         };
-        let body = toml::to_string_pretty(&manifest).map_err(|e| {
-            crate::error::Error::CommandFailed {
+        let body =
+            toml::to_string_pretty(&manifest).map_err(|e| crate::error::Error::CommandFailed {
                 code: 1,
                 reason: format!("toml serialize failed: {e}"),
-            }
-        })?;
+            })?;
         std::fs::write(out_path, body)?;
         Ok(out_path.to_path_buf())
     }
@@ -231,18 +226,22 @@ fn read_makeconf_var(runner: &SandboxRunner, file: &str, name: &str) -> String {
     let cmd = format!(
         "[ -f {file} ] && (set -a; . {file} 2>/dev/null; printf '%s' \"${{{name}:-}}\") || true"
     );
-    runner.run_output(&cmd).map(|s| s.trim().to_string()).unwrap_or_default()
+    runner
+        .run_output(&cmd)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
 }
 
 fn sha256_of(runner: &SandboxRunner, file: &str) -> Option<String> {
     let cmd = format!("[ -f {file} ] && sha256sum {file} | cut -d' ' -f1 || true");
-    runner
-        .run_output(&cmd)
-        .ok()
-        .and_then(|s| {
-            let s = s.trim();
-            if s.is_empty() { None } else { Some(s.to_string()) }
-        })
+    runner.run_output(&cmd).ok().and_then(|s| {
+        let s = s.trim();
+        if s.is_empty() {
+            None
+        } else {
+            Some(s.to_string())
+        }
+    })
 }
 
 /// Embedded at compile time via `build.rs`; falls back to "unknown" if absent.
@@ -398,7 +397,11 @@ fn parse_partitions(cfg: &str) -> Vec<Partition> {
 
         if let Some(p) = current.as_mut() {
             if let Some((k, v)) = line.split_once('=') {
-                let v = v.trim().trim_matches('"').trim_end_matches(';').trim_matches('"');
+                let v = v
+                    .trim()
+                    .trim_matches('"')
+                    .trim_end_matches(';')
+                    .trim_matches('"');
                 match k.trim() {
                     "offset" => p.offset = Some(v.to_string()),
                     "size" if !v.is_empty() => p.size = Some(v.to_string()),

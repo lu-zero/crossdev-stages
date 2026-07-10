@@ -138,4 +138,3 @@ fn print_sources_tsv(build_id: &str, lock: &LockSummary) {
         );
     }
 }
-
