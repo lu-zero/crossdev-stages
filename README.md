@@ -69,9 +69,11 @@ crossdev-stages sandbox prepare
 crossdev-stages sandbox crossdev --arch <ARCH> --board <BOARD>
 
 # Create target stage from a stage3 seed
+# (--board bakes the board's CFLAGS into the target make.conf, so
+#  @system/@world rebuilds use them; omit for the arch baseline)
 crossdev-stages target setup --arch <ARCH>
-crossdev-stages target stage1
-crossdev-stages target update
+crossdev-stages target stage1 --board <BOARD>
+crossdev-stages target update --board <BOARD>
 
 # Build an image
 crossdev-stages image build --board <BOARD>
@@ -234,6 +236,7 @@ by `uboot`.
 | `KERNEL_CONFIG_FRAGMENTS` | no | Config fragments to apply after the defconfig |
 | `CHOST` | no | Override derived CHOST triple (default: auto from arch) |
 | `BOARD_CFLAGS` | no | Board-specific CFLAGS (default: arch default) |
+| `BOARD_GCC_VERSION` | no | Pin gcc: `15` (slot), `15.2` (prefix), or exact version (default: highest installed slot) |
 | `KERNEL_TAG` | no | Kernel git ref (default: top-level `TAG`) |
 | `KERNEL_ARCH` | no | Linux `ARCH=` value (default: auto from `BOARD_ARCH`) |
 | `BUILD_STEPS` | no | Build pipeline steps (default: deps checkout bootloader kernel assemble pack) |
@@ -442,6 +445,19 @@ the same board twice produces the same disk. Editing a comment in `board.conf`
 does not change them. genimage's own `disk-signature = random` cannot be used
 here: `assemble` writes the boot config before `pack` creates the partition
 table, so the value has to be known first.
+
+### Toolchain version pins
+
+Every portage root the tool manages (host sandbox, crossdev prefix,
+target sysroot) gets `package.mask/pin-{gcc,llvm}` +
+`package.unmask/pin-{gcc,llvm}`: gcc is pinned to
+`=sys-devel/gcc-${BOARD_GCC_VERSION}*` (host sandbox keeps its stage3
+default), llvm-core/* to a single slot hardcoded in
+`portage::LLVM_SLOT`.  This keeps `target update` and later emerges
+from silently jumping gcc majors (binpkg ABI breakage) or mixing llvm
+slots.  Override by editing the pin files in the respective
+`etc/portage/`, or change `BOARD_GCC_VERSION` — the files are rewritten
+on the next prepare/crossdev/stage run.
 
 ### Optional: coprocessor firmware (K1/K3 ESOS)
 

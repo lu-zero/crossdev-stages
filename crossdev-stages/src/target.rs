@@ -109,19 +109,17 @@ impl Target {
         let portage = Portage::new(&runner);
 
         // Update the cross-toolchain in the crossdev prefix first (no ROOT=/target).
-        // Pin gcc to the board's GCC_VERSION so portage doesn't pick the current
-        // default visible (could be a different major and would break ABI of
-        // binpkgs already in the cache).  Pass --noreplace so the cross prefix's
+        // Pin gcc to the spec the store key already names, so portage does not
+        // pick whatever is currently default (a different major would break the
+        // ABI of binpkgs already in the cache).  Pass --noreplace so the cross
+        // prefix's
         // package.mask/pin-gcc — which intentionally blocks upgrades past the
         // installed version to prevent bootstrap breakage — does not abort the
         // run when gcc is already at the requested version.
         // Single-quoted: the atom goes through `bash -c` and an unquoted
         // `=sys-devel/gcc-15*` is subject to shell glob expansion
         // (sandbox.rs quotes the identical atom in setup_crossdev).
-        let gcc_atom = board
-            .and_then(|b| b.gcc_version.as_deref())
-            .map(|v| format!("'=sys-devel/gcc-{v}*'"))
-            .unwrap_or_else(|| "sys-devel/gcc".to_string());
+        let gcc_atom = format!("'=sys-devel/gcc-{gcc_spec}*'");
         tracing::info!(gcc_atom = %gcc_atom, "Updating crossdev prefix: gcc, binutils-libs, @system…");
         portage.cross_emerge_crossdev(&chost, &["--noreplace", &gcc_atom])?;
         portage.cross_emerge_crossdev(&chost, &["sys-libs/binutils-libs"])?;
@@ -198,8 +196,8 @@ impl Target {
         }
         .write(&portage_dir)?;
 
-        let gcc_pin = board.and_then(|b| b.gcc_version.as_deref());
-        crate::portage::write_version_pins(&portage_dir, gcc_pin)?;
+        // The store key already resolved which gcc this target is built by.
+        crate::portage::write_version_pins(&portage_dir, Some(gcc_spec))?;
 
         // Copy the profile directory and make.profile symlink from the
         // store-resident crossdev prefix so the target stage uses the
