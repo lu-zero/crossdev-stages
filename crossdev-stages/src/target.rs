@@ -115,9 +115,12 @@ impl Target {
         // package.mask/pin-gcc — which intentionally blocks upgrades past the
         // installed version to prevent bootstrap breakage — does not abort the
         // run when gcc is already at the requested version.
+        // Single-quoted: the atom goes through `bash -c` and an unquoted
+        // `=sys-devel/gcc-15*` is subject to shell glob expansion
+        // (sandbox.rs quotes the identical atom in setup_crossdev).
         let gcc_atom = board
             .and_then(|b| b.gcc_version.as_deref())
-            .map(|v| format!("=sys-devel/gcc-{v}*"))
+            .map(|v| format!("'=sys-devel/gcc-{v}*'"))
             .unwrap_or_else(|| "sys-devel/gcc".to_string());
         tracing::info!(gcc_atom = %gcc_atom, "Updating crossdev prefix: gcc, binutils-libs, @system…");
         portage.cross_emerge_crossdev(&chost, &["--noreplace", &gcc_atom])?;
