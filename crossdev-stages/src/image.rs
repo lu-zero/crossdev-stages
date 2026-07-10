@@ -160,6 +160,15 @@ fn run_board_script(board_name: &str, script: &str) -> String {
 
 // ── Default implementations ─────────────────────────────────────────────────
 
+/// Per-(chost, cflags-hash) binpkg cache dir for a board's target packages.
+/// Single source for both the build-step runners and default_deps.
+fn board_binpkgs_dir(ws: &Workspace, board: &BoardConfig) -> Result<Utf8PathBuf> {
+    let (_, hash) = crate::cflags::canonicalize(&board.effective_cflags());
+    let dir = ws.binpkgs_dir().join(board.chost()).join(hash);
+    std::fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 fn default_deps(
     _runner: &SandboxRunner,
     ws: &Workspace,
@@ -168,7 +177,6 @@ fn default_deps(
     board: &BoardConfig,
     boards_root: &Utf8Path,
     defaults_root: &Utf8Path,
-    binpkgs_dir: &Utf8Path,
 ) -> Result<()> {
     // Sandbox extras: defaults are already installed during prepare; only the
     // board's own extras (e.g. grub for pentium-mmx) need emerging here.
@@ -203,7 +211,7 @@ fn default_deps(
         let target_runner = sandbox
             .runner_for_board(ws, &board.arch, board)?
             .with_target(&target.dir)
-            .with_binpkgs(binpkgs_dir);
+            .with_binpkgs(&board_binpkgs_dir(ws, board)?);
         let portage = Portage::new(&target_runner);
         portage.cross_emerge(&board.chost(), &crate::package_list::atoms(&target_pkgs))?;
     }
@@ -441,8 +449,7 @@ pub fn build(
     // PKGDIR=/binpkgs lives in the crossdev prefix make.conf (the config
     // {chost}-emerge actually reads), never in the target's -- the target
     // make.conf ships into images.
-    let binpkgs_dir = ws.binpkgs_dir().join(board.chost()).join(&hash);
-    std::fs::create_dir_all(&binpkgs_dir)?;
+    let binpkgs_dir = board_binpkgs_dir(ws, board)?;
 
     let default_steps = if board.build_steps.is_empty() {
         vec![
@@ -482,16 +489,7 @@ pub fn build(
 
         let result = match *step {
             "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board, |_r| {
-                default_deps(
-                    _r,
-                    ws,
-                    sandbox,
-                    target,
-                    board,
-                    boards_root,
-                    defaults_root,
-                    &binpkgs_dir,
-                )
+                default_deps(_r, ws, sandbox, target, board, boards_root, defaults_root)
             }),
             "checkout" => run_step(
                 "checkout",
