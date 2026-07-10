@@ -16,24 +16,37 @@ KEYWORDS=""
 IUSE="k1 k3"
 REQUIRED_USE="^^ ( k1 k3 )"
 
+# Cross-compiled coprocessor firmware: host strip would mangle the
+# rv32/rv64 ELF the remoteproc loader parses.
+RESTRICT="strip"
+
+# The bare-metal toolchain comes from crossdev (cross-riscv64-elf/*),
+# whose generated atoms don't exist until the user runs it — checked in
+# pkg_setup instead of a dependency atom.
 BDEPEND="
-	dev-embedded/riscv64-elf-gcc[multilib]
 	sys-apps/dtc
-	dev-util/scons
+	dev-build/scons
 	dev-embedded/u-boot-tools
-	k3? ( sys-apps/lzop )
+	k3? ( app-arch/lzop )
 "
-RDEPEND="k3? ( sys-firmware/esos-lite )"
+# esos_lite.bin is a build-time input (.incbin'd into esos.itb);
+# nothing is needed at runtime.
+DEPEND="k3? ( sys-firmware/esos-lite )"
 
 S="${WORKDIR}/${P}"
+
+pkg_setup() {
+	type -P riscv64-elf-gcc >/dev/null ||
+		die "riscv64-elf-gcc not found; run: crossdev -t riscv64-elf -s4"
+}
 
 src_prepare() {
 	eapply "${FILESDIR}"/01-upstream-toolchain.patch
 	if use k3; then
 		cp "${FILESDIR}"/libc_shim.c bsp/spacemit/applications/ || die
 		mkdir -p bsp/binary bsp/spacemit/binary || die
-		cp "${EROOT}"/lib/firmware/esos_lite.bin bsp/binary/ || die
-		cp "${EROOT}"/lib/firmware/esos_lite.bin bsp/spacemit/binary/ || die
+		cp "${ESYSROOT}"/lib/firmware/esos_lite.bin bsp/binary/ || die
+		cp "${ESYSROOT}"/lib/firmware/esos_lite.bin bsp/spacemit/binary/ || die
 	fi
 	eapply_user
 }
@@ -58,7 +71,7 @@ src_compile() {
 		printf '1\n0\n' | ./build.sh config || die "k3 OS0 config"
 		./build.sh                          || die "k3 OS0 build"
 		printf '1\n1\n' | ./build.sh config || die "k3 OS1 config"
-		./build.sh clean
+		./build.sh clean                    || die "k3 clean failed"
 		./build.sh                          || die "k3 OS1 build"
 		./build.sh itb                      || die "k3 FIT pack"
 	fi

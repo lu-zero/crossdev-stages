@@ -24,8 +24,7 @@ index 5356e40b..554165ae 100644
  
          CFLAGS  = DEVICE + ' -c -g -ffunction-sections -fdata-sections -Wall'
          AFLAGS  = ' -c' + DEVICE + ' -x assembler-with-cpp'
--        LFLAGS  = DEVICE + ' -nostartfiles -Wl,--no-whole-archive ' + ' -Xlinker --defsym=ENTRY_POINT=%s -T ./platform/%s/%s/gcc.ld -Wl,-gc-sections -Wl,-Map=rtt.map' % (TARGET_ENTRY,CPU,BOARD)
-+        LFLAGS  = LDEVICE + ' -nostdlib -Wl,--no-whole-archive -Xlinker --defsym=ENTRY_POINT=%s -T ./platform/%s/%s/gcc.ld -Wl,-gc-sections -Wl,-Map=rtt.map -lgcc' % (TARGET_ENTRY,CPU,BOARD)
+         LFLAGS  = DEVICE + ' -nostartfiles -Wl,--no-whole-archive ' + ' -Xlinker --defsym=ENTRY_POINT=%s -T ./platform/%s/%s/gcc.ld -Wl,-gc-sections -Wl,-Map=rtt.map' % (TARGET_ENTRY,CPU,BOARD)
          CPATH   = ''
          LPATH   = ''
  

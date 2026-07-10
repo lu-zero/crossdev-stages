@@ -14,14 +14,24 @@ LICENSE="Apache-2.0"
 SLOT="0"
 KEYWORDS=""
 
+# Cross-compiled firmware blob input: keep the host strip away.
+RESTRICT="strip"
+
+# The bare-metal toolchain comes from crossdev (cross-riscv64-elf/*),
+# whose generated atoms don't exist until the user runs it — checked in
+# pkg_setup instead of a dependency atom.
 BDEPEND="
-	dev-embedded/riscv64-elf-gcc[multilib]
 	sys-apps/dtc
-	dev-util/scons
+	dev-build/scons
 	dev-embedded/u-boot-tools
 "
 
 S="${WORKDIR}/${P}/rt-thread"
+
+pkg_setup() {
+	type -P riscv64-elf-gcc >/dev/null ||
+		die "riscv64-elf-gcc not found; run: crossdev -t riscv64-elf -s4"
+}
 
 src_prepare() {
 	# Patch generated against repo root; strip the "rt-thread/" prefix to apply at S.

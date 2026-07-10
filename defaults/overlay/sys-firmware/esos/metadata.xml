@@ -12,7 +12,8 @@
     config picks which to build.  Built with upstream baremetal
     riscv64-elf-gcc — no vendor toolchain.
 
-    K3 RDEPENDs on sys-firmware/esos-lite (PM mini-blob .incbin'd at SRAM 0).
+    K3 needs sys-firmware/esos-lite at build time (PM mini-blob .incbin'd
+    at SRAM 0).
     K1 installs /lib/firmware/esos.elf for AP's remoteproc.
     K3 installs /boot/esos.itb for u-boot to load into RT24 cores.
   </longdescription>

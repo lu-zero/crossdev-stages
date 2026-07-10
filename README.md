@@ -451,12 +451,16 @@ SpaceMIT coprocessor firmware:
 
 - `sys-firmware/esos` (USE=k1|k3) — RT-Thread firmware from a single
   upstream tree, chip selected at build time
-- `sys-firmware/esos-lite` — K3 PM mini-blob (RDEPEND of esos[k3])
+- `sys-firmware/esos-lite` — K3 PM mini-blob (build-time dep of esos[k3])
 
-To install on a target sysroot:
+To install on a target sysroot (`package.unmask`/`package.accept_keywords`
+are directories; live ebuilds also need an explicit `**` keyword):
 
 ```sh
-echo 'sys-firmware/esos' >> /etc/portage/package.unmask
+echo 'sys-firmware/esos' > /etc/portage/package.unmask/esos
+echo 'sys-firmware/esos-lite' > /etc/portage/package.unmask/esos-lite   # k3 only
+echo 'sys-firmware/esos **' > /etc/portage/package.accept_keywords/esos
+echo 'sys-firmware/esos-lite **' > /etc/portage/package.accept_keywords/esos-lite
 crossdev -t riscv64-elf -s4   # baremetal toolchain, ESOS-specific
 USE=k1 ROOT=$SYSROOT emerge -av sys-firmware/esos    # K1 board
 USE=k3 ROOT=$SYSROOT emerge -av sys-firmware/esos    # K3 board
