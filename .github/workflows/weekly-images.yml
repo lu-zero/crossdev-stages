@@ -80,19 +80,25 @@ jobs:
           args=()
           [ -n "$GENTOO_MIRROR" ] && args+=(--mirror "$GENTOO_MIRROR")
           [ -n "$BINHOST_URL" ] && args+=(--binhost "$BINHOST_URL")
-          sudo ./target/release/crossdev-stages "${args[@]}" \
+          # env_reset in default sudoers would point the build at
+          # /root/.cache; preserve HOME/XDG_CACHE_HOME so it lands in the
+          # runner user's cache, then reclaim ownership for the later
+          # unprivileged locate/manifest steps.
+          sudo --preserve-env=HOME,XDG_CACHE_HOME \
+            ./target/release/crossdev-stages "${args[@]}" \
             image build --board "${{ matrix.board }}"
+          sudo chown -R "$(id -u):$(id -g)" ~/.cache/crossdev-stages/builds
 
       - name: Locate output + manifest
         id: out
         run: |
           set -e
-          # crossdev-stages writes the image to builds/<board>/ (or the
-          # legacy builds/<board>-<ts>/ if image-pack-timestamp hasn't
-          # landed yet).  Pick the newest *.img.xz.
+          # crossdev-stages writes the image to builds/<board>/.  Anchor on
+          # that exact directory so a sibling board (e.g. k1 vs k1-upstream)
+          # can't match, and sort all candidates by mtime to pick the newest.
           img=$(find ~/.cache/crossdev-stages/builds -maxdepth 2 \
-                -name "*${{ matrix.board }}*.img.xz" -newer ./target/release/crossdev-stages \
-                | xargs -I{} ls -t {} | head -1)
+                -path "*/builds/${{ matrix.board }}/*.img.xz" \
+                -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
           if [ -z "$img" ]; then
             echo "::error::no image found for ${{ matrix.board }}"
             exit 1
@@ -100,7 +106,10 @@ jobs:
           sha=$(sha256sum "$img" | awk '{print $1}')
           size=$(stat -c%s "$img")
           out_dir=$(dirname "$img")
-          cat > "${out_dir}/manifest.json" <<EOF
+          # Pair the manifest with the image by name so release.yml and the
+          # retention step (both keyed on <image-base>.manifest.json) find it.
+          manifest="${out_dir}/$(basename "${img%.img.xz}").manifest.json"
+          cat > "${manifest}" <<EOF
           {
             "board":     "${{ matrix.board }}",
             "image":     "$(basename "$img")",
@@ -112,7 +121,7 @@ jobs:
           }
           EOF
           echo "img=${img}" >> "$GITHUB_OUTPUT"
-          echo "manifest=${out_dir}/manifest.json" >> "$GITHUB_OUTPUT"
+          echo "manifest=${manifest}" >> "$GITHUB_OUTPUT"
           echo "out_dir=${out_dir}" >> "$GITHUB_OUTPUT"
 
       - name: Upload to object storage
