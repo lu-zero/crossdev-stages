@@ -1,4 +1,7 @@
 # Host-side tools needed by the board's override scripts.
-# mksquashfs is invoked by override-kernel.sh stage 2.3 to pack the
-# squashfs payload that lives inside the kernel-embedded cpio.
+# mksquashfs is invoked by override-kernel.sh stage 3 to pack /target
+# into image.sqfs, the phram-mounted rootfs payload.
 sys-fs/squashfs-tools
+# unzip is invoked by override-checkout.sh to unpack the vendor
+# vsrv_root_<DATE>.zip (not in stage3 @system).
+app-arch/unzip

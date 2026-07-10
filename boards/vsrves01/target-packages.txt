@@ -5,7 +5,7 @@
 # directly — no separate cherry-pick list.
 #
 # Phram-rootfs architecture (see override-assemble.sh): the sqfs is
-# loaded by vendor's DDRLoad to a 64 MiB DDR region at 0x84000000 and
+# loaded by vendor's DDRLoad to an 80 MiB DDR region at 0x83000000 and
 # mounted by the kernel via phram+squashfs.  We have room for a full
 # Gentoo userland — no need to lean on busybox applets like the cpio
 # embed path did.

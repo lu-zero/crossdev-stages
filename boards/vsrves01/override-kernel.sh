@@ -30,7 +30,6 @@ TARGET_SYSROOT=/target
 SQFS_IMG="${KSRC}/image.sqfs"
 TARGET_PKGS="${SCRIPTS}/target-packages.txt"
 INITRAMFS_OVERLAY="${SCRIPTS}/initramfs-overlay"
-INIT_SCRIPT="${SCRIPTS}/initramfs/init"
 CPIO_DST="${KSRC}/catboard.cpio"
 GEN_INIT_CPIO="${KSRC}/usr/gen_init_cpio"
 
@@ -125,7 +124,11 @@ if [ ! -f "${LIGHT_MARK}" ]; then
     touch "${LIGHT_MARK}"
 fi
 
-mapfile -t pkgs < <(grep -Ev '^[[:space:]]*(#|$)' "${TARGET_PKGS}")
+# First column only — lines may carry a keyword column ("atom **")
+# that the Rust side writes to package.accept_keywords; passing the
+# whole line as one argv element makes emerge reject it as an invalid
+# atom and abort the entire stage 2b merge.
+mapfile -t pkgs < <(grep -Ev '^[[:space:]]*(#|$)' "${TARGET_PKGS}" | awk '{print $1}')
 [ ${#pkgs[@]} -gt 0 ] || { echo "!! ${TARGET_PKGS} is empty" >&2; exit 1; }
 
 echo "::: override-kernel: stage 2b (emerge target-packages.txt)"
@@ -457,7 +460,7 @@ ls -l "${SQFS_IMG}"
 
 # No cpio/initramfs stages — defconfig has CONFIG_BLK_DEV_INITRD=n.
 # The Image.vri built in stage 1 is the final kernel; vendor's DDRLoad
-# (extended in override-assemble.sh) puts image.sqfs at 0x84000000 and
+# (extended in override-assemble.sh) puts image.sqfs at 0x83000000 and
 # the kernel mounts it via phram+squashfs (root= cmdline).
 
 echo "::: override-kernel: done"
