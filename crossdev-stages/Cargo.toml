@@ -3,6 +3,10 @@ name = "crossdev-stages"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "crossdev_stages"
+path = "src/lib.rs"
+
 [[bin]]
 name = "crossdev-stages"
 path = "src/main.rs"

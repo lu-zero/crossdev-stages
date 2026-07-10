@@ -1,27 +1,8 @@
-mod abi;
-mod binpkg_meta;
-mod board;
-mod bootloader;
-mod cflags;
-mod chroot;
-mod cli;
-mod container;
-mod error;
-mod image;
-mod isa;
-mod manifest;
-mod package_list;
-mod portage;
-mod sandbox;
-mod source_cache;
-mod stage;
-mod target;
-mod workspace;
-
 use camino::Utf8PathBuf;
 use clap::Parser;
 
-use cli::{Cli, Commands};
+use crossdev_stages::cli::{self, Cli, Commands};
+use crossdev_stages::workspace::Workspace;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -31,7 +12,7 @@ async fn main() -> anyhow::Result<()> {
         .with_env_filter("crossdev_stages=info")
         .init();
 
-    let ws = crate::workspace::Workspace::open()?;
+    let ws = Workspace::open()?;
     ws.ensure_dirs()?;
 
     let project_dir = {
