@@ -115,6 +115,24 @@ Parsed from `boards/<name>/board.conf` (shell key=value + bash array syntax).
 Holds arch, CFLAGS, kernel/bootloader repo references, boot configuration,
 and per-package CFLAGS workarounds.
 
+### `RootfsProvider`
+
+Who fills and configures the image's root filesystem, selected by
+`ROOTFS_PROVIDER` in board.conf (absent → `gentoo`).  The provider owns
+three seams — how `/target` is seeded, what the `deps` step installs,
+and the os-config tail of `assemble` — while checkout, kernel,
+bootloader, assemble mechanics, and pack stay provider-agnostic.
+
+```
+gentoo   stage3 seed; deps cross-emerges defaults + board lists;
+         assemble writes OpenRC config.  The default; also the only
+         provider that unconditionally needs the crossdev toolchain.
+none     nothing seeded, installed, or configured — board hook scripts
+         (override-deps.sh, post-assemble.sh, …) own the rootfs.  The
+         toolchain store is set up only when BUILD_STEPS compiles
+         target code (kernel/bootloader).
+```
+
 ---
 
 ## Image pipeline
