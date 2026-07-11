@@ -1,7 +1,7 @@
-use crate::cli::MaintCmd;
+use crate::cli::{CleanArgs, MaintCmd};
 use crate::error::Result;
 use crate::{board, container, image, workspace::Workspace};
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 
 pub fn run(
     ws: &Workspace,
@@ -10,18 +10,47 @@ pub fn run(
     dry_run: bool,
 ) -> Result<()> {
     match cmd {
-        MaintCmd::Cleanup { all } => cleanup(ws, all, dry_run),
+        MaintCmd::Clean(args) => clean(ws, args, dry_run),
         MaintCmd::Logs { board, step } => logs(ws, &board, step.as_deref()),
         MaintCmd::Doctor => doctor(ws, boards_root),
     }
 }
 
-fn cleanup(ws: &Workspace, all: bool, dry_run: bool) -> Result<()> {
+fn clean(ws: &Workspace, args: CleanArgs, dry_run: bool) -> Result<()> {
+    let all = args.all;
+    let categories: [(&str, &str, bool, Utf8PathBuf); 6] = [
+        (
+            "sandbox",
+            "sandboxes",
+            args.sandboxes || all,
+            ws.sandboxes_dir(),
+        ),
+        ("target", "targets", args.targets || all, ws.targets_dir()),
+        ("build", "builds", args.builds || all, ws.builds_dir()),
+        ("source", "sources", args.sources || all, ws.sources_dir()),
+        ("stage", "stages", args.stages || all, ws.stages_dir()),
+        ("log", "logs", args.logs || all, ws.logs_dir()),
+    ];
+
+    if categories.iter().all(|(_, _, selected, _)| !selected) {
+        return gc(ws, dry_run);
+    }
+    for (singular, plural, selected, dir) in categories {
+        if selected {
+            clean_category(ws, singular, plural, &dir, dry_run)?;
+        }
+    }
+    Ok(())
+}
+
+/// Default `maint clean`: drop incomplete builds and stage3 tarballs
+/// older than the newest per arch.
+fn gc(ws: &Workspace, dry_run: bool) -> Result<()> {
     let mut total = 0usize;
 
-    // 1. Incomplete builds (always); all builds if --all
+    // 1. Incomplete builds
     for dir in &ws.list_builds()? {
-        if all || !dir.join(".packed").exists() {
+        if !dir.join(".packed").exists() {
             let name = dir.file_name().unwrap_or("?");
             if dry_run {
                 println!("Would remove build: {name}");
@@ -63,12 +92,7 @@ fn cleanup(ws: &Workspace, all: bool, dry_run: bool) -> Result<()> {
 
         for (_arch, mut files) in by_arch {
             files.sort_by_key(|b| std::cmp::Reverse(b.1)); // newest first
-            let to_remove = if all {
-                &files[..]
-            } else {
-                files.get(1..).unwrap_or(&[])
-            };
-            for (path, _) in to_remove {
+            for (path, _) in files.get(1..).unwrap_or(&[]) {
                 let name = path.file_name().unwrap_or("?");
                 if dry_run {
                     println!("Would remove stage: {name}");
@@ -87,6 +111,87 @@ fn cleanup(ws: &Workspace, all: bool, dry_run: bool) -> Result<()> {
         println!("{total} item(s) cleaned up.");
     }
     Ok(())
+}
+
+fn clean_category(
+    ws: &Workspace,
+    singular: &str,
+    plural: &str,
+    dir: &Utf8Path,
+    dry_run: bool,
+) -> Result<()> {
+    let mut count = 0usize;
+    let mut freed = 0u64;
+
+    if dir.is_dir() {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = match Utf8PathBuf::try_from(entry.path()) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let name = path.file_name().unwrap_or("?");
+            let size = du(&path);
+            if dry_run {
+                println!("Would remove {singular}: {name} ({})", human(size));
+            } else {
+                remove_entry(&path, ws.base())?;
+                println!("Removed {singular}: {name} ({})", human(size));
+            }
+            count += 1;
+            freed += size;
+        }
+    }
+
+    if dry_run {
+        println!("would remove {count} {plural} (~{})", human(freed));
+    } else {
+        println!("removed {count} {plural} (freed ~{})", human(freed));
+    }
+    Ok(())
+}
+
+/// Remove one top-level entry. Directories may contain files owned by
+/// subordinate uids (portage etc.), so remove them via `rm -rf` inside a
+/// container with the full subuid/gid maps.
+fn remove_entry(path: &Utf8Path, cache_base: &Utf8Path) -> Result<()> {
+    if std::fs::symlink_metadata(path.as_std_path())?.is_dir() {
+        container::destroy_dir(path, cache_base)
+    } else {
+        Ok(std::fs::remove_file(path)?)
+    }
+}
+
+/// Approximate disk usage (apparent size); unreadable entries count as 0.
+fn du(path: &Utf8Path) -> u64 {
+    fn walk(p: &std::path::Path) -> u64 {
+        let Ok(meta) = std::fs::symlink_metadata(p) else {
+            return 0;
+        };
+        if meta.is_dir() {
+            std::fs::read_dir(p)
+                .map(|rd| rd.flatten().map(|e| walk(&e.path())).sum())
+                .unwrap_or(0)
+        } else {
+            meta.len()
+        }
+    }
+    walk(path.as_std_path())
+}
+
+fn human(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KiB", "MiB", "GiB", "TiB"];
+    let mut v = bytes as f64;
+    let mut unit = 0;
+    while v >= 1024.0 && unit < UNITS.len() - 1 {
+        v /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{v:.1} {}", UNITS[unit])
+    }
 }
 
 fn logs(ws: &Workspace, board_name: &str, step: Option<&str>) -> Result<()> {
