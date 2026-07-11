@@ -1,0 +1,27 @@
+# Packages to cross-install into the target sysroot for Zhihe A210.
+# Only additions over the stage3 base — everything else (bash, coreutils,
+# openssh, curl, compression tools, ...) already ships in
+# stage3-rv64_lp64d-openrc; verified against its /var/db/pkg.
+
+# Services
+app-admin/metalog
+net-misc/ntp
+
+# Initramfs / boot
+sys-apps/busybox
+
+# Dev tools
+app-editors/vim
+dev-vcs/git
+dev-debug/strace
+
+# System tools
+sys-process/htop
+sys-process/lsof
+app-misc/screen
+app-misc/tmux
+app-text/tree
+net-misc/iperf:3
+
+# Eye-candy / diagnostics
+app-misc/fastfetch
