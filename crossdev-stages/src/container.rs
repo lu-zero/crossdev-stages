@@ -36,6 +36,8 @@ pub struct SandboxRunner {
     scripts_dir: Option<Utf8PathBuf>,
     /// Overlayfs mounts performed inside the container before each command.
     overlays: Vec<OverlaySpec>,
+    /// Extra environment variables layered onto every `run*`/`shell` command.
+    env: Vec<(String, String)>,
 }
 
 impl SandboxRunner {
@@ -47,6 +49,7 @@ impl SandboxRunner {
             extra_ro: vec![],
             scripts_dir: None,
             overlays: vec![],
+            env: vec![],
         }
     }
 
@@ -115,6 +118,13 @@ impl SandboxRunner {
         self
     }
 
+    /// Layer an environment variable onto every command run in the sandbox.
+    /// Applied after the built-in variables, so it can override them.
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.push((key.into(), value.into()));
+        self
+    }
+
     /// Run a shell command (via `bash --login -c`) inside the sandbox.
     pub fn run(&self, cmd: &str) -> Result<()> {
         let container = self.build_container();
@@ -131,6 +141,9 @@ impl SandboxRunner {
             )
             .env("COLORTERM", &std::env::var("COLORTERM").unwrap_or_default())
             .env("NO_COLOR", &std::env::var("NO_COLOR").unwrap_or_default());
+        for (k, v) in &self.env {
+            command.env(k, v);
+        }
         check_status(command.status()?).map_err(|e| annotate_cmd(e, cmd))
     }
 
@@ -145,6 +158,9 @@ impl SandboxRunner {
             .arg(&full)
             .env("HOME", "/root")
             .stdout(hakoniwa::Stdio::piped());
+        for (k, v) in &self.env {
+            command.env(k, v);
+        }
         let output = command.output()?;
         if !output.status.success() {
             return Err(crate::error::Error::CommandFailed {
@@ -174,6 +190,9 @@ impl SandboxRunner {
                 &std::env::var("TERM").unwrap_or_else(|_| "xterm".into()),
             )
             .env("COLORTERM", &std::env::var("COLORTERM").unwrap_or_default());
+        for (k, v) in &self.env {
+            command.env(k, v);
+        }
         check_status(command.status()?)
     }
 
