@@ -17,7 +17,11 @@ pub fn run(
     let board_cfg = board::load(boards_root, board_name)?;
 
     let sb = Sandbox::open(ws.resolve_sandbox(sandbox)?)?;
-    let tgt = crate::target::Target::open(ws.resolve_target_for_arch(None, &board_cfg.arch)?)?;
+    let tgt = crate::target::Target::open(ws.resolve_target_for_arch(
+        None,
+        &board_cfg.arch,
+        board_cfg.rootfs_provider.name(),
+    )?)?;
 
     let build_dir = ws.builds_dir().join(board_name);
     let image_root = build_dir.join("gen/root");

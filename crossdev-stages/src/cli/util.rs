@@ -4,16 +4,13 @@ use crate::error::Result;
 use crate::workspace::Workspace;
 use crate::{board, error, sandbox, stage, target};
 
-/// Ensure the sandbox exists, is prepared, and has crossdev for `arch`.
+/// Ensure the sandbox exists and is prepared (no cross-toolchain setup).
 /// Auto-creates a sandbox from the host arch stage3 if none is found.
-pub async fn ensure_crossdev(
+pub async fn ensure_sandbox(
     ws: &Workspace,
     sandbox_name: Option<&str>,
-    arch: &str,
-    board_cfg: &board::BoardConfig,
     defaults_root: &Utf8Path,
     mirror: Option<&str>,
-    gcc_version: Option<&str>,
 ) -> Result<sandbox::Sandbox> {
     let sd = match ws.resolve_sandbox(sandbox_name) {
         Ok(p) => p,
@@ -31,6 +28,20 @@ pub async fn ensure_crossdev(
     };
     let sb = sandbox::Sandbox::open(sd)?;
     sb.prepare(mirror, defaults_root, false)?;
+    Ok(sb)
+}
+
+/// Ensure the sandbox exists, is prepared, and has crossdev for `arch`.
+pub async fn ensure_crossdev(
+    ws: &Workspace,
+    sandbox_name: Option<&str>,
+    arch: &str,
+    board_cfg: &board::BoardConfig,
+    defaults_root: &Utf8Path,
+    mirror: Option<&str>,
+    gcc_version: Option<&str>,
+) -> Result<sandbox::Sandbox> {
+    let sb = ensure_sandbox(ws, sandbox_name, defaults_root, mirror).await?;
     sb.setup_crossdev(ws, arch, board_cfg, gcc_version)?;
     Ok(sb)
 }

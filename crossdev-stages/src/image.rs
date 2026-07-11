@@ -6,6 +6,7 @@ use crate::board::BoardConfig;
 use crate::container::SandboxRunner;
 use crate::error::{Error, Result};
 use crate::portage::Portage;
+use crate::provider::RootfsProvider;
 use crate::sandbox::Sandbox;
 use crate::target::Target;
 use crate::workspace::Workspace;
@@ -387,26 +388,19 @@ fn board_binpkgs_dir(ws: &Workspace, board: &BoardConfig) -> Result<Utf8PathBuf>
     Ok(dir)
 }
 
-fn default_deps(
-    _runner: &SandboxRunner,
-    ws: &Workspace,
+/// Host-side sandbox extras from boards/<name>/sandbox-packages.txt.
+/// Provider-independent: provider bodies and hook scripts alike need
+/// their host tools (grub, debootstrap, …) present in the sandbox.
+fn install_sandbox_extras(
     sandbox: &Sandbox,
-    target: &Target,
     board: &BoardConfig,
     boards_root: &Utf8Path,
-    defaults_root: &Utf8Path,
 ) -> Result<()> {
-    // A wrong atom is otherwise only found by emerge, which gets there after
-    // the sandbox list has already been built -- ten minutes of compiling
-    // thrown away over a package that was renamed.  The repos are plain
-    // directories on the host, so the same question costs a stat().
+    // Defaults are already installed during prepare; only the board's own
+    // extras (e.g. grub for pentium-mmx) need emerging here.  merge() with
+    // an empty base means a `-atom` line here can only cancel the board's
+    // own extras, never uninstall a prepare-time default.
     let board_dir = boards_root.join(&board.name);
-    check_package_lists(sandbox, board, &board_dir, defaults_root)?;
-
-    // Sandbox extras: defaults are already installed during prepare; only the
-    // board's own extras (e.g. grub for pentium-mmx) need emerging here.
-    // merge() with an empty base means a `-atom` line here can only cancel
-    // the board's own extras, never uninstall a prepare-time default.
     let board_sandbox = crate::package_list::merge(
         Vec::new(),
         crate::package_list::read_optional(&board_dir.join("sandbox-packages.txt"))?,
@@ -425,7 +419,19 @@ fn default_deps(
         let portage = Portage::new(&host_runner);
         portage.emerge(&crate::package_list::atoms(&board_sandbox))?;
     }
+    Ok(())
+}
 
+fn default_deps(
+    _runner: &SandboxRunner,
+    ws: &Workspace,
+    sandbox: &Sandbox,
+    target: &Target,
+    board: &BoardConfig,
+    boards_root: &Utf8Path,
+    defaults_root: &Utf8Path,
+) -> Result<()> {
+    let board_dir = boards_root.join(&board.name);
     // Target packages: defaults UNION board extras MINUS board `-atom` lines.
     let target_pkgs = crate::package_list::merge(
         crate::package_list::read_required(&defaults_root.join("target-packages.txt"))?,
@@ -697,16 +703,8 @@ fn default_assemble(
     board: &BoardConfig,
     build: &Build,
     ws: &Workspace,
+    kernel_built: bool,
 ) -> Result<()> {
-    let karch =
-        board
-            .kernel_arch
-            .as_deref()
-            .ok_or_else(|| crate::error::Error::BoardConfigParse {
-                file: board.name.clone(),
-                msg: "KERNEL_ARCH required for assemble".into(),
-            })?;
-
     // Start from nothing.  `cp -a /target/.` merges, so anything an earlier
     // build of this same tree put here outlives being taken back out -- a
     // service dropped from the board's list, a package.mask deleted from the
@@ -725,11 +723,35 @@ fn default_assemble(
          chmod 1777 /build/gen/root/tmp",
     )?;
 
-    runner.run(&format!(
-        "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} \
-         INSTALL_MOD_PATH=/build/gen/root modules_install",
-        cc = board.cross_compile,
-    ))?;
+    // Rootfs-only pipelines (no kernel step, no /build/linux) skip the
+    // kernel install; a kernel built in an earlier `--steps kernel`
+    // invocation of the same build dir still installs.
+    if kernel_built {
+        let karch =
+            board
+                .kernel_arch
+                .as_deref()
+                .ok_or_else(|| crate::error::Error::BoardConfigParse {
+                    file: board.name.clone(),
+                    msg: "KERNEL_ARCH required for assemble".into(),
+                })?;
+
+        runner.run(&format!(
+            "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} \
+             INSTALL_MOD_PATH=/build/gen/root modules_install",
+            cc = board.cross_compile,
+        ))?;
+
+        if let Some(dtb_glob) = &board.kernel_dtb_glob {
+            runner.run(&format!("cp /build/linux/{dtb_glob} /build/gen/boot/"))?;
+        }
+
+        if let Some(kname) = &board.kernel_name {
+            runner.run(&format!(
+                "cp /build/linux/arch/{karch}/boot/{kname} /build/gen/boot/"
+            ))?;
+        }
+    }
 
     // Firmware, in the two shapes a board actually has.  Every board carrying
     // any firmware at all used to write these same few lines into its own
@@ -762,21 +784,13 @@ fn default_assemble(
         ))?;
     }
 
-    if let Some(dtb_glob) = &board.kernel_dtb_glob {
-        runner.run(&format!("cp /build/linux/{dtb_glob} /build/gen/boot/"))?;
-    }
-
-    if let Some(kname) = &board.kernel_name {
-        runner.run(&format!(
-            "cp /build/linux/arch/{karch}/boot/{kname} /build/gen/boot/"
-        ))?;
-    }
-
     if board.extlinux {
         runner.run(&extlinux_conf(board)?)?;
     }
 
-    os_config_openrc(runner, board)?;
+    if board.rootfs_provider == RootfsProvider::Gentoo {
+        os_config_openrc(runner, board)?;
+    }
 
     if let Some(dracut_modules) = &board.dracut_modules {
         runner.run(&format!(
@@ -972,27 +986,31 @@ pub fn build(
     let mut manifest = crate::manifest::ManifestBuilder::new(board);
     warn_unpinned_sources(board);
 
-    // Refresh the target's make.conf with the board's CFLAGS before any
-    // step runs so cross-emerges in `deps`, `kernel`, etc. all see the
-    // same flags the board declares.  Cheap and idempotent; recovers from
-    // targets unpacked elsewhere or built against a different board.
-    let board_cflags = board.effective_cflags();
-    let gcc_spec = sandbox.gcc_spec_for(board, None)?;
-    target.prepare_portage_with_cflags(ws, &board.chost(), &board_cflags, &gcc_spec)?;
-    let (canonical, _) = crate::cflags::canonicalize(&board_cflags);
-    let hash = crate::cflags::toolchain_key(board);
-    tracing::info!("Target make.conf CFLAGS={canonical:?} (key {hash})");
+    let provider = board.rootfs_provider;
+    if provider == RootfsProvider::Gentoo {
+        // Refresh the target's make.conf with the board's CFLAGS before any
+        // step runs so cross-emerges in `deps`, `kernel`, etc. all see the
+        // same flags the board declares.  Cheap and idempotent; recovers from
+        // targets unpacked elsewhere or built against a different board.
+        // Other providers own /target -- no portage config is written into it.
+        let board_cflags = board.effective_cflags();
+        let gcc_spec = sandbox.gcc_spec_for(board, None)?;
+        target.prepare_portage_with_cflags(ws, &board.chost(), &board_cflags, &gcc_spec)?;
+        let (canonical, _) = crate::cflags::canonicalize(&board_cflags);
+        let hash = crate::cflags::toolchain_key(board);
+        tracing::info!("Target make.conf CFLAGS={canonical:?} (key {hash})");
 
-    // Say what the binary package cache is and how the toolchain has moved
-    // since it was last written to.  Advisory: nothing here invalidates the
-    // cache, because a stamp that triggers rebuilds is only a cache key with
-    // worse ergonomics.  If the drift produced something the board cannot
-    // load, the ABI check at the end of assemble says so against the image.
-    let _ = crate::binpkg_meta::report(
-        &board_binpkgs_dir(ws, board)?,
-        &ws.store_dir()
-            .join(crate::workspace::store_key(&board.chost(), &hash, &gcc_spec)),
-    );
+        // Say what the binary package cache is and how the toolchain has moved
+        // since it was last written to.  Advisory: nothing here invalidates the
+        // cache, because a stamp that triggers rebuilds is only a cache key with
+        // worse ergonomics.  If the drift produced something the board cannot
+        // load, the ABI check at the end of assemble says so against the image.
+        let _ = crate::binpkg_meta::report(
+            &board_binpkgs_dir(ws, board)?,
+            &ws.store_dir()
+                .join(crate::workspace::store_key(&board.chost(), &hash, &gcc_spec)),
+        );
+    }
 
     // Per-(chost, cflags-hash) binpkg dir bind-mounted at /binpkgs.
     // PKGDIR=/binpkgs lives in the crossdev prefix make.conf (the config
@@ -1004,6 +1022,10 @@ pub fn build(
         Some(s) => s.iter().map(String::as_str).collect(),
         None => board.effective_build_steps(),
     };
+
+    // Providers without a cross-emerge payload skip the toolchain store
+    // entirely (it may not exist); their runners are plain sandbox runners.
+    let needs_toolchain = provider.needs_cross_toolchain(&steps_to_run);
 
     let total = steps_to_run.len();
     let build_start = std::time::Instant::now();
@@ -1017,16 +1039,39 @@ pub fn build(
         // /usr/<chost>/.  Pure-userspace steps (checkout, assemble, pack)
         // don't, but the overlay costs nothing to mount, so always use
         // runner_for_board for consistency.
-        let runner = sandbox
-            .runner_for_board(ws, &board.arch, board)?
-            .with_target(&target.dir)
-            .with_build(&bld.dir, &project_root(boards_root))
-            .with_cache(ws.base())
-            .with_binpkgs(&binpkgs_dir);
+        let runner = if needs_toolchain {
+            sandbox.runner_for_board(ws, &board.arch, board)?
+        } else {
+            sandbox.runner()
+        }
+        .with_target(&target.dir)
+        .with_build(&bld.dir, &project_root(boards_root))
+        .with_cache(ws.base())
+        .with_binpkgs(&binpkgs_dir);
 
         let result = match *step {
             "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board, |_r| {
-                default_deps(_r, ws, sandbox, target, board, boards_root, defaults_root)
+                // A wrong atom is otherwise only found by emerge, which gets
+                // there after the sandbox list has already been built -- ten
+                // minutes of compiling thrown away over a package that was
+                // renamed.  The repos are plain directories on the host, so
+                // the same question costs a stat().  Provider-independent:
+                // the sandbox is a Gentoo stage3 whatever fills the image.
+                check_package_lists(
+                    sandbox,
+                    board,
+                    &boards_root.join(&board.name),
+                    defaults_root,
+                )?;
+                install_sandbox_extras(sandbox, board, boards_root)?;
+                match provider {
+                    RootfsProvider::Gentoo => {
+                        default_deps(_r, ws, sandbox, target, board, boards_root, defaults_root)
+                    }
+                    // No default package installation; override-deps.sh
+                    // (already handled by run_step) is the provider.
+                    RootfsProvider::None => Ok(()),
+                }
             }),
             "checkout" => run_step(
                 "checkout",
@@ -1056,7 +1101,11 @@ pub fn build(
                 &runner,
                 boards_root,
                 board,
-                |r| default_assemble(r, board, &bld, ws),
+                |r| {
+                    let kernel_built = steps_to_run.contains(&"kernel")
+                        || bld.dir.join("linux").is_dir();
+                    default_assemble(r, board, &bld, ws, kernel_built)
+                },
             ),
             "pack" => run_step("pack", "packed", &bld, &runner, boards_root, board, |r| {
                 default_pack(r, board, &bld, boards_root)
@@ -1122,11 +1171,14 @@ pub fn build(
     // runner so /usr/<chost>/etc/portage/make.conf resolves to the
     // store-resident prefix this build actually used, not whatever
     // legacy content the sandbox happens to carry.
-    let runner = sandbox
-        .runner_for_board(ws, &board.arch, board)?
-        .with_target(&target.dir)
-        .with_build(&bld.dir, &project_root(boards_root))
-        .with_cache(ws.base());
+    let runner = if needs_toolchain {
+        sandbox.runner_for_board(ws, &board.arch, board)?
+    } else {
+        sandbox.runner()
+    }
+    .with_target(&target.dir)
+    .with_build(&bld.dir, &project_root(boards_root))
+    .with_cache(ws.base());
     record_sources(&runner, &mut manifest, board)?;
     if manifest.has_resolved_source() {
         let manifest_path = bld.dir.join("build.lock.toml");

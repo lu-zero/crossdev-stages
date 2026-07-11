@@ -27,7 +27,9 @@ pub fn run(
 
     // Both are optional: a board that has never been built still has a
     // toolchain worth poking at, and that is often exactly when you want one.
-    if let Ok(dir) = ws.resolve_target_for_arch(None, &board_cfg.arch) {
+    if let Ok(dir) =
+        ws.resolve_target_for_arch(None, &board_cfg.arch, board_cfg.rootfs_provider.name())
+    {
         runner = runner.with_target(&dir);
     }
     let build_dir = ws.builds_dir().join(board_name);

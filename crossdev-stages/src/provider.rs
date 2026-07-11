@@ -29,6 +29,32 @@ impl RootfsProvider {
         }
     }
 
+    /// Whether image builds need the crossdev toolchain store.  Gentoo
+    /// always does (`deps` cross-emerges into /target); other providers
+    /// only when a step compiles target code.
+    pub fn needs_cross_toolchain(&self, steps: &[&str]) -> bool {
+        match self {
+            Self::Gentoo => true,
+            Self::None => steps
+                .iter()
+                .any(|s| matches!(*s, "kernel" | "bootloader")),
+        }
+    }
+
+    /// Whether `/target` is seeded from a Gentoo stage3 tarball.
+    pub fn provisions_stage3(&self) -> bool {
+        matches!(self, Self::Gentoo)
+    }
+
+    /// The board.conf value for this provider; also recorded as the
+    /// target dir's `.provider` marker so targets are never shared
+    /// across providers.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Gentoo => "gentoo",
+            Self::None => "none",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -45,5 +71,25 @@ mod tests {
     #[test]
     fn default_is_gentoo() {
         assert_eq!(RootfsProvider::default(), RootfsProvider::Gentoo);
+    }
+
+    #[test]
+    fn name_round_trips_through_parse() {
+        for p in [RootfsProvider::Gentoo, RootfsProvider::None] {
+            assert_eq!(RootfsProvider::parse(p.name()), Some(p));
+        }
+    }
+
+    #[test]
+    fn gentoo_always_needs_toolchain() {
+        assert!(RootfsProvider::Gentoo.needs_cross_toolchain(&["assemble", "pack"]));
+    }
+
+    #[test]
+    fn none_needs_toolchain_only_for_compiled_steps() {
+        let p = RootfsProvider::None;
+        assert!(!p.needs_cross_toolchain(&["deps", "assemble", "pack"]));
+        assert!(p.needs_cross_toolchain(&["kernel", "assemble", "pack"]));
+        assert!(p.needs_cross_toolchain(&["bootloader", "pack"]));
     }
 }
