@@ -27,8 +27,10 @@ app-editors/vim
 sys-process/htop
 app-misc/fastfetch
 
-# Disk utilities
+# Disk utilities (grow-rootfs needs parted to resize and sgdisk to
+# relocate the GPT backup after dd-ing an image to a larger disk)
 sys-block/parted
+sys-apps/gptfdisk
 
 # Dev / diagnostics
 dev-vcs/git
