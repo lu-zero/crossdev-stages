@@ -245,7 +245,9 @@ by `uboot`.
 | `BOOT_APPEND` | no | Kernel arguments added to that entry |
 | `BOOT_DTB_NAME` | no | DTB to boot, when `BOARD_DTB_GLOB` matches more than one |
 | `ISA_STRICT` | no | `false` downgrades an unrunnable binary to a warning (default: fail) |
-| `ROOTFS_PROVIDER` | no | Who fills the image rootfs: `gentoo` (default; stage3 + cross-emerge + OpenRC) or `none` (board hooks own it) |
+| `ROOTFS_PROVIDER` | no | Who fills the image rootfs: `gentoo` (default; stage3 + cross-emerge + OpenRC), `debian` (debootstrap + systemd), or `none` (board hooks own it) |
+| `DEBIAN_SUITE` | no | debian provider: suite to debootstrap (default `stable`) |
+| `DEBIAN_MIRROR` | no | debian provider: mirror URL (default `https://deb.debian.org/debian`) |
 | `OPENSBI_FW_TYPE` | no | OpenSBI firmware type: `dynamic` (default), `jump`, `payload` |
 | `OPENSBI_MAKE_FLAGS` | no | Extra opensbi make arguments |
 | `U_BOOT_MAKE_FLAGS` | no | Extra u-boot make arguments |
