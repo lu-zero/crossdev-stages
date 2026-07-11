@@ -810,6 +810,12 @@ fn default_assemble(
 
     runner.run("mkdir -p /build/gen/root /build/gen/boot")?;
     runner.run("cp -a /target/. /build/gen/root/")?;
+    // Workspace bookkeeping markers must not ship in the image.
+    runner.run(
+        "rm -f /build/gen/root/.arch /build/gen/root/.stage3 \
+         /build/gen/root/.provider /build/gen/root/.stage1 \
+         /build/gen/root/.updated /build/gen/root/.debootstrap-done",
+    )?;
     // unpack_tarball excludes ./dev to avoid permission errors in rootless containers.
     // Recreate the empty mount-point directories so the kernel can mount devtmpfs,
     // procfs, sysfs and tmpfs at boot.
