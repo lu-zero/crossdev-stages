@@ -1,0 +1,2 @@
+# Installed by debootstrap --include during the second stage.
+openssh-server
