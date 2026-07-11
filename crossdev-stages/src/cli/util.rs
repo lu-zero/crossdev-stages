@@ -95,6 +95,7 @@ pub fn default_board_config(arch: &str) -> board::BoardConfig {
                 .unwrap_or_else(|_| format!("{arch}-unknown-linux-gnu"))
         ),
         kernel_arch: None,
+        rootfs_provider: crate::provider::RootfsProvider::default(),
         opensbi_repo: None,
         opensbi_tag: None,
         opensbi_platform: None,
