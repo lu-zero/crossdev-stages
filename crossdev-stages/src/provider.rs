@@ -14,6 +14,11 @@ pub enum RootfsProvider {
     /// board target-package lists; `assemble` writes OpenRC config.
     #[default]
     Gentoo,
+    /// Debian rootfs built by debootstrap inside the sandbox during the
+    /// `deps` step; `assemble` writes systemd config.  The foreign-arch
+    /// second stage runs in a chroot, which needs qemu-user binfmt (with
+    /// the F flag) registered on the host.
+    Debian,
     /// Nothing is seeded, installed, or configured — board hooks
     /// (`override-deps.sh`, `post-assemble.sh`, …) fill the rootfs.
     None,
@@ -24,6 +29,7 @@ impl RootfsProvider {
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "gentoo" => Some(Self::Gentoo),
+            "debian" => Some(Self::Debian),
             "none" => Some(Self::None),
             _ => Option::None,
         }
@@ -35,7 +41,7 @@ impl RootfsProvider {
     pub fn needs_cross_toolchain(&self, steps: &[&str]) -> bool {
         match self {
             Self::Gentoo => true,
-            Self::None => steps
+            Self::Debian | Self::None => steps
                 .iter()
                 .any(|s| matches!(*s, "kernel" | "bootloader")),
         }
@@ -52,8 +58,21 @@ impl RootfsProvider {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Gentoo => "gentoo",
+            Self::Debian => "debian",
             Self::None => "none",
         }
+    }
+}
+
+/// Debian's name for a Gentoo-style arch string.  Debian's i386 port
+/// requires i686, so sub-i686 x86 boards have no Debian port.
+pub fn debian_arch(arch: &str) -> Option<&'static str> {
+    match arch {
+        "riscv64" => Some("riscv64"),
+        "aarch64" => Some("arm64"),
+        "x86_64" => Some("amd64"),
+        "i686" => Some("i386"),
+        _ => None,
     }
 }
 
@@ -64,8 +83,9 @@ mod tests {
     #[test]
     fn parse_known_values() {
         assert_eq!(RootfsProvider::parse("gentoo"), Some(RootfsProvider::Gentoo));
+        assert_eq!(RootfsProvider::parse("debian"), Some(RootfsProvider::Debian));
         assert_eq!(RootfsProvider::parse("none"), Some(RootfsProvider::None));
-        assert_eq!(RootfsProvider::parse("debian"), Option::None);
+        assert_eq!(RootfsProvider::parse("fedora"), Option::None);
     }
 
     #[test]
@@ -91,5 +111,15 @@ mod tests {
         assert!(!p.needs_cross_toolchain(&["deps", "assemble", "pack"]));
         assert!(p.needs_cross_toolchain(&["kernel", "assemble", "pack"]));
         assert!(p.needs_cross_toolchain(&["bootloader", "pack"]));
+    }
+
+    #[test]
+    fn debian_arch_mapping() {
+        assert_eq!(super::debian_arch("riscv64"), Some("riscv64"));
+        assert_eq!(super::debian_arch("aarch64"), Some("arm64"));
+        assert_eq!(super::debian_arch("x86_64"), Some("amd64"));
+        assert_eq!(super::debian_arch("i686"), Some("i386"));
+        assert_eq!(super::debian_arch("i586"), Option::None);
+        assert_eq!(super::debian_arch("riscv32"), Option::None);
     }
 }

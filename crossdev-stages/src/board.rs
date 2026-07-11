@@ -19,6 +19,8 @@ pub struct BoardConfig {
     pub cross_compile: String,     // e.g. "riscv64-unknown-linux-gnu-"
     pub kernel_arch: Option<String>, // e.g. "riscv", "arm64", "x86" — required for image builds
     pub rootfs_provider: RootfsProvider, // ROOTFS_PROVIDER; absent → Gentoo
+    pub debian_suite: Option<String>,    // DEBIAN_SUITE; debian provider, None → "stable"
+    pub debian_mirror: Option<String>,   // DEBIAN_MIRROR; debian provider, None → deb.debian.org
 
     // OpenSBI
     pub opensbi_repo: Option<String>,
@@ -295,10 +297,12 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         rootfs_provider: match kv.get("ROOTFS_PROVIDER") {
             Some(v) => RootfsProvider::parse(v).ok_or_else(|| Error::BoardConfigParse {
                 file: path.to_string(),
-                msg: format!("unknown ROOTFS_PROVIDER '{v}' (valid: gentoo, none)"),
+                msg: format!("unknown ROOTFS_PROVIDER '{v}' (valid: gentoo, debian, none)"),
             })?,
             None => RootfsProvider::default(),
         },
+        debian_suite: kv.get("DEBIAN_SUITE").cloned(),
+        debian_mirror: kv.get("DEBIAN_MIRROR").cloned(),
 
         opensbi_repo: kv.get("OPENSBI_REPO").cloned(),
         opensbi_tag: kv.get("OPENSBI_TAG").cloned(),
