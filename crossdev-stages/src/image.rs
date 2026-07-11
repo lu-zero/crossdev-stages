@@ -776,6 +776,30 @@ fn default_assemble(
         runner.run(&extlinux_conf(board)?)?;
     }
 
+    os_config_openrc(runner, board)?;
+
+    if let Some(dracut_modules) = &board.dracut_modules {
+        runner.run(&format!(
+            "kver=$(ls /build/gen/root/lib/modules/ | head -1) && \
+             [ -n \"$kver\" ] && \
+             dracutbasedir=/usr/lib/dracut \
+             DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
+               dracut -f --no-early-microcode --no-kernel \
+                 -m '{dracut_modules}' --gzip \
+                 --sysroot /build/gen/root \
+                 --tmpdir /tmp \
+                 /build/gen/boot/initramfs.img \"$kver\""
+        ))?;
+    }
+
+    runner.run("/usr/local/bin/ldconfig -v -r /build/gen/root")
+}
+
+/// OpenRC configuration of the assembled rootfs: runlevels, first-boot
+/// grow-rootfs service, BOOT_SERVICES symlinks, hostname, serial getty,
+/// empty root password, permissive sshd.  Gentoo-provider only; other
+/// rootfs providers configure their OS in their own way.
+fn os_config_openrc(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     runner
         .run("mkdir -p /build/gen/root/etc/runlevels/{boot,default,nonetwork,shutdown,sysinit}")?;
 
@@ -851,23 +875,7 @@ fn default_assemble(
         "mkdir -p /build/gen/root/etc/ssh && \
          printf 'PermitRootLogin yes\nPermitEmptyPasswords yes\nStrictModes yes\n' \
          >> /build/gen/root/etc/ssh/sshd_config",
-    )?;
-
-    if let Some(dracut_modules) = &board.dracut_modules {
-        runner.run(&format!(
-            "kver=$(ls /build/gen/root/lib/modules/ | head -1) && \
-             [ -n \"$kver\" ] && \
-             dracutbasedir=/usr/lib/dracut \
-             DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
-               dracut -f --no-early-microcode --no-kernel \
-                 -m '{dracut_modules}' --gzip \
-                 --sysroot /build/gen/root \
-                 --tmpdir /tmp \
-                 /build/gen/boot/initramfs.img \"$kver\""
-        ))?;
-    }
-
-    runner.run("/usr/local/bin/ldconfig -v -r /build/gen/root")
+    )
 }
 
 fn default_pack(
