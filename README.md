@@ -39,7 +39,7 @@ Commands:
   image     Build board images
   stages    List or download Gentoo stage3 tarballs
   board     Manage and inspect boards
-  maint     Maintenance: cleanup, logs, diagnostics
+  maint     Maintenance: clean, logs, diagnostics
   status    Show overview of sandboxes, targets, builds, and boards
 
 Options:
@@ -78,7 +78,11 @@ crossdev-stages status
 crossdev-stages image export --board <BOARD> -o /tmp/
 
 # Clean up stale builds and old stage3 tarballs
-crossdev-stages maint cleanup
+crossdev-stages maint clean
+
+# Wipe whole categories (replaces sudo rm -rf ~/.cache/crossdev-stages)
+crossdev-stages maint clean --sandboxes --targets
+crossdev-stages maint clean --all
 ```
 
 ### Source cache
