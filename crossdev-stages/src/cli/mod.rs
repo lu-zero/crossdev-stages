@@ -117,6 +117,9 @@ pub enum SandboxCmd {
         /// Sandbox name (default: most-recently-modified).
         #[arg(long)]
         name: Option<String>,
+        /// Configure portage and sync the tree, but do not install host packages.
+        #[arg(long)]
+        bare: bool,
     },
     /// Set up the crossdev cross-compiler toolchain inside a sandbox.
     Crossdev {

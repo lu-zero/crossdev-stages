@@ -7,7 +7,7 @@ use portage_atom::Version as PortageVersion;
 use crate::board::BoardConfig;
 use crate::container::{destroy_dir, recover_mounts_for_removal, unpack_tarball, SandboxRunner};
 use crate::error::{Error, Result};
-use crate::portage::{install_host_deps, MakeConf};
+use crate::portage::{install_host_deps, sync_portage_tree, MakeConf};
 use crate::stage::gentoo_profile;
 use crate::workspace::Workspace;
 
@@ -45,10 +45,16 @@ impl Sandbox {
     }
 
     /// Configure portage and install host build dependencies.
-    /// Idempotent: skips if `.prepared` marker exists.
-    pub fn prepare(&self, mirror: Option<&str>) -> Result<()> {
+    /// Idempotent: skips if `.prepared` marker exists (or `.prepared-bare` when `bare`).
+    ///
+    /// With `bare`, writes `make.conf` and syncs the portage tree but does not emerge packages.
+    pub fn prepare(&self, mirror: Option<&str>, bare: bool) -> Result<()> {
         if self.dir.join(".prepared").exists() {
             tracing::info!("Sandbox already prepared, skipping.");
+            return Ok(());
+        }
+        if bare && self.dir.join(".prepared-bare").exists() {
+            tracing::info!("Sandbox already bare-prepared, skipping.");
             return Ok(());
         }
         tracing::info!("Configuring portage…");
@@ -61,11 +67,17 @@ impl Sandbox {
         }
         .write(&self.dir.join("etc/portage"))?;
 
-        tracing::info!("Installing host dependencies…");
-        install_host_deps(&self.runner())?;
-
-        std::fs::write(self.dir.join(".prepared"), "")?;
-        tracing::info!("Sandbox prepared.");
+        if bare {
+            sync_portage_tree(&self.runner())?;
+            std::fs::write(self.dir.join(".prepared-bare"), "")?;
+            tracing::info!("Sandbox bare-prepared.");
+        } else {
+            tracing::info!("Installing host dependencies…");
+            install_host_deps(&self.runner())?;
+            std::fs::write(self.dir.join(".prepared"), "")?;
+            let _ = std::fs::remove_file(self.dir.join(".prepared-bare"));
+            tracing::info!("Sandbox prepared.");
+        }
         Ok(())
     }
 
@@ -483,11 +495,13 @@ pub fn list(ws: &Workspace) -> Result<Vec<SandboxInfo>> {
         .map(|dir| {
             let arch = crate::workspace::read_arch(&dir).unwrap_or_else(|| "unknown".into());
             let prepared = dir.join(".prepared").exists();
+            let bare_prepared = dir.join(".prepared-bare").exists();
             let name = dir.file_name().unwrap_or("").to_string();
             SandboxInfo {
                 name,
                 arch,
                 prepared,
+                bare_prepared,
             }
         })
         .collect())
@@ -497,4 +511,5 @@ pub struct SandboxInfo {
     pub name: String,
     pub arch: String,
     pub prepared: bool,
+    pub bare_prepared: bool,
 }

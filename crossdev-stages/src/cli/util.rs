@@ -27,7 +27,7 @@ pub async fn ensure_crossdev(
         }
     };
     let sb = sandbox::Sandbox::open(sd)?;
-    sb.prepare(mirror)?;
+    sb.prepare(mirror, false)?;
     sb.setup_crossdev(arch, board_cfg, gcc_version)?;
     Ok(sb)
 }

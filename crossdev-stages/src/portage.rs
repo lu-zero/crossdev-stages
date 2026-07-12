@@ -189,8 +189,8 @@ impl<'a> Portage<'a> {
     }
 }
 
-/// Install all host-side dependencies required for cross-compilation.
-pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
+/// Sync the portage tree inside a sandbox (emerge-webrsync, signing keys).
+pub fn sync_portage_tree(runner: &SandboxRunner) -> Result<()> {
     let portage = Portage::new(runner);
 
     tracing::info!("Syncing portage tree…");
@@ -198,6 +198,13 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
     let _ = portage.getuto();
 
     runner.run("chown -R portage:portage /etc/portage/gnupg")?;
+    Ok(())
+}
+
+/// Install all host-side dependencies required for cross-compilation.
+pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
+    sync_portage_tree(runner)?;
+    let portage = Portage::new(runner);
 
     let bin_packages = ["app-arch/zstd", "app-arch/bzip2", "app-arch/xz-utils"];
     tracing::info!("Installing binary packages…");

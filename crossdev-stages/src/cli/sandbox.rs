@@ -12,7 +12,13 @@ pub async fn run(
     match cmd {
         SandboxCmd::List => {
             for s in sandbox::list(ws)? {
-                let state = if s.prepared { "prepared" } else { "unpacked" };
+                let state = if s.prepared {
+                    "prepared"
+                } else if s.bare_prepared {
+                    "bare"
+                } else {
+                    "unpacked"
+                };
                 println!("{:<20} arch={} state={}", s.name, s.arch, state);
             }
         }
@@ -24,10 +30,10 @@ pub async fn run(
             sandbox::Sandbox::create(ws, &name, &arch, &source_stage)?;
             println!("Sandbox '{name}' created.");
         }
-        SandboxCmd::Prepare { name } => {
+        SandboxCmd::Prepare { name, bare } => {
             let dir = ws.resolve_sandbox(name.as_deref())?;
             let sb = sandbox::Sandbox::open(dir)?;
-            sb.prepare(mirror)?;
+            sb.prepare(mirror, bare)?;
         }
         SandboxCmd::Crossdev {
             arch,

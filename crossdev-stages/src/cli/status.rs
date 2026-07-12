@@ -12,7 +12,13 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
     if tty {
         println!("Sandboxes ({}):", sandboxes.len());
         for s in &sandboxes {
-            let state = if s.prepared { "prepared" } else { "unpacked" };
+            let state = if s.prepared {
+                "prepared"
+            } else if s.bare_prepared {
+                "bare"
+            } else {
+                "unpacked"
+            };
             println!("  {:<20} {:<10} {}", s.name, s.arch, state);
         }
         println!("\nBoards ({}):", boards.len());
@@ -42,7 +48,13 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
         }
     } else {
         for s in &sandboxes {
-            let state = if s.prepared { "prepared" } else { "unpacked" };
+            let state = if s.prepared {
+                "prepared"
+            } else if s.bare_prepared {
+                "bare"
+            } else {
+                "unpacked"
+            };
             println!("sandbox\t{}\t{}\t{}", s.name, s.arch, state);
         }
         for name in &boards {
