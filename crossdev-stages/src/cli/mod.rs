@@ -298,4 +298,6 @@ pub enum MaintCmd {
     },
     /// Check environment for common issues.
     Doctor,
+    /// Unmount stale hakoniwa bind mounts left after a crashed sandbox session.
+    Recover,
 }

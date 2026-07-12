@@ -13,6 +13,7 @@ pub fn run(
         MaintCmd::Clean(args) => clean(ws, args, dry_run),
         MaintCmd::Logs { board, step } => logs(ws, &board, step.as_deref()),
         MaintCmd::Doctor => doctor(ws, boards_root),
+        MaintCmd::Recover => recover(ws, dry_run),
     }
 }
 
@@ -133,6 +134,7 @@ fn clean_category(
             let name = path.file_name().unwrap_or("?");
             let size = du(&path);
             if dry_run {
+                container::recover_mounts_for_removal(&path, true)?;
                 println!("Would remove {singular}: {name} ({})", human(size));
             } else {
                 remove_entry(&path, ws.base())?;
@@ -155,11 +157,28 @@ fn clean_category(
 /// subordinate uids (portage etc.), so remove them via `rm -rf` inside a
 /// container with the full subuid/gid maps.
 fn remove_entry(path: &Utf8Path, cache_base: &Utf8Path) -> Result<()> {
+    container::recover_mounts_for_removal(path, false)?;
     if std::fs::symlink_metadata(path.as_std_path())?.is_dir() {
         container::destroy_dir(path, cache_base)
     } else {
         Ok(std::fs::remove_file(path)?)
     }
+}
+
+fn recover(ws: &Workspace, dry_run: bool) -> Result<()> {
+    let count = container::recover_sandbox_mounts(ws, dry_run)?;
+    if dry_run {
+        if count == 0 {
+            println!("No stale sandbox mounts found.");
+        } else {
+            println!("{count} stale mount(s) would be unmounted.");
+        }
+    } else if count == 0 {
+        println!("No stale sandbox mounts found.");
+    } else {
+        println!("Recovered {count} stale mount(s).");
+    }
+    Ok(())
 }
 
 /// Approximate disk usage (apparent size); unreadable entries count as 0.
@@ -284,9 +303,21 @@ fn doctor(ws: &Workspace, boards_root: &camino::Utf8Path) -> Result<()> {
         !boards.is_empty()
     );
 
+    let stale_mounts = container::find_stale_sandbox_mounts(ws).unwrap_or_default();
+    check!("no stale sandbox mounts", stale_mounts.is_empty());
+    for mount in &stale_mounts {
+        println!("      stale: {} ({})", mount.path, mount.sandbox);
+    }
+
     println!("\n{ok} ok, {fail} issues");
     if fail > 0 {
-        println!("Run 'crossdev-stages sandbox setup' and 'sandbox prepare' to fix.");
+        if !stale_mounts.is_empty() {
+            println!("Run 'crossdev-stages maint recover' to unmount stale sandbox mounts.");
+        }
+        if sandboxes.is_empty() || sandboxes.first().is_some_and(|d| !d.join(".prepared").exists())
+        {
+            println!("Run 'crossdev-stages sandbox setup' and 'sandbox prepare' to fix.");
+        }
     }
     Ok(())
 }

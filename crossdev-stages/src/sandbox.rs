@@ -5,7 +5,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use portage_atom::Version as PortageVersion;
 
 use crate::board::BoardConfig;
-use crate::container::{destroy_dir, unpack_tarball, SandboxRunner};
+use crate::container::{destroy_dir, recover_mounts_for_removal, unpack_tarball, SandboxRunner};
 use crate::error::{Error, Result};
 use crate::portage::{install_host_deps, MakeConf};
 use crate::stage::gentoo_profile;
@@ -469,6 +469,7 @@ pub fn destroy(ws: &Workspace, name: &str) -> Result<()> {
         return Err(crate::error::Error::SandboxNotFound(name.into()));
     }
     println!("Removing sandbox: {name}");
+    recover_mounts_for_removal(&dir, false)?;
     destroy_dir(&dir, ws.base())?;
     println!("Sandbox '{name}' removed.");
     Ok(())
