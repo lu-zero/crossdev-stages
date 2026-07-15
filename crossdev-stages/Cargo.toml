@@ -12,8 +12,8 @@ name = "crossdev-stages"
 path = "src/main.rs"
 
 [dependencies]
-hakoniwa      = "1.4"
-gentoo-stages = "0.4"
+hakoniwa      = "1.7"
+gentoo-stages = "0.5"
 camino        = "1"
 clap         = { version = "4", features = ["derive", "color"] }
 tokio        = { version = "1", features = ["full"] }
@@ -27,6 +27,6 @@ toml         = "1.1"
 chrono       = { version = "0.4", features = ["serde"] }
 num_cpus     = "1"
 libc         = "0.2"
-portage-atom = "0.5.1"
+portage-atom = "0.10"
 sha2         = "0.11.0"
 sokgi        = "0.2"
