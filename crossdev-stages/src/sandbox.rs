@@ -48,7 +48,7 @@ impl Sandbox {
     /// Idempotent: skips if `.prepared` marker exists (or `.prepared-bare` when `bare`).
     ///
     /// With `bare`, writes `make.conf` and syncs the portage tree but does not emerge packages.
-    pub fn prepare(&self, mirror: Option<&str>, bare: bool) -> Result<()> {
+    pub fn prepare(&self, mirror: Option<&str>, defaults_root: &Utf8Path, bare: bool) -> Result<()> {
         if self.dir.join(".prepared").exists() {
             tracing::info!("Sandbox already prepared, skipping.");
             return Ok(());
@@ -67,13 +67,22 @@ impl Sandbox {
         }
         .write(&self.dir.join("etc/portage"))?;
 
+        // Overlay any user-provided portage config from defaults/portage/
+        // onto the sandbox's /etc/portage/.  Lets boards declare USE flags
+        // (e.g. sys-fs/dosfstools compat) and other portage tweaks as files
+        // rather than hardcoded strings.
+        let portage_src = defaults_root.join("portage");
+        if portage_src.is_dir() {
+            copy_tree(&portage_src, &self.dir.join("etc/portage"))?;
+        }
+
         if bare {
             sync_portage_tree(&self.runner())?;
             std::fs::write(self.dir.join(".prepared-bare"), "")?;
             tracing::info!("Sandbox bare-prepared.");
         } else {
             tracing::info!("Installing host dependencies…");
-            install_host_deps(&self.runner())?;
+            install_host_deps(&self.runner(), defaults_root, &self.dir.join("etc/portage"))?;
             std::fs::write(self.dir.join(".prepared"), "")?;
             let _ = std::fs::remove_file(self.dir.join(".prepared-bare"));
             tracing::info!("Sandbox prepared.");
@@ -355,9 +364,7 @@ impl Sandbox {
         let Some(ref platforms) = board.grub_platforms else {
             return Ok(());
         };
-        let grub_mods = self
-            .dir
-            .join(format!("usr/{chost}/usr/lib/grub/i386-pc"));
+        let grub_mods = self.dir.join(format!("usr/{chost}/usr/lib/grub/i386-pc"));
         if grub_mods.exists() {
             return Ok(());
         }
@@ -368,7 +375,9 @@ impl Sandbox {
             .split_whitespace()
             .map(|p| format!("grub_platforms_{p}"))
             .collect();
-        let use_dir = self.dir.join(format!("usr/{chost}/etc/portage/package.use"));
+        let use_dir = self
+            .dir
+            .join(format!("usr/{chost}/etc/portage/package.use"));
         std::fs::create_dir_all(&use_dir)?;
         std::fs::write(
             use_dir.join("grub"),
@@ -512,4 +521,30 @@ pub struct SandboxInfo {
     pub arch: String,
     pub prepared: bool,
     pub bare_prepared: bool,
+}
+
+/// Recursively copy directory `src` into `dst`, overwriting files.
+/// Symlinks and other special entries are rejected.
+fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let from = Utf8PathBuf::try_from(entry.path()).map_err(|e| Error::CommandFailed {
+            code: 1,
+            reason: e.to_string(),
+        })?;
+        let to = dst.join(from.file_name().unwrap_or_default());
+        if kind.is_dir() {
+            copy_tree(&from, &to)?;
+        } else if kind.is_file() {
+            std::fs::copy(&from, &to)?;
+        } else {
+            return Err(Error::CommandFailed {
+                code: 1,
+                reason: format!("unsupported entry in portage overlay (symlink?): {from}"),
+            });
+        }
+    }
+    Ok(())
 }

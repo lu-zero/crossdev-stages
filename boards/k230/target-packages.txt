@@ -1,4 +1,0 @@
-# Packages to cross-install into the target sysroot for K230
-
-net-misc/openssh
-sys-apps/busybox
