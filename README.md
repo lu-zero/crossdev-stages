@@ -26,6 +26,8 @@ Rootless cross-compilation of Gentoo stages using crossdev and hakoniwa
 | odroid-m1 | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a55` | testing |
 | odroid-m1s | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a55` | testing |
 | odroid-m2 | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a76.cortex-a55` | testing |
+| odroid-c2 | aarch64 | mainline v7.0 | TFA + U-Boot + amlogic-fip | `-O2 -mcpu=cortex-a53` | testing |
+| odroid-c4 | aarch64 | mainline v7.0 | U-Boot + amlogic-fip | `-O2 -mcpu=cortex-a55` | testing |
 | pentium-mmx | i586 | mainline v6.12 | BIOS (no firmware) | `-O2 -march=pentium-mmx` | testing |
 
 ## CLI
