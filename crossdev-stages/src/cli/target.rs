@@ -2,7 +2,7 @@ use crate::cli::util::{default_board_config, ensure_crossdev, ensure_target};
 use crate::cli::TargetCmd;
 use crate::error::Result;
 use crate::{container, stage, target, workspace::Workspace};
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 
 pub async fn run(
     ws: &Workspace,
@@ -10,6 +10,7 @@ pub async fn run(
     sandbox: Option<String>,
     target_name: Option<String>,
     cmd: TargetCmd,
+    defaults_root: &Utf8Path,
     mirror: Option<&str>,
 ) -> Result<()> {
     match cmd {
@@ -51,6 +52,7 @@ pub async fn run(
                 sandbox.as_deref(),
                 &resolved_arch,
                 &default_board_config(&resolved_arch),
+                defaults_root,
                 mirror,
                 None,
             )
@@ -62,6 +64,7 @@ pub async fn run(
                 target_name.as_deref(),
                 arch.as_deref(),
                 sandbox.as_deref(),
+                defaults_root,
                 mirror,
             )
             .await?;
@@ -73,6 +76,7 @@ pub async fn run(
                 target_name.as_deref(),
                 arch.as_deref(),
                 sandbox.as_deref(),
+                defaults_root,
                 mirror,
             )
             .await?;
@@ -84,6 +88,7 @@ pub async fn run(
                 target_name.as_deref(),
                 arch.as_deref(),
                 sandbox.as_deref(),
+                defaults_root,
                 mirror,
             )
             .await?;
@@ -96,6 +101,7 @@ pub async fn run(
                 target_name.as_deref(),
                 arch.as_deref(),
                 sandbox.as_deref(),
+                defaults_root,
                 mirror,
             )
             .await?;

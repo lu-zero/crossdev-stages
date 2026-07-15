@@ -1,3 +1,5 @@
+use camino::Utf8Path;
+
 use crate::error::Result;
 use crate::workspace::Workspace;
 use crate::{board, error, sandbox, stage, target};
@@ -9,6 +11,7 @@ pub async fn ensure_crossdev(
     sandbox_name: Option<&str>,
     arch: &str,
     board_cfg: &board::BoardConfig,
+    defaults_root: &Utf8Path,
     mirror: Option<&str>,
     gcc_version: Option<&str>,
 ) -> Result<sandbox::Sandbox> {
@@ -27,7 +30,7 @@ pub async fn ensure_crossdev(
         }
     };
     let sb = sandbox::Sandbox::open(sd)?;
-    sb.prepare(mirror, false)?;
+    sb.prepare(mirror, defaults_root, false)?;
     sb.setup_crossdev(arch, board_cfg, gcc_version)?;
     Ok(sb)
 }
@@ -39,6 +42,7 @@ pub async fn ensure_target(
     target_name: Option<&str>,
     arch_override: Option<&str>,
     sandbox_name: Option<&str>,
+    defaults_root: &Utf8Path,
     mirror: Option<&str>,
 ) -> Result<(target::Target, sandbox::Sandbox)> {
     let (tgt, resolved_arch) = match ws.resolve_target(target_name) {
@@ -67,6 +71,7 @@ pub async fn ensure_target(
         sandbox_name,
         &resolved_arch,
         &default_board_config(&resolved_arch),
+        defaults_root,
         mirror,
         None,
     )
