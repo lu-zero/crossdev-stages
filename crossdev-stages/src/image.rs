@@ -133,74 +133,39 @@ fn default_deps(
     target: &Target,
     board: &BoardConfig,
     boards_root: &Utf8Path,
+    defaults_root: &Utf8Path,
 ) -> Result<()> {
-    let sandbox_pkgs = boards_root.join(&board.name).join("sandbox-packages.txt");
-    if sandbox_pkgs.exists() {
+    // Sandbox extras: defaults are already installed during prepare; only the
+    // board's own extras (e.g. grub for pentium-mmx) need emerging here.
+    // merge() with an empty base means a `-atom` line here can only cancel
+    // the board's own extras, never uninstall a prepare-time default.
+    let board_dir = boards_root.join(&board.name);
+    let board_sandbox = crate::package_list::merge(
+        Vec::new(),
+        crate::package_list::read_optional(&board_dir.join("sandbox-packages.txt"))?,
+    );
+    if !board_sandbox.is_empty() {
+        let portage_dir = sandbox.dir.join("etc/portage");
+        crate::package_list::write_accept_keywords(&board_sandbox, &portage_dir)?;
+        // USE overrides from sandbox-packages.use, e.g. "sys-boot/grub grub_platforms_pc"
+        crate::package_list::write_package_use(
+            &board_dir.join("sandbox-packages.use"),
+            &portage_dir,
+        )?;
         let host_runner = board_runner(sandbox, board);
         let portage = Portage::new(&host_runner);
-        let content = std::fs::read_to_string(&sandbox_pkgs)?;
-        let lines: Vec<&str> = content
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect();
-
-        // Write package.accept_keywords entries for packages with keyword overrides.
-        // Format: "atom [keywords]" — e.g. "sys-boot/syslinux **" or "dev-libs/foo ~amd64"
-        let accept_keywords_dir = sandbox.dir.join("etc/portage/package.accept_keywords");
-        std::fs::create_dir_all(&accept_keywords_dir)?;
-        let mut pkgs: Vec<&str> = Vec::new();
-        for line in &lines {
-            let parts: Vec<&str> = line.splitn(2, char::is_whitespace).collect();
-            let atom = parts[0];
-            pkgs.push(atom);
-            if parts.len() > 1 {
-                let keywords = parts[1].trim();
-                let safe_name = atom.replace('/', "_");
-                std::fs::write(
-                    accept_keywords_dir.join(&safe_name),
-                    format!("{atom} {keywords}\n"),
-                )?;
-            }
-        }
-
-        // Write package.use entries from sandbox-packages.use.
-        // Format: "atom use_flags..." — e.g. "sys-boot/syslinux bios -uefi"
-        let sandbox_use = boards_root.join(&board.name).join("sandbox-packages.use");
-        if sandbox_use.exists() {
-            let use_dir = sandbox.dir.join("etc/portage/package.use");
-            std::fs::create_dir_all(&use_dir)?;
-            let use_content = std::fs::read_to_string(&sandbox_use)?;
-            for line in use_content.lines() {
-                let line = line.trim();
-                if line.is_empty() || line.starts_with('#') {
-                    continue;
-                }
-                let parts: Vec<&str> = line.splitn(2, char::is_whitespace).collect();
-                let atom = parts[0];
-                let safe_name = atom.replace('/', "_");
-                std::fs::write(use_dir.join(&safe_name), format!("{line}\n"))?;
-            }
-        }
-
-        if !pkgs.is_empty() {
-            portage.emerge(&pkgs)?;
-        }
+        portage.emerge(&crate::package_list::atoms(&board_sandbox))?;
     }
 
-    let target_pkgs = boards_root.join(&board.name).join("target-packages.txt");
-    if target_pkgs.exists() {
-        let content = std::fs::read_to_string(&target_pkgs)?;
-        let pkgs: Vec<&str> = content
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect();
-        if !pkgs.is_empty() {
-            let target_runner = board_runner(sandbox, board).with_target(&target.dir);
-            let portage = Portage::new(&target_runner);
-            portage.cross_emerge(&board.chost(), &pkgs)?;
-        }
+    // Target packages: defaults UNION board extras MINUS board `-atom` lines.
+    let target_pkgs = crate::package_list::merge(
+        crate::package_list::read_required(&defaults_root.join("target-packages.txt"))?,
+        crate::package_list::read_optional(&board_dir.join("target-packages.txt"))?,
+    );
+    if !target_pkgs.is_empty() {
+        let target_runner = board_runner(sandbox, board).with_target(&target.dir);
+        let portage = Portage::new(&target_runner);
+        portage.cross_emerge(&board.chost(), &crate::package_list::atoms(&target_pkgs))?;
     }
 
     Ok(())
@@ -304,7 +269,7 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
 
     if let (Some(tty), Some(baud)) = (&board.serial_tty, &board.serial_baud) {
         runner.run(&format!(
-            "echo 'x1:12345:respawn:/sbin/agetty {baud} {tty} linux' \
+            "echo 'x1:12345:respawn:/sbin/agetty -L {baud} {tty} linux' \
              >> /build/gen/root/etc/inittab"
         ))?;
     }
@@ -407,6 +372,7 @@ pub fn build(
     target: &Target,
     board: &BoardConfig,
     boards_root: &Utf8Path,
+    defaults_root: &Utf8Path,
     steps: Option<&[String]>,
 ) -> Result<()> {
     let bld = Build::create(ws, &board.name)?;
@@ -442,7 +408,7 @@ pub fn build(
 
         let result = match *step {
             "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board, |_r| {
-                default_deps(_r, sandbox, target, board, boards_root)
+                default_deps(_r, sandbox, target, board, boards_root, defaults_root)
             }),
             "checkout" => run_step(
                 "checkout",
