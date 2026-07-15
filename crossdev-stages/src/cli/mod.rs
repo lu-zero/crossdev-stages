@@ -291,8 +291,6 @@ pub enum ImageCmd {
         /// Specific steps to run (default: all steps from board.conf).
         steps: Vec<String>,
     },
-    /// Remove incomplete builds.
-    Prune,
     /// Export the final image file from a build.
     Export {
         /// Board name.

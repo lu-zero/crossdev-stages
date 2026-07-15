@@ -135,17 +135,6 @@ pub async fn run(
                 steps_opt,
             )?;
         }
-        ImageCmd::Prune => {
-            let builds = ws.list_builds()?;
-            let mut pruned = 0;
-            for dir in builds {
-                if !dir.join(".packed").exists() {
-                    std::fs::remove_dir_all(&dir)?;
-                    pruned += 1;
-                }
-            }
-            println!("Pruned {pruned} incomplete build(s).");
-        }
         ImageCmd::Export {
             board: board_name,
             output,
