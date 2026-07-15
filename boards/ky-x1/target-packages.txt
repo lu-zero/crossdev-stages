@@ -1,6 +1,0 @@
-# Packages to cross-install into the target sysroot for KY-X1
-
-net-misc/openssh
-app-admin/metalog
-net-misc/ntp
-sys-apps/busybox
