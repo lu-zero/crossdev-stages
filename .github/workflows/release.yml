@@ -1,0 +1,61 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to promote (e.g. v2026.08)'
+        required: true
+        type: string
+
+permissions:
+  contents: write   # gh release create
+
+jobs:
+  promote:
+    name: promote latest weekly to release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pull latest weekly per board
+        env:
+          RCLONE_REMOTE: ${{ vars.RCLONE_REMOTE || 'crossdev-images' }}
+        run: |
+          set -e
+          mkdir -p release
+          # Every board with at least one weekly image gets promoted.
+          for board in $(rclone lsf "${RCLONE_REMOTE}:images/" --dirs-only --no-trailing-slash); do
+            latest=$(rclone lsf "${RCLONE_REMOTE}:images/${board}/" \
+                      --files-only --include '*.img.xz' \
+                      | sort -r | head -1)
+            [ -z "$latest" ] && continue
+            base="${latest%.img.xz}"
+            rclone copy "${RCLONE_REMOTE}:images/${board}/${latest}"          release/
+            rclone copy "${RCLONE_REMOTE}:images/${board}/${base}.manifest.json" release/ || true
+            # Rename to release form: gentoo-<tag>-<board>-<orig-stamp>.img.xz
+            new="gentoo-${{ steps.tag.outputs.name }}-${latest}"
+            mv "release/${latest}" "release/${new}"
+            [ -f "release/${base}.manifest.json" ] \
+              && mv "release/${base}.manifest.json" "release/${new%.img.xz}.manifest.json"
+          done
+          ls -lah release/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          files: release/*
+          generate_release_notes: true
+          fail_on_unmatched_files: false

@@ -1,0 +1,166 @@
+name: weekly-images
+on:
+  schedule:
+    # Mondays 03:00 UTC — one weekly cut of every production board.
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      boards:
+        description: 'Space-separated board names (empty = all production boards)'
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  pick-boards:
+    name: discover production boards
+    runs-on: ubuntu-latest
+    outputs:
+      boards: ${{ steps.pick.outputs.boards }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: pick
+        name: build JSON matrix
+        run: |
+          set -e
+          if [ -n "${{ inputs.boards }}" ]; then
+            list="${{ inputs.boards }}"
+          else
+            # Every board that does NOT mark itself TESTING="true".
+            list=$(for f in boards/*/board.conf; do
+              grep -q '^TESTING="true"' "$f" || basename "$(dirname "$f")"
+            done | tr '\n' ' ')
+          fi
+          boards=$(echo "$list" | tr ' ' '\n' | sed '/^$/d' | jq -R . | jq -sc .)
+          echo "boards=$boards" >> "$GITHUB_OUTPUT"
+          echo "Will build: $list"
+
+  build:
+    name: ${{ matrix.board }}
+    needs: pick-boards
+    if: needs.pick-boards.outputs.boards != '[]'
+    strategy:
+      fail-fast: false
+      # Serialize for now — cross-prefix is shared between boards of the
+      # same arch and CFLAGS leak between boards under the current
+      # crossdev-stages design (Phase 3 content store will lift this).
+      max-parallel: 1
+      matrix:
+        board: ${{ fromJson(needs.pick-boards.outputs.boards) }}
+    runs-on: [self-hosted, linux, x86_64, crossdev]
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Host info
+        run: |
+          uname -a
+          df -h /var/tmp /home || true
+          free -g
+
+      - name: Build crossdev-stages
+        run: cargo build --release
+
+      - name: image build
+        id: build
+        env:
+          # The runner is expected to have a Gentoo mirror + binpkg host
+          # mounted locally; these get plumbed via persistent dirs at
+          # /var/lib/crossdev-cache/ on the runner, not via this workflow.
+          GENTOO_MIRROR: ${{ vars.GENTOO_MIRROR }}
+          BINHOST_URL: ${{ vars.BINHOST_URL }}
+        run: |
+          set -e
+          args=()
+          [ -n "$GENTOO_MIRROR" ] && args+=(--mirror "$GENTOO_MIRROR")
+          [ -n "$BINHOST_URL" ] && args+=(--binhost "$BINHOST_URL")
+          # env_reset in default sudoers would point the build at
+          # /root/.cache; preserve HOME/XDG_CACHE_HOME so it lands in the
+          # runner user's cache, then reclaim ownership for the later
+          # unprivileged locate/manifest steps.
+          sudo --preserve-env=HOME,XDG_CACHE_HOME \
+            ./target/release/crossdev-stages "${args[@]}" \
+            image build --board "${{ matrix.board }}"
+          sudo chown -R "$(id -u):$(id -g)" ~/.cache/crossdev-stages/builds
+
+      - name: Locate output + manifest
+        id: out
+        run: |
+          set -e
+          # crossdev-stages writes the image to builds/<board>/.  Anchor on
+          # that exact directory so a sibling board (e.g. k1 vs k1-upstream)
+          # can't match, and sort all candidates by mtime to pick the newest.
+          img=$(find ~/.cache/crossdev-stages/builds -maxdepth 2 \
+                -path "*/builds/${{ matrix.board }}/*.img.xz" \
+                -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2-)
+          if [ -z "$img" ]; then
+            echo "::error::no image found for ${{ matrix.board }}"
+            exit 1
+          fi
+          sha=$(sha256sum "$img" | awk '{print $1}')
+          size=$(stat -c%s "$img")
+          out_dir=$(dirname "$img")
+          # Pair the manifest with the image by name so release.yml and the
+          # retention step (both keyed on <image-base>.manifest.json) find it.
+          manifest="${out_dir}/$(basename "${img%.img.xz}").manifest.json"
+          cat > "${manifest}" <<EOF
+          {
+            "board":     "${{ matrix.board }}",
+            "image":     "$(basename "$img")",
+            "sha256":    "${sha}",
+            "size":      ${size},
+            "git_commit":"${GITHUB_SHA}",
+            "git_ref":   "${GITHUB_REF}",
+            "ts":        "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+          echo "img=${img}" >> "$GITHUB_OUTPUT"
+          echo "manifest=${manifest}" >> "$GITHUB_OUTPUT"
+          echo "out_dir=${out_dir}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload to object storage
+        # B2 + Cloudflare front (zero egress).  Credentials are
+        # configured on the runner via `rclone config`; this step just
+        # invokes rclone with the destination remote.
+        env:
+          RCLONE_REMOTE: ${{ vars.RCLONE_REMOTE || 'crossdev-images' }}
+        run: |
+          set -e
+          rclone copy --progress \
+            "${{ steps.out.outputs.img }}" \
+            "${RCLONE_REMOTE}:images/${{ matrix.board }}/"
+          rclone copy \
+            "${{ steps.out.outputs.manifest }}" \
+            "${RCLONE_REMOTE}:images/${{ matrix.board }}/"
+
+      - name: Job summary
+        run: |
+          {
+            echo "## ${{ matrix.board }}"
+            echo "\`\`\`json"
+            jq . "${{ steps.out.outputs.manifest }}"
+            echo "\`\`\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain only N latest per board
+        # 8 weeks of weekly cuts = 8 images per board; everything older
+        # gets pruned from object storage to keep cost bounded.
+        env:
+          RCLONE_REMOTE: ${{ vars.RCLONE_REMOTE || 'crossdev-images' }}
+          KEEP: ${{ vars.WEEKLY_RETAIN || '8' }}
+        run: |
+          rclone lsf "${RCLONE_REMOTE}:images/${{ matrix.board }}/" \
+            --files-only --include '*.img.xz' \
+            | sort -r \
+            | tail -n +$((KEEP + 1)) \
+            | while read -r old; do
+                base="${old%.img.xz}"
+                rclone delete "${RCLONE_REMOTE}:images/${{ matrix.board }}/${old}" || true
+                rclone delete "${RCLONE_REMOTE}:images/${{ matrix.board }}/${base}.manifest.json" || true
+              done
