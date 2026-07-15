@@ -120,11 +120,28 @@ eselect repository create crossdev
 Each board lives in `boards/<name>/` with:
 - `board.conf` -- variables read by Rust and bash scripts
 - `genimage.cfg` -- disk image layout
+- `sandbox-packages.txt` -- extra host packages for the sandbox (optional)
+- `sandbox-packages.use` -- USE flags for those packages (optional)
+- `target-packages.txt` -- extra packages cross-emerged into the image (optional)
 - `pre-{step}.sh` -- runs before Rust default (optional)
 - `post-{step}.sh` -- runs after Rust default (optional)
 - `override-{step}.sh` -- replaces Rust default entirely (optional)
 
 Steps: `deps`, `checkout`, `bootloader`, `kernel`, `assemble`, `pack`
+
+Package lists in `defaults/` apply to every sandbox
+(`defaults/sandbox-packages.txt`) and every image
+(`defaults/target-packages.txt`).  The effective target set is
+`defaults/target-packages.txt` UNION `boards/<name>/target-packages.txt`
+MINUS the board's `-atom` lines (e.g. `-app-misc/fastfetch` drops a
+default) -- every part is a plain file.  Subtracting an atom not in the
+set warns and does nothing; `-atom` lines in the defaults file itself
+are an error.  Heavy extras (mold, go, cmake, rust, iw, wpa_supplicant)
+stay out of the defaults -- boards opt in via their own list.
+List lines are `atom [keywords]` -- a keyword override (e.g.
+`sys-boot/syslinux **`) lands in `etc/portage/package.accept_keywords/`.
+Portage config files under `defaults/portage/` are overlaid onto the
+sandbox's `etc/portage/` during prepare.
 
 ### Build step execution
 
