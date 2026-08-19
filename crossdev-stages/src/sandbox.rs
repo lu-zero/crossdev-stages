@@ -361,6 +361,16 @@ impl Sandbox {
         runner.run(&format!("mkdir -p /usr/{chost}/bin"))?;
         runner.run(&format!("merge-usr --root /usr/{chost}"))?;
 
+        // The prefix gets a passwd/group from acct-user/portage alone, so it
+        // knows "portage" but not "root".  Any ebuild reaching fowners with a
+        // root:<group> pair then dies at install time.
+        runner.run(&format!(
+            "grep -q '^root:' /usr/{chost}/etc/passwd 2>/dev/null || \
+             echo 'root:x:0:0:root:/root:/bin/bash' >> /usr/{chost}/etc/passwd; \
+             grep -q '^root:' /usr/{chost}/etc/group 2>/dev/null || \
+             echo 'root:x:0:' >> /usr/{chost}/etc/group"
+        ))?;
+
         tracing::info!("Running crossdev (this takes a while)…");
         let grub_ex_pkg = if board.grub_platforms.is_some() {
             " --ex-pkg sys-boot/grub"
