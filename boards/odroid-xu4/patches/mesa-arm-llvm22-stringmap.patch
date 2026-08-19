@@ -1,0 +1,16 @@
+Backport of the upstream fix, which is in mesa main but not in 26.1.x.
+
+LLVM 22 dropped llvm::StringMapIterator, and gallivm still names it in the
+DETECT_ARCH_ARM branch, so mesa fails to compile for 32-bit ARM only.
+
+--- a/src/gallium/auxiliary/gallivm/lp_bld_misc.cpp
++++ b/src/gallium/auxiliary/gallivm/lp_bld_misc.cpp
+@@ -331,7 +331,7 @@
+       llvm::sys::getHostCPUFeatures(features);
+    #endif
+
+-   for (llvm::StringMapIterator<bool> f = features.begin();
++   for (auto f = features.begin();
+         f != features.end();
+         ++f) {
+       MAttrs.push_back(((*f).second ? "+" : "-") + (*f).first().str());
