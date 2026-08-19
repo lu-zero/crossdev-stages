@@ -1,0 +1,5 @@
+# Mesa for the Mali-G610: panfrost GL + panvk Vulkan.  VIDEO_CARDS is written
+# into the crossdev prefix by pre-deps.sh.  Cross-emerge of mesa is not proven
+# yet; dropping this line leaves a bootable image with the kernel-side GPU,
+# NPU and VPU drivers still in place.
+media-libs/mesa

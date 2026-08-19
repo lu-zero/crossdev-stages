@@ -1,0 +1,3 @@
+# u-boot's mkeficapsule host tool calls gnutls_pkcs11_*, which Gentoo's gnutls
+# only provides with USE=pkcs11; without it the tools link fails.
+net-libs/gnutls
