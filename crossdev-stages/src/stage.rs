@@ -15,6 +15,9 @@ pub fn gentoo_arch(arch: &str) -> Result<&'static str> {
     Ok(match arch {
         "x86_64" => "amd64",
         "aarch64" => "arm64",
+        // 32-bit ARM: Gentoo's keyword is "arm" for every subarch
+        // (armv4tl … armv7a); the subarch only picks the profile.
+        a if a.starts_with("armv") => "arm",
         a if a.starts_with("riscv") => "riscv",
         a if is_ix86(a) => "x86",
         other => {
@@ -27,9 +30,16 @@ pub fn gentoo_arch(arch: &str) -> Result<&'static str> {
 /// x86 32-bit uses the "pc" vendor (Gentoo convention); others use "unknown".
 /// riscv32 uses musl libc (no Gentoo glibc rv32 stage3 exists).
 pub fn chost_for_arch(arch: &str) -> Result<String> {
-    let vendor = if is_ix86(arch) { "pc" } else { "unknown" };
-    let libc = if arch == "riscv32" { "musl" } else { "gnu" };
-    Ok(format!("{arch}-{vendor}-linux-{libc}"))
+    Ok(match arch {
+        // Gentoo's arm 23.0 hardfloat profiles set
+        // CHOST="armv7a-unknown-linux-gnueabihf".  The eabihf suffix is also
+        // what tells crossdev to configure gcc with --with-float=hard, so it
+        // is not cosmetic.
+        "armv7a" => "armv7a-unknown-linux-gnueabihf".to_string(),
+        "riscv32" => "riscv32-unknown-linux-musl".to_string(),
+        a if is_ix86(a) => format!("{a}-pc-linux-gnu"),
+        a => format!("{a}-unknown-linux-gnu"),
+    })
 }
 
 fn is_ix86(arch: &str) -> bool {
@@ -43,6 +53,8 @@ pub fn gentoo_profile(arch: &str) -> Result<&'static str> {
         a if a.starts_with("riscv") => "default/linux/riscv/23.0/rv64/lp64d",
         "x86_64" => "default/linux/amd64/23.0",
         "aarch64" => "default/linux/arm64/23.0",
+        // 23.0 renamed the old 17.0 "armv7a/hardfloat" path to "armv7a_hf".
+        "armv7a" => "default/linux/arm/23.0/armv7a_hf",
         "i486" | "i586" => "default/linux/x86/23.0/i486",
         "i686" => "default/linux/x86/23.0/i686",
         other => {
@@ -72,6 +84,11 @@ pub fn default_cflags(arch: &str) -> &'static str {
     match arch {
         "x86_64" => "-O3 -march=x86-64 -pipe",
         "aarch64" => "-O3 -pipe",
+        // Same as the armv7a_hf profile default.  Gentoo's gcc for an
+        // armv7*-…-gnueabihf CTARGET is configured --with-fpu=vfpv3-d16, so
+        // this is a hardfloat vfpv3-d16 build with no NEON; boards that want
+        // NEON must say -mfpu=neon-vfpv4 in BOARD_CFLAGS explicitly.
+        "armv7a" => "-O2 -march=armv7-a -pipe",
         "riscv64" => "-O3 -march=rv64gc -pipe",
         "riscv32" => "-Os -march=rv32ima_zicsr_zifencei -mabi=ilp32 -mcmodel=medlow -pipe",
         _ => "-O3 -pipe",
@@ -126,6 +143,9 @@ pub fn stage_variant(arch: &str) -> &'static str {
         "riscv32" => "rv32_ilp32_musl-openrc",
         a if a.starts_with("riscv") => "rv64_lp64d-openrc",
         "aarch64" => "arm64-openrc",
+        // releng calls the armv7a_hf stage3 "armv7a_hardfp"; the arch dir on
+        // the mirror is "arm", which gentoo_arch() already returns.
+        "armv7a" => "armv7a_hardfp-openrc",
         "x86_64" => "amd64-openrc",
         "i486" | "i586" => "i486-openrc",
         "i686" => "i686-openrc",
