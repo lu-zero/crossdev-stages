@@ -173,9 +173,11 @@ impl<'a> Portage<'a> {
     }
 
     /// Emerge packages, using binary if available (`-b -k`).
+    /// `--changed-use` so a board's `sandbox-packages.use` also applies to
+    /// packages that are already installed with different flags.
     pub fn emerge(&self, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
-        self.runner.run(&format!("emerge -b -k {pkgs}"))
+        self.runner.run(&format!("emerge -b -k --changed-use {pkgs}"))
     }
 
     /// Rebuild the world set.
