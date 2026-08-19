@@ -30,15 +30,8 @@ impl<'a> MakeConf<'a> {
             std::fs::write(&make_conf, "")?;
         }
 
-        // Rust pins itself to llvm_slot_21 via REQUIRED_USE, so llvm:22 is
-        // unreachable here. Without this mask, llvm-21's `>=llvmgold-21` dep
-        // resolves to llvmgold-22 (newest), which drags in the full llvm:22
-        // chain for nothing.
-        std::fs::write(
-            portage_dir.join("package.mask/llvm-unused-slot"),
-            ">=llvm-core/llvmgold-22\n\
-             >=llvm-core/llvm-common-22\n",
-        )?;
+        // Clean up the llvm:22 mask left in existing sandboxes.
+        let _ = std::fs::remove_file(portage_dir.join("package.mask/llvm-unused-slot"));
 
         let (jobs, load) = parallelism();
         let garch = gentoo_arch(self.arch)?;
