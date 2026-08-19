@@ -1,0 +1,5 @@
+# Mesa for the Mali-T628: panfrost GL on Midgard v4, scanning out through
+# exynos-drm.  VIDEO_CARDS is written into the crossdev prefix by pre-deps.sh.
+# There is no Vulkan for Midgard, so no panvk here.  Dropping this line leaves
+# a bootable image with the kernel-side GPU driver still in place.
+media-libs/mesa
