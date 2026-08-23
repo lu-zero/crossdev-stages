@@ -408,11 +408,24 @@ fn default_kernel(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
                 file: board.name.clone(),
                 msg: "KERNEL_ARCH required for kernel build".into(),
             })?;
+    // Without these the kernel embeds the wall clock, this machine's hostname
+    // and whoever ran the build, so the same source and config produce a
+    // different image every time.  The date comes from the commit the tree is
+    // checked out at, which is the only timestamp that is a property of the
+    // input rather than of the run.
     runner.run(&format!(
-        "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} {defconfig} && \
+        "set -e\n\
+         cd /build/linux\n\
+         epoch=$(git log -1 --pretty=%ct 2>/dev/null || echo 0)\n\
+         export SOURCE_DATE_EPOCH=$epoch\n\
+         export KBUILD_BUILD_TIMESTAMP=$(date -u -d \"@$epoch\" 2>/dev/null || echo)\n\
+         export KBUILD_BUILD_USER=crossdev-stages\n\
+         export KBUILD_BUILD_HOST={board_name}\n\
+         make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} {defconfig}\n\
          make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} WERROR=0 -j$(nproc)",
         cc = board.cross_compile,
         defconfig = board.kernel_defconfig,
+        board_name = board.name,
     ))
 }
 
