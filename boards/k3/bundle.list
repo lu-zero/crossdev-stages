@@ -20,6 +20,6 @@ esp.vfat
 bootfs.ext4
 rootfs.ext4
 
-# Full single-disk image for SD-card writing; optional: so a blob-only
+# Full single-disk image, the GPT donor for the fastboot flow; optional: so a blob-only
 # build still exports.
 optional:@image
