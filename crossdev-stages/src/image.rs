@@ -318,6 +318,15 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
             })?;
 
     runner.run("mkdir -p /build/gen/root /build/gen/boot")?;
+    // The copy below merges rather than replaces, so a runlevel entry added by
+    // an earlier build of this same tree would survive being taken out of the
+    // board's service list.  Every runlevel entry is a symlink, and the copy
+    // restores the stage's own, so clearing them first makes the board list
+    // authoritative instead of cumulative.
+    runner.run(
+        "[ -d /build/gen/root/etc/runlevels ] && \
+         find /build/gen/root/etc/runlevels -type l -delete; true",
+    )?;
     runner.run("cp -a /target/. /build/gen/root/")?;
     // unpack_tarball excludes ./dev to avoid permission errors in rootless containers.
     // Recreate the empty mount-point directories so the kernel can mount devtmpfs,
