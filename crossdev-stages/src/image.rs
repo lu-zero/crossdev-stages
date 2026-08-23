@@ -150,8 +150,16 @@ fn run_step(
 }
 
 fn run_board_script(board: &BoardConfig, script: &str) -> String {
+    // Same order the Rust loader uses: includes first, board last, so a hook
+    // sees exactly the values `board info` reports.  Sourcing only board.conf
+    // here would leave the shell blind to everything the includes provide.
+    let family: String = board
+        .includes
+        .iter()
+        .map(|name| format!("source /scripts/boards/include/{name}.conf\n"))
+        .collect();
     format!(
-        "set -e\nexport LDCONFIG=/usr/local/bin/ldconfig\n{disk}\
+        "set -e\nexport LDCONFIG=/usr/local/bin/ldconfig\n{disk}{family}\
          source /scripts/boards/{name}/board.conf\n\
          source /scripts/boards/{name}/{script}",
         disk = DiskId::of(board).exports(),

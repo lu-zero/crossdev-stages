@@ -226,6 +226,7 @@ by `uboot`.
 | Variable | Required | Description |
 |---|---|---|
 | `BOARD_NAME` | yes | Board identifier (matches directory name) |
+| `INCLUDE` | no | Shared config chunks to read before this file |
 | `BOARD_ARCH` | yes | Target architecture (`riscv64`, `aarch64`, `i586`, `i686`) |
 | `CROSS_COMPILE` | yes | Toolchain prefix (e.g. `riscv64-unknown-linux-gnu-`) |
 | `KERNEL_REPO` | yes | Kernel source repository URL |
@@ -250,6 +251,24 @@ by `uboot`.
 | `COMPRESSION` | no | Image compression: `xz` (default), `gz`, `none` |
 | `TAGS` | no | Free-form labels (bash array, e.g. `TAGS=("testing" "wip")`) -- shown in `board list` and `status` |
 | `DESCRIPTION` | no | Free-form note shown in `board info` |
+
+### Shared board config
+
+`INCLUDE` names files under `boards/include/`, read in the order listed before
+the board's own `board.conf`:
+
+```
+INCLUDE="rk35xx"
+```
+
+The last assignment of a key wins, so a later include beats an earlier one and
+the board beats all of them. A board therefore states only what is actually
+its own, with no guard around any shared default.
+
+Includes compose: a board can pull in an SoC chunk and a role chunk at once.
+An include cannot itself include, which keeps "where did this value come from"
+answerable. Hooks source the same files in the same order, so a shell script
+sees exactly what `board info` reports.
 
 ### Kernel config fragments
 

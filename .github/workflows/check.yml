@@ -47,8 +47,9 @@ jobs:
         run: |
           set -e
           fail=0
-          for b in boards/*/; do
-            name=$(basename "$b")
+          # What counts as a board is the tool's answer, not a glob:
+          # boards/include/ holds shared config chunks, not a board.
+          for name in $(./target/release/crossdev-stages board list | cut -d' ' -f1); do
             echo "::group::${name}"
             if ! ./target/release/crossdev-stages board info "${name}"; then
               echo "::error file=boards/${name}/board.conf::board info failed"
