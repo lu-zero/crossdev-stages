@@ -489,6 +489,20 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
         ))?;
     }
 
+    // The target stage is shared by every board of an arch, so anything a
+    // single board wants in portage's config has to be applied to its own copy
+    // here.  Appended verbatim: this is the file where a board says what its
+    // own hardware needs -- MAKEOPTS for its core count, USE, VIDEO_CARDS -- and
+    // portage takes the last assignment of a variable.
+    runner.run(&format!(
+        "conf=/scripts/boards/{}/make.conf; \
+         if [ -f \"$conf\" ]; then \
+             mkdir -p /build/gen/root/etc/portage && \
+             cat \"$conf\" >> /build/gen/root/etc/portage/make.conf; \
+         fi",
+        board.name
+    ))?;
+
     runner.run("sed -i -e 's/root:x:/root::/' /build/gen/root/etc/passwd")?;
     runner.run(
         "mkdir -p /build/gen/root/etc/ssh && \
