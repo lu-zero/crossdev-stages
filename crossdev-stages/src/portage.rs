@@ -150,6 +150,24 @@ fn remove_make_conf_var(file: &Utf8Path, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Print the tail of every recent portage log that recorded a failure.
+/// Falls back to naming the newest logs when nothing matched, so the failure
+/// is never reported with no way to look further.
+const SHOW_BUILD_FAILURES: &str = r#"
+logs=$(ls -t /var/log/portage/*/*.log 2>/dev/null | head -n 40)
+[ -n "$logs" ] || exit 0
+hit=$(grep -l " \* ERROR: " $logs 2>/dev/null | head -n 3)
+if [ -n "$hit" ]; then
+    for f in $hit; do
+        printf "\n--- %s ---\n" "$f"
+        tail -n 80 "$f"
+    done
+else
+    printf "\nNo build log recorded an ERROR.  Most recent logs:\n"
+    printf "%s\n" "$logs" | head -n 5
+fi
+"#;
+
 /// Portage operations that run *inside* a sandbox container.
 pub struct Portage<'a> {
     runner: &'a SandboxRunner,
@@ -158,6 +176,21 @@ pub struct Portage<'a> {
 impl<'a> Portage<'a> {
     pub fn new(runner: &'a SandboxRunner) -> Self {
         Self { runner }
+    }
+
+    /// Run an emerge and, if it fails, print the build log that recorded why.
+    ///
+    /// Portage switches to background mode whenever EMERGE_DEFAULT_OPTS carries
+    /// `--jobs` (Scheduler._background_mode), so a failing build writes nothing
+    /// to stdout; the compiler output only ever reaches PORT_LOGDIR.  That
+    /// directory is owned by the sandbox uid and mode 0770, so it cannot be
+    /// read from the host either -- the tail has to be taken from inside.
+    fn run_emerge(&self, cmd: &str) -> Result<()> {
+        let result = self.runner.run(cmd);
+        if result.is_err() {
+            let _ = self.runner.run(SHOW_BUILD_FAILURES);
+        }
+        result
     }
 
     /// Initial sync of the portage tree.
@@ -177,27 +210,26 @@ impl<'a> Portage<'a> {
     /// packages that are already installed with different flags.
     pub fn emerge(&self, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
-        self.runner.run(&format!("emerge -b -k --changed-use {pkgs}"))
+        self.run_emerge(&format!("emerge -b -k --changed-use {pkgs}"))
     }
 
     /// Rebuild the world set.
     #[allow(dead_code)]
     pub fn emerge_world(&self) -> Result<()> {
-        self.runner.run("emerge -b -k -e @world")
+        self.run_emerge("emerge -b -k -e @world")
     }
 
     /// Cross-emerge packages into the target stage (mounted at `/target`).
     /// Uses `{chost}-emerge` which crossdev installs.
     pub fn cross_emerge(&self, chost: &str, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
-        self.runner
-            .run(&format!("ROOT=/target {chost}-emerge -b -k {pkgs}"))
+        self.run_emerge(&format!("ROOT=/target {chost}-emerge -b -k {pkgs}"))
     }
 
     /// Cross-emerge with `USE=build` for bootstrapping (baselayout, portage).
     pub fn cross_emerge_build(&self, chost: &str, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
-        self.runner.run(&format!(
+        self.run_emerge(&format!(
             "USE=build ROOT=/target {chost}-emerge -b -k {pkgs}"
         ))
     }
@@ -207,7 +239,7 @@ impl<'a> Portage<'a> {
     /// Used for updating the cross-toolchain itself (gcc, binutils-libs, @system).
     pub fn cross_emerge_crossdev(&self, chost: &str, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
-        self.runner.run(&format!("{chost}-emerge -b -k {pkgs}"))
+        self.run_emerge(&format!("{chost}-emerge -b -k {pkgs}"))
     }
 }
 
