@@ -2,12 +2,11 @@
 # 37ccaa1), every board carries its own list.  Once the defaults land this
 # shrinks to the genuine extras and the rest comes for free.
 
-# Base userland.  parted is not optional: grow-rootfs calls it on first boot
-# and the rootfs stays at its built size without it.
+# Base userland.  grow-rootfs needs no package of its own: it resizes with
+# sfdisk and partx, both from util-linux, which @system already pulls in.
 net-misc/ntp
 app-admin/metalog
 sys-apps/busybox
-sys-block/parted
 app-editors/vim
 sys-process/htop
 app-misc/fastfetch
