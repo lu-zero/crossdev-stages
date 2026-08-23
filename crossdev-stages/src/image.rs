@@ -253,6 +253,121 @@ fn fnv1a_64(bytes: &[u8]) -> u64 {
     hash
 }
 
+/// Ebuild repositories the sandbox will search, as host paths.
+fn ebuild_repos(sandbox_dir: &Utf8Path) -> Vec<Utf8PathBuf> {
+    let mut repos: Vec<Utf8PathBuf> = Vec::new();
+    let mut push = |dir: Utf8PathBuf| {
+        if dir.join("profiles").is_dir() && !repos.contains(&dir) {
+            repos.push(dir);
+        }
+    };
+
+    // repos.conf may be a file or a directory of files.
+    let conf = sandbox_dir.join("etc/portage/repos.conf");
+    let mut files = vec![conf.clone()];
+    if let Ok(entries) = std::fs::read_dir(&conf) {
+        files.extend(entries.filter_map(|e| Utf8PathBuf::from_path_buf(e.ok()?.path()).ok()));
+    }
+    for file in files {
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        for line in text.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                if key.trim() == "location" {
+                    push(sandbox_dir.join(value.trim().trim_start_matches('/')));
+                }
+            }
+        }
+    }
+    // `eselect repository` drops an overlay here with no repos.conf entry.
+    if let Ok(entries) = std::fs::read_dir(sandbox_dir.join("var/db/repos")) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            if let Ok(dir) = Utf8PathBuf::from_path_buf(entry.path()) {
+                push(dir);
+            }
+        }
+    }
+    repos
+}
+
+/// The category and package of an emerge atom, with everything a directory
+/// name does not carry stripped: the comparison operator, the slot, and the
+/// version glued onto the package name.
+fn atom_cpn(atom: &str) -> Option<(&str, &str)> {
+    let cpn = atom
+        .trim_start_matches(['=', '<', '>', '~', '!'])
+        .split(':')
+        .next()?;
+    let (category, rest) = cpn.split_once('/')?;
+    // A dash followed by a digit starts the version; anything else is part of
+    // the name, which is why sys-apps and gst-plugins-base survive this.
+    let package = match rest.rsplit_once('-') {
+        Some((name, tail)) if tail.starts_with(|c: char| c.is_ascii_digit()) => name,
+        _ => rest,
+    };
+    Some((category, package))
+}
+
+/// Reject atoms that name nothing in any repo, before anything is built.
+///
+/// Only the category/package part is checked.  Version ranges, slots and USE
+/// deps are emerge's business; this is here to catch a package that was
+/// renamed or never existed, which is the failure that costs a whole build.
+fn check_package_lists(
+    sandbox: &Sandbox,
+    board: &BoardConfig,
+    board_dir: &Utf8Path,
+    defaults_root: &Utf8Path,
+) -> Result<()> {
+    let repos = ebuild_repos(&sandbox.dir);
+    if repos.is_empty() {
+        // No synced tree yet: the sandbox has not been prepared, and emerge
+        // will say so far more clearly than we could.
+        return Ok(());
+    }
+
+    let mut bad: Vec<String> = Vec::new();
+    for list in [
+        defaults_root.join("sandbox-packages.txt"),
+        defaults_root.join("target-packages.txt"),
+        board_dir.join("sandbox-packages.txt"),
+        board_dir.join("target-packages.txt"),
+    ] {
+        let Ok(content) = std::fs::read_to_string(&list) else {
+            continue;
+        };
+        for (number, line) in content.lines().enumerate() {
+            let line = line.trim();
+            // A `-atom` line takes something out of the defaults rather than
+            // naming something to build, so there is nothing to look up.
+            if line.is_empty() || line.starts_with('#') || line.starts_with('-') {
+                continue;
+            }
+            let Some(atom) = line.split_whitespace().next() else {
+                continue;
+            };
+            let Some((category, package)) = atom_cpn(atom) else {
+                continue;
+            };
+            let found = repos
+                .iter()
+                .any(|repo| repo.join(category).join(package).symlink_metadata().is_ok());
+            if !found {
+                bad.push(format!("{list}:{}: {atom}", number + 1));
+            }
+        }
+    }
+
+    if bad.is_empty() {
+        return Ok(());
+    }
+    Err(crate::error::Error::BoardConfigParse {
+        file: board.name.clone(),
+        msg: format!("no such package:\n  {}", bad.join("\n  ")),
+    })
+}
+
 // ── Default implementations ─────────────────────────────────────────────────
 
 /// Per-(chost, cflags-hash) binpkg cache dir for a board's target packages.
@@ -273,11 +388,17 @@ fn default_deps(
     boards_root: &Utf8Path,
     defaults_root: &Utf8Path,
 ) -> Result<()> {
+    // A wrong atom is otherwise only found by emerge, which gets there after
+    // the sandbox list has already been built -- ten minutes of compiling
+    // thrown away over a package that was renamed.  The repos are plain
+    // directories on the host, so the same question costs a stat().
+    let board_dir = boards_root.join(&board.name);
+    check_package_lists(sandbox, board, &board_dir, defaults_root)?;
+
     // Sandbox extras: defaults are already installed during prepare; only the
     // board's own extras (e.g. grub for pentium-mmx) need emerging here.
     // merge() with an empty base means a `-atom` line here can only cancel
     // the board's own extras, never uninstall a prepare-time default.
-    let board_dir = boards_root.join(&board.name);
     let board_sandbox = crate::package_list::merge(
         Vec::new(),
         crate::package_list::read_optional(&board_dir.join("sandbox-packages.txt"))?,
@@ -866,5 +987,31 @@ fn format_duration(d: std::time::Duration) -> String {
         format!("{}m {}s", secs / 60, secs % 60)
     } else {
         format!("{}h {}m {}s", secs / 3600, (secs % 3600) / 60, secs % 60)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::atom_cpn;
+
+    #[test]
+    fn an_atom_reduces_to_the_directory_that_would_hold_it() {
+        assert_eq!(atom_cpn("media-libs/mesa"), Some(("media-libs", "mesa")));
+        // The forms boards actually write.
+        assert_eq!(
+            atom_cpn("=sys-apps/busybox-1.38.0"),
+            Some(("sys-apps", "busybox"))
+        );
+        assert_eq!(
+            atom_cpn(">=media-libs/x264-0.164"),
+            Some(("media-libs", "x264"))
+        );
+        assert_eq!(atom_cpn("dev-lang/rust:stable"), Some(("dev-lang", "rust")));
+        // A dash in the name is not a version.
+        assert_eq!(
+            atom_cpn("media-plugins/gst-plugins-v4l2"),
+            Some(("media-plugins", "gst-plugins-v4l2"))
+        );
+        assert_eq!(atom_cpn("no-category-here"), None);
     }
 }
