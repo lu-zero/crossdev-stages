@@ -689,7 +689,12 @@ fn extlinux_conf(board: &BoardConfig) -> Result<String> {
     ))
 }
 
-fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+fn default_assemble(
+    runner: &SandboxRunner,
+    board: &BoardConfig,
+    build: &Build,
+    ws: &Workspace,
+) -> Result<()> {
     let karch =
         board
             .kernel_arch
@@ -699,16 +704,15 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
                 msg: "KERNEL_ARCH required for assemble".into(),
             })?;
 
+    // Start from nothing.  `cp -a /target/.` merges, so anything an earlier
+    // build of this same tree put here outlives being taken back out -- a
+    // service dropped from the board's list, a package.mask deleted from the
+    // target, a firmware directory renamed.  The whole tree is rebuilt from
+    // /target and this step's own work, so there is nothing here worth
+    // keeping, and the copy that follows costs the same either way.
+    crate::container::destroy_dir(&build.dir.join("gen"), ws.base())?;
+
     runner.run("mkdir -p /build/gen/root /build/gen/boot")?;
-    // The copy below merges rather than replaces, so a runlevel entry added by
-    // an earlier build of this same tree would survive being taken out of the
-    // board's service list.  Every runlevel entry is a symlink, and the copy
-    // restores the stage's own, so clearing them first makes the board list
-    // authoritative instead of cumulative.
-    runner.run(
-        "[ -d /build/gen/root/etc/runlevels ] && \
-         find /build/gen/root/etc/runlevels -type l -delete; true",
-    )?;
     runner.run("cp -a /target/. /build/gen/root/")?;
     // unpack_tarball excludes ./dev to avoid permission errors in rootless containers.
     // Recreate the empty mount-point directories so the kernel can mount devtmpfs,
@@ -1029,7 +1033,7 @@ pub fn build(
                 &runner,
                 boards_root,
                 board,
-                |r| default_assemble(r, board),
+                |r| default_assemble(r, board, &bld, ws),
             ),
             "pack" => run_step("pack", "packed", &bld, &runner, boards_root, board, |r| {
                 default_pack(r, board, &bld, boards_root)
