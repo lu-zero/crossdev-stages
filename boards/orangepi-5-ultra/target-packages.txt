@@ -61,3 +61,10 @@ media-plugins/gst-plugins-x264
 media-plugins/gst-plugins-srt
 media-plugins/gst-plugins-jpeg
 media-plugins/gst-plugins-opus
+
+# Enough to answer "what is this hardware actually doing" from the board
+# itself: modetest for the HDMI output modes (libdrm ships it only with the
+# tools USE flag), and the GL/Vulkan probes for the panthor/panvk stack.
+x11-libs/libdrm
+x11-apps/mesa-progs
+dev-util/vulkan-tools
