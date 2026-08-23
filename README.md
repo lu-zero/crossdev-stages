@@ -241,7 +241,7 @@ by `uboot`.
 | `BOOT_EXTLINUX` | no | `true` makes `assemble` write `/extlinux/extlinux.conf` |
 | `BOOT_APPEND` | no | Kernel arguments added to that entry |
 | `BOOT_DTB_NAME` | no | DTB to boot, when `BOARD_DTB_GLOB` matches more than one |
-| `ISA_STRICT` | no | `true` fails the build on a binary the board's ISA cannot run |
+| `ISA_STRICT` | no | `false` downgrades an unrunnable binary to a warning (default: fail) |
 | `OPENSBI_FW_TYPE` | no | OpenSBI firmware type: `dynamic` (default), `jump`, `payload` |
 | `OPENSBI_MAKE_FLAGS` | no | Extra opensbi make arguments |
 | `U_BOOT_MAKE_FLAGS` | no | Extra u-boot make arguments |
@@ -341,7 +341,8 @@ and compares it against what the board's own toolchain emits -- obtained by
 compiling an empty file with the board's CFLAGS, so `-march=rv64gcv_zvl256b`
 and `-march=rva23u64` expand exactly the way that compiler expands them, with
 no table to keep in step. A binary using an extension the board lacks is
-reported; `ISA_STRICT="true"` makes it fail the build. A binary merely built
+an error: it faults on the hardware, so the build stops. `ISA_STRICT="false"`
+downgrades it to a warning while a board is being brought up. A binary merely built
 without some of the board's extensions is reported as slower, not broken.
 
 The same scan runs on demand against an existing build or target stage:
