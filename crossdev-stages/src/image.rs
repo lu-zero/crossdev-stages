@@ -1047,6 +1047,28 @@ pub fn build(
         let elapsed = step_start.elapsed();
         println!("    {} done ({})", step, format_duration(elapsed));
         result?;
+
+        // The image tree is finished at the end of assemble, hooks included,
+        // and portage never checked any of this: it matches CHOST, KEYWORDS,
+        // USE and CPU_FLAGS_X86 when it decides a binary package fits, and
+        // never CFLAGS.  A few seconds here against an illegal instruction
+        // that otherwise surfaces on the hardware.
+        if *step == "assemble" && crate::isa::applies(board) {
+            match crate::isa::verify(&runner, board, "/build/gen/root") {
+                Ok(report) => {
+                    let illegal = crate::isa::print(&report, Utf8Path::new("/build/gen/root"));
+                    if illegal && board.isa_strict {
+                        return Err(crate::error::Error::CommandFailed {
+                            code: 1,
+                            reason: "binaries use extensions this board does not have".into(),
+                        });
+                    }
+                }
+                // A board whose toolchain cannot answer is not a reason to
+                // throw away a built image.
+                Err(e) => tracing::warn!("ISA check could not run: {e}"),
+            }
+        }
     }
 
     // Collect and write manifest before returning. Build fails if manifest

@@ -241,6 +241,7 @@ by `uboot`.
 | `BOOT_EXTLINUX` | no | `true` makes `assemble` write `/extlinux/extlinux.conf` |
 | `BOOT_APPEND` | no | Kernel arguments added to that entry |
 | `BOOT_DTB_NAME` | no | DTB to boot, when `BOARD_DTB_GLOB` matches more than one |
+| `ISA_STRICT` | no | `true` fails the build on a binary the board's ISA cannot run |
 | `OPENSBI_FW_TYPE` | no | OpenSBI firmware type: `dynamic` (default), `jump`, `payload` |
 | `OPENSBI_MAKE_FLAGS` | no | Extra opensbi make arguments |
 | `U_BOOT_MAKE_FLAGS` | no | Extra u-boot make arguments |
@@ -313,6 +314,31 @@ The DTB is the basename of `BOARD_DTB_GLOB`, which on most boards already names
 exactly one file; a board that copies a whole directory of them sets
 `BOOT_DTB_NAME`. A board needing a different shape -- several labels, a kernel
 named by version -- writes its own file from `post-assemble.sh` instead.
+
+### ISA verification
+
+Portage decides a binary package fits by matching CHOST, KEYWORDS, USE and
+CPU_FLAGS_X86. It never matches CFLAGS, so a package built for one board
+installs into another that cannot run it and nothing says so until the hardware
+hits an illegal instruction.
+
+`assemble` therefore reads `Tag_RISCV_arch` out of every ELF file in the image
+and compares it against what the board's own toolchain emits -- obtained by
+compiling an empty file with the board's CFLAGS, so `-march=rv64gcv_zvl256b`
+and `-march=rva23u64` expand exactly the way that compiler expands them, with
+no table to keep in step. A binary using an extension the board lacks is
+reported; `ISA_STRICT="true"` makes it fail the build. A binary merely built
+without some of the board's extensions is reported as slower, not broken.
+
+The same scan runs on demand against an existing build or target stage:
+
+```
+crossdev-stages verify --board k230
+crossdev-stages verify --board k230 --strict
+```
+
+RISC-V only: it is the architecture that records its ISA in the ELF and has
+extensions a board can genuinely lack.
 
 ### Partition identifiers
 
