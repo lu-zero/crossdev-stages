@@ -5,23 +5,24 @@ set -e
 chost="${CROSS_COMPILE%-}"
 cross="/usr/${chost}/etc/portage"
 
-grep -q '^VIDEO_CARDS=' "${cross}/make.conf" ||
-    echo 'VIDEO_CARDS="panfrost"' >> "${cross}/make.conf"
+sed -i '/^VIDEO_CARDS=/d' "${cross}/make.conf"
+echo 'VIDEO_CARDS="panfrost"' >> "${cross}/make.conf"
 
 # No X server on this board.  zink runs GL on top of panvk, which is the path
 # a wlroots compositor can actually accelerate on Mali-G610.
-#
-# Appended to USE rather than assigned: crossdev already wrote USE="${ARCH}"
-# here, so testing for the variable at all just skips this silently and leaves
-# every package on the profile default -- which is how mpv ended up asking for
-# vulkan-loader[X].
-grep -q 'crossdev-stages USE' "${cross}/make.conf" || cat >> "${cross}/make.conf" <<'USEEOF'
-# crossdev-stages USE
 #
 # -introspection is not a preference.  glib builds gobject-introspection as a
 # subproject and its g-ir-compiler is a target binary that meson wants to run
 # on the build host: "An exe_wrapper is needed for .../tools/g-ir-compiler".
 # There is no such thing when the target is aarch64 and the host is x86_64.
+#
+# Rewritten every run rather than appended once.  crossdev already put a
+# USE= line here, so a guard on the variable never fires, and a guard on our
+# own marker means editing this list has no effect on a sandbox that already
+# ran once -- which is how -introspection silently failed to arrive.
+sed -i '/# crossdev-stages USE/,+1d' "${cross}/make.conf"
+cat >> "${cross}/make.conf" <<'USEEOF'
+# crossdev-stages USE
 USE="${USE} -X wayland vulkan zink alsa pipewire screencast -introspection"
 USEEOF
 
