@@ -40,12 +40,25 @@ start() {
         return 0
     fi
 
+    # sfdisk rather than parted: parted refuses to touch a partition that is
+    # mounted, and -s does not answer that prompt, it only stops it being
+    # asked.  sfdisk is built for this -- ",+" keeps the start and grows the
+    # size to the end of the disk -- and it preserves the MBR disk signature
+    # and the GPT partition UUIDs, which the root= on the kernel command line
+    # depends on.  It also relocates a GPT backup header left mid-disk by an
+    # image smaller than the card.  Both tools come from util-linux, which is
+    # already part of @system, so this needs nothing installed.
     ebegin "Growing partition $part on $disk to disk end"
-    parted -s "$disk" resizepart "$part" 100% || {
-        eend $? "parted resizepart failed"
+    echo ',+' | sfdisk --no-reread --force -N "$part" "$disk" || {
+        eend $? "sfdisk could not grow the partition"
         return 0
     }
     eend 0
+
+    # The partition table on disk is now correct, but the kernel is still
+    # using the size it read at boot; BLKPG lets it be updated in place even
+    # though the filesystem is mounted.
+    partx -u -n "$part" "$disk" || ewarn "partx could not refresh $src"
 
     ebegin "Resizing ext4 on $src"
     resize2fs "$src" || {
