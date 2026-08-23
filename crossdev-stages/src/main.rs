@@ -64,6 +64,12 @@ async fn main() -> anyhow::Result<()> {
         Commands::Maint(cmd) => {
             cli::maint::run(&ws, cmd, &boards_root, dry_run)?;
         }
+        Commands::Enter {
+            board,
+            sandbox,
+            cmd,
+        } => cli::enter::run(&ws, &boards_root, &board, sandbox.as_deref(), &cmd)?,
+
         Commands::Verify {
             board,
             sandbox,

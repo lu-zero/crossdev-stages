@@ -38,15 +38,6 @@ pub struct Report {
     pub findings: Vec<Finding>,
 }
 
-impl Report {
-    /// Findings that name an extension the board does not have.  These are the
-    /// ones that fault on the hardware; the rest merely leave performance on
-    /// the table.
-    pub fn illegal(&self) -> impl Iterator<Item = &Finding> {
-        self.findings.iter().filter(|f| !f.extra.is_empty())
-    }
-}
-
 /// Whether this board has an ISA worth checking.
 pub fn applies(board: &BoardConfig) -> bool {
     board.arch.starts_with("riscv")

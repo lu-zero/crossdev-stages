@@ -315,6 +315,20 @@ exactly one file; a board that copies a whole directory of them sets
 `BOOT_DTB_NAME`. A board needing a different shape -- several labels, a kernel
 named by version -- writes its own file from `post-assemble.sh` instead.
 
+### Debugging a build
+
+`enter` opens a shell in the very container a build step runs in -- same
+rootfs, same cross toolchain on PATH, same `/target`, `/build`, `/scripts` and
+`/cache` mounts:
+
+```
+crossdev-stages enter --board k230
+crossdev-stages enter --board k230 -- emerge --info
+```
+
+The target stage and the build directory are attached when they exist, so a
+board that has never been built still opens.
+
 ### ISA verification
 
 Portage decides a binary package fits by matching CHOST, KEYWORDS, USE and

@@ -3,6 +3,7 @@ use clap::builder::styling::{AnsiColor, Styles};
 use clap::{Args, Parser, Subcommand};
 
 pub mod board;
+pub mod enter;
 pub mod image;
 pub mod maint;
 pub mod sandbox;
@@ -91,6 +92,19 @@ pub enum Commands {
     /// Maintenance: cleanup, logs, diagnostics.
     #[command(subcommand)]
     Maint(MaintCmd),
+
+    /// Open a shell in the container a board's build runs in.
+    Enter {
+        /// Board name.
+        #[arg(long)]
+        board: String,
+        /// Sandbox name (default: most-recently-modified).
+        #[arg(long)]
+        sandbox: Option<String>,
+        /// Run this command instead of an interactive shell.
+        #[arg(trailing_var_arg = true)]
+        cmd: Vec<String>,
+    },
 
     /// Check a board's binaries against the ISA its CFLAGS promise.
     Verify {
