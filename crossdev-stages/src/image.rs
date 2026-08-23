@@ -477,9 +477,14 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
         // so agetty exits at once and init respawns it until it gives up:
         // "INIT: Id \"s0\" respawning too fast", forever, every five minutes.
         // Disable the stock serial gettys and install the board's own.
+        //
+        // -L for the same reason baselayout's own serial lines carry it: a
+        // debug header has no modem control lines, so without CLOCAL the tty
+        // layer hangs the port up on the missing carrier and agetty dies and
+        // respawns once a second, reprinting /etc/issue each time.
         runner.run(&format!(
             "sed -i -e '/^s[0-9]*:/s/^/#/' /build/gen/root/etc/inittab && \
-             echo 's0:12345:respawn:/sbin/agetty {baud} {tty} linux' \
+             echo 's0:12345:respawn:/sbin/agetty -L {baud} {tty} linux' \
              >> /build/gen/root/etc/inittab"
         ))?;
     }
