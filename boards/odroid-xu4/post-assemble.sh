@@ -1,5 +1,12 @@
 set -e
 
+# Firmware, paths preserved: r8152 asks for rtl_nic/rtl8153a-3.fw by name.
+for dir in "${FIRMWARE_DIRS[@]}"; do
+    [ -d "/build/firmware/${dir}" ] || { echo "Error: no firmware dir ${dir}"; exit 1; }
+    mkdir -p "/build/gen/root/lib/firmware/${dir}"
+    cp -a "/build/firmware/${dir}/." "/build/gen/root/lib/firmware/${dir}/"
+done
+
 # Mainline U-Boot's odroid-xu3 target keeps CONFIG_DISTRO_DEFAULTS, whose
 # BOOT_TARGET_DEVICES walks mmc2 (the SD slot), mmc1 and mmc0 looking for
 # extlinux/extlinux.conf.  Hardkernel's boot.ini is a fork-only feature and is
