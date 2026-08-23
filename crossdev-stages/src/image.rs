@@ -370,10 +370,24 @@ fn apply_board_patches(
         }
         for file in files {
             tracing::info!("Applying {source}/{file}…");
-            // --forward keeps a rerun on an already-patched tree from failing.
+            // Three states, not two.  `patch --forward` exits 1 both for a
+            // patch that is already applied and for one that does not apply at
+            // all, so it cannot make a rerun safe -- it only makes a real
+            // conflict look like one.  git tells them apart: --check says it
+            // would apply, --reverse --check says it is already in, and
+            // neither means the tree has moved and the build must stop.
             runner.run(&format!(
-                "cd /build/{source} && patch -p1 --forward --silent \
-                 < /scripts/boards/{board_name}/patches/{source}/{file}",
+                "set -e\n\
+                 cd /build/{source}\n\
+                 p=/scripts/boards/{board_name}/patches/{source}/{file}\n\
+                 if git apply --check \"$p\" 2>/dev/null; then\n\
+                     git apply \"$p\"\n\
+                 elif git apply --reverse --check \"$p\" 2>/dev/null; then\n\
+                     echo \"already applied: {file}\"\n\
+                 else\n\
+                     echo \"does not apply to this tree: {file}\" >&2\n\
+                     exit 1\n\
+                 fi",
                 board_name = board.name,
             ))?;
         }
