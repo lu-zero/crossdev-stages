@@ -303,6 +303,16 @@ fn default_deps(
         crate::package_list::read_optional(&board_dir.join("target-packages.txt"))?,
     );
     if !target_pkgs.is_empty() {
+        // The keyword a line asks for has to be written where the cross emerge
+        // will look for it: `{chost}-emerge` reads PORTAGE_CONFIGROOT=
+        // /usr/{chost}, not the sandbox's own /etc/portage.  Without this a
+        // line like `sys-boot/syslinux **` gets its atom emerged and its
+        // keyword silently dropped, and the emerge fails on a masked package.
+        let cross_portage = sandbox
+            .dir
+            .join(format!("usr/{}/etc/portage", board.chost()));
+        crate::package_list::write_accept_keywords(&target_pkgs, &cross_portage)?;
+
         let target_runner = sandbox
             .runner_for_board(ws, &board.arch, board)?
             .with_target(&target.dir)
