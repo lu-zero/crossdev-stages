@@ -35,6 +35,15 @@ echo 'media-libs/gst-plugins-base alsa pango gles2 egl' > "${cross}/package.use/
 # modetest, which is how the HDMI output modes get read, ships only with tools.
 echo 'x11-libs/libdrm tools' > "${cross}/package.use/libdrm"
 
+# pango wants a harfbuzz-enabled freetype, and sway wants pango.
+echo 'media-libs/freetype harfbuzz' > "${cross}/package.use/freetype"
+
+# libdecor draws window decorations for clients that have none, and its gtk
+# backend drags in gtk+3, which drags in cairo[X] and libglvnd[X].  On a board
+# with no X server that is the entire X stack arriving for a fallback nobody
+# uses.
+echo 'gui-libs/libdecor -gtk' > "${cross}/package.use/libdecor"
+
 # mesa_clc builds for CBUILD, so the card selection is repeated on the host.
 mkdir -p /etc/portage/package.use
 echo 'dev-util/mesa_clc video_cards_panfrost' > /etc/portage/package.use/mesa
