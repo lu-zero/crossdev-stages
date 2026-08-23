@@ -283,19 +283,38 @@ Note the profile path: 23.0 renamed the old 17.0 `armv7a/hardfloat` to
 do not match, and the mirror directory is `releases/arm/` for every 32-bit ARM
 subarch.  `armv7a_hardfp-openrc` is still built weekly.
 
-## Not verified on hardware
+## What has been seen on hardware
 
-Nothing here has been booted on a board yet.  In rough order of risk:
+An image from this board directory has booted an Odroid-XU4 to a login prompt
+on the serial console.  That is the first armv7a boot in this tree, and it
+settles three things that were guesses when this was written:
 
-- Whether mainline U-Boot v2026.07 fits the 720 KiB window BL2 gives it.
-  Hardkernel's own 2017 U-Boot is 616568 bytes with a comparable feature set,
-  so there is room, but v2026.07 is nine years newer.  `post-bootloader.sh`
-  fails loudly if it does not fit; the fix is to drop `CMD_THOR_DOWNLOAD`,
-  `CMD_DFU` and `USB_GADGET`, none of which SD boot needs.
-- Truncating BL1 to 15360 bytes.  The evidence is strong (the 2012 branch ships
-  exactly those bytes as a complete BL1, and Hardkernel's script overwrites the
-  other 256 anyway) but it has not been booted.
-- `/dev/mmcblk1p2` as the SD root.  Derived from the DT aliases, not observed.
+- Mainline U-Boot v2026.07 fits the 720 KiB window BL2 gives it.
+  `post-bootloader.sh` fails loudly if it ever stops fitting; the fix would be
+  to drop `CMD_THOR_DOWNLOAD`, `CMD_DFU` and `USB_GADGET`, none of which SD
+  boot needs.
+- Truncating BL1 to 15360 bytes produces a BL1 the iROM accepts.
+- The board reaches userspace from the SD card.  The root device is named by
+  PARTUUID rather than a path, so it does not depend on which slot the card
+  lands in -- an earlier revision of this file said `/dev/mmcblk1p2`, which was
+  wrong twice over (the SD slot is mmc2, and the path form was replaced).
+
+HDMI output works on a monitor.  A blank screen through an MS2130 USB capture
+card was the capture card, not the board: every layer below it -- kernel
+config, device tree, blanking, fbcon and the mixer registers including the
+shadow bank -- was checked and is correct.
+
+Not yet seen: no image built after the serial getty was fixed has been booted.
+The board used to print `INIT: Id "s0" respawning too fast` and repeat the
+login banner down the screen, because its getty ran without `-L` on a debug
+header that has no modem control lines.  That is fixed in the framework, and
+the fix is in the current image, but the current image has not been on the
+board.
+
+There is no serial log committed under `evidence/` yet, so nothing here can be
+checked by anything but a person reading it.
+
+## Still not verified
 - **Mesa on 32-bit ARM.**  `media-libs/mesa` is unversioned in
   `target-packages.txt`, which means whatever is newest.  Two open upstream bugs
   say that is optimistic:
