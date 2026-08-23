@@ -1,13 +1,20 @@
 arm64: dts: rockchip: enable HDMI-RX on Orange Pi 5 Ultra
 
 The board has an HDMI 2.0 input wired to the SoC HDMI receiver, but no
-mainline DT enables it.  The controller and its 160 MiB CMA pool are already
-described in rk3588-extra.dtsi, and the hdmim2_rx_* pin groups already exist
-in rk3588-base-pinctrl.dtsi, so the board only has to flip both nodes to okay
+mainline DT enables it.  The controller, its 160 MiB CMA pool and the
+hdmim2_rx_* pin groups are all already described in rk3588-extra.dtsi and
+rk3588-base-pinctrl.dtsi, so the board only has to flip both nodes to okay
 and describe the 5V detect pin.
 
-Pin bank and HPD gpio follow the vendor BSP DT for this board, which uses
-hdmim2_rx_* and gpio3 RK_PD3 for hdmirx detect.
+Arrived at independently by Armbian as
+patch/kernel/archive/rockchip64-7.2/orangepi5-ultra-hdmirx-dts-fix.patch
+(pdapandapda <linyuqiang55@gmail.com>, 2026-07-12), which corroborates the
+pin bank and the HPD gpio.  This version additionally enables
+hdmi_receiver_cma: rk3588-extra.dtsi leaves that pool disabled, and
+snps_hdmirx falls back to the global CMA with "no reserved memory for
+HDMIRX, use default CMA" when the memory-region it points at is not
+available.  That fallback is survivable at 1080p and not at 4K, where a
+single NV12 frame is 12.4 MiB.
 
 Not yet submitted upstream: needs a capture test on hardware first.
 
