@@ -44,6 +44,11 @@ echo 'x11-libs/libdrm tools' > "${cross}/package.use/libdrm"
 # pango wants a harfbuzz-enabled freetype, and sway wants pango.
 echo 'media-libs/freetype harfbuzz' > "${cross}/package.use/freetype"
 
+# seatd with no USE flags builds libseat and no daemon at all, which leaves
+# sway with nothing to ask for a seat and a dangling init script.  server is
+# the daemon; builtin lets a client fall back to running the logic in-process.
+echo 'sys-auth/seatd server builtin' > "${cross}/package.use/seatd"
+
 # libdecor draws window decorations for clients that have none, and its gtk
 # backend drags in gtk+3, which drags in cairo[X] and libglvnd[X].  On a board
 # with no X server that is the entire X stack arriving for a fallback nobody
