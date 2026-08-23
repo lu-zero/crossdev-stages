@@ -238,6 +238,9 @@ by `uboot`.
 | `KERNEL_ARCH` | no | Linux `ARCH=` value (default: auto from `BOARD_ARCH`) |
 | `BUILD_STEPS` | no | Build pipeline steps (default: deps checkout bootloader kernel assemble pack) |
 | `BOOT_PIPELINE` | no | Ordered bootloader stages (default: `("opensbi" "uboot" "syslinux" "grub")`; `()` = none) |
+| `BOOT_EXTLINUX` | no | `true` makes `assemble` write `/extlinux/extlinux.conf` |
+| `BOOT_APPEND` | no | Kernel arguments added to that entry |
+| `BOOT_DTB_NAME` | no | DTB to boot, when `BOARD_DTB_GLOB` matches more than one |
 | `OPENSBI_FW_TYPE` | no | OpenSBI firmware type: `dynamic` (default), `jump`, `payload` |
 | `OPENSBI_MAKE_FLAGS` | no | Extra opensbi make arguments |
 | `U_BOOT_MAKE_FLAGS` | no | Extra u-boot make arguments |
@@ -288,6 +291,26 @@ dependencies are unmet and can return a module where a builtin was asked for,
 both silently, so the build fails rather than shipping a kernel that is
 missing what the board said it needed. A `# CONFIG_X is not set` line is
 checked in the other direction: the build fails if X came back on.
+
+### Extlinux boot config
+
+A board whose bootloader reads `/extlinux/extlinux.conf` sets
+`BOOT_EXTLINUX="true"` and `assemble` writes the file:
+
+```
+DEFAULT gentoo
+TIMEOUT 30
+LABEL gentoo
+    MENU LABEL Gentoo Linux
+    LINUX /<BOOT_KERNEL_NAME>
+    FDT /<dtb>
+    APPEND root=<BOOT_ROOT_DEV> rw rootwait rootfstype=ext4 console=<BOOT_CONSOLE> <BOOT_APPEND>
+```
+
+The DTB is the basename of `BOARD_DTB_GLOB`, which on most boards already names
+exactly one file; a board that copies a whole directory of them sets
+`BOOT_DTB_NAME`. A board needing a different shape -- several labels, a kernel
+named by version -- writes its own file from `post-assemble.sh` instead.
 
 ### Partition identifiers
 

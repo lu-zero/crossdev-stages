@@ -86,6 +86,16 @@ pub struct BoardConfig {
     pub ramdisk_name: Option<String>,
     pub loglevel: Option<String>,
 
+    /// BOOT_EXTLINUX: this board boots through an extlinux.conf, so `assemble`
+    /// writes one instead of the board repeating the same file in a hook.
+    pub extlinux: bool,
+    /// BOOT_APPEND: kernel arguments beyond the ones every extlinux board
+    /// states identically (root, rw, rootwait, rootfstype, console).
+    pub append: Option<String>,
+    /// BOOT_DTB_NAME: the device tree to boot, when BOARD_DTB_GLOB names more
+    /// than one file and the board has to say which.
+    pub dtb_name: Option<String>,
+
     pub services: Vec<String>, // e.g. ["sshd:default", "metalog:default"]
     pub build_steps: Vec<String>,
 
@@ -344,6 +354,13 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         kernel_name: kv.get("BOOT_KERNEL_NAME").cloned(),
         ramdisk_name: kv.get("BOOT_RAMDISK_NAME").cloned(),
         loglevel: kv.get("BOOT_LOGLEVEL").cloned(),
+
+        extlinux: kv
+            .get("BOOT_EXTLINUX")
+            .map(|v| v == "true" || v == "yes" || v == "1")
+            .unwrap_or(false),
+        append: kv.get("BOOT_APPEND").cloned(),
+        dtb_name: kv.get("BOOT_DTB_NAME").cloned(),
 
         services: arrays.get("BOOT_SERVICES").cloned().unwrap_or_default(),
         build_steps: arrays.get("BUILD_STEPS").cloned().unwrap_or_default(),

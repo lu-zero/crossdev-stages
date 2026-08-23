@@ -4,7 +4,7 @@ use chrono::Utc;
 
 use crate::board::BoardConfig;
 use crate::container::SandboxRunner;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::portage::Portage;
 use crate::sandbox::Sandbox;
 use crate::target::Target;
@@ -617,6 +617,78 @@ fn kernel_config_fragments(board: &BoardConfig) -> String {
     )
 }
 
+/// The device tree an extlinux entry should load.
+///
+/// `BOARD_DTB_GLOB` already names what `assemble` copies into /boot, so a
+/// board that copies exactly one file has already said which DTB it boots and
+/// repeating the name in `BOOT_DTB_NAME` would only give it somewhere to
+/// drift.  A board that copies a whole directory has to name one.
+fn extlinux_fdt(board: &BoardConfig) -> Result<Option<String>> {
+    if let Some(name) = &board.dtb_name {
+        return Ok(Some(name.clone()));
+    }
+    let Some(glob) = &board.kernel_dtb_glob else {
+        return Ok(None);
+    };
+    if glob.contains(['*', '?', '[']) {
+        return Err(Error::BoardConfigParse {
+            file: board.name.clone(),
+            msg: "BOARD_DTB_GLOB matches more than one file, \
+                  so BOOT_EXTLINUX needs BOOT_DTB_NAME to say which one boots"
+                .into(),
+        });
+    }
+    Ok(Some(
+        glob.rsplit('/').next().unwrap_or(glob.as_str()).to_string(),
+    ))
+}
+
+/// Shell that writes the board's extlinux.conf.
+///
+/// Every board that boots this way writes the same file with three values
+/// changed, so the file is built here and the board states only the values.
+/// The heredoc is unquoted and carries the disk identifiers in front of it for
+/// the same reason a board hook does: `BOOT_ROOT_DEV` is written as
+/// `PARTUUID=${BOOT_PART_UUID_2}` and only means anything once expanded.
+fn extlinux_conf(board: &BoardConfig) -> Result<String> {
+    let missing = |key: &str| Error::BoardConfigParse {
+        file: board.name.clone(),
+        msg: format!("BOOT_EXTLINUX needs {key}"),
+    };
+    let kernel = board
+        .kernel_name
+        .as_deref()
+        .ok_or(missing("BOOT_KERNEL_NAME"))?;
+    let root = board.root_dev.as_deref().ok_or(missing("BOOT_ROOT_DEV"))?;
+
+    let mut append = format!("root={root} rw rootwait rootfstype=ext4");
+    if let Some(console) = &board.console {
+        append.push_str(&format!(" console={console}"));
+    }
+    if let Some(extra) = &board.append {
+        append.push(' ');
+        append.push_str(extra);
+    }
+
+    let fdt = match extlinux_fdt(board)? {
+        Some(name) => format!("    FDT /{name}\n"),
+        None => String::new(),
+    };
+
+    Ok(format!(
+        "{exports}mkdir -p /build/gen/boot/extlinux\n\
+         cat > /build/gen/boot/extlinux/extlinux.conf <<EOF\n\
+         DEFAULT gentoo\n\
+         TIMEOUT 30\n\
+         LABEL gentoo\n\
+         \x20   MENU LABEL Gentoo Linux\n\
+         \x20   LINUX /{kernel}\n\
+         {fdt}\x20   APPEND {append}\n\
+         EOF\n",
+        exports = DiskId::of(board).exports(),
+    ))
+}
+
 fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     let karch =
         board
@@ -641,7 +713,10 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     // unpack_tarball excludes ./dev to avoid permission errors in rootless containers.
     // Recreate the empty mount-point directories so the kernel can mount devtmpfs,
     // procfs, sysfs and tmpfs at boot.
-    runner.run("mkdir -p /build/gen/root/{dev,proc,sys,run,tmp}")?;
+    runner.run(
+        "mkdir -p /build/gen/root/{dev,proc,sys,run,tmp,mnt,media} && \
+         chmod 1777 /build/gen/root/tmp",
+    )?;
 
     runner.run(&format!(
         "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} \
@@ -657,6 +732,10 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
         runner.run(&format!(
             "cp /build/linux/arch/{karch}/boot/{kname} /build/gen/boot/"
         ))?;
+    }
+
+    if board.extlinux {
+        runner.run(&extlinux_conf(board)?)?;
     }
 
     runner
@@ -1048,7 +1127,7 @@ fn format_duration(d: std::time::Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{atom_cpn, kernel_config_fragments};
+    use super::{atom_cpn, extlinux_conf, extlinux_fdt, kernel_config_fragments};
     use crate::board::BoardConfig;
 
     fn board_with(fragments: &[&str]) -> BoardConfig {
@@ -1072,6 +1151,66 @@ mod tests {
         // asked for and lost, and one asked to be off that came back.
         assert!(script.contains("kernel config lost"));
         assert!(script.contains("came back on"));
+    }
+
+    fn extlinux_board() -> BoardConfig {
+        let mut board = board_with(&[]);
+        board.extlinux = true;
+        board.kernel_name = Some("Image".into());
+        board.root_dev = Some("PARTUUID=${BOOT_PART_UUID_2}".into());
+        board.console = Some("ttyS2,1500000".into());
+        board.append = Some("earlycon".into());
+        board.kernel_dtb_glob = Some("arch/arm64/boot/dts/rockchip/rk3568-odroid-m1.dtb".into());
+        board
+    }
+
+    #[test]
+    fn an_exact_dtb_path_names_the_device_tree_by_itself() {
+        let board = extlinux_board();
+        assert_eq!(
+            extlinux_fdt(&board).unwrap().as_deref(),
+            Some("rk3568-odroid-m1.dtb")
+        );
+    }
+
+    #[test]
+    fn a_dtb_glob_has_to_be_narrowed_by_hand() {
+        let mut board = extlinux_board();
+        board.kernel_dtb_glob = Some("arch/arm64/boot/dts/rockchip/*.dtb".into());
+        assert!(extlinux_fdt(&board).is_err());
+        board.dtb_name = Some("rk3588s-odroid-m2.dtb".into());
+        assert_eq!(
+            extlinux_fdt(&board).unwrap().as_deref(),
+            Some("rk3588s-odroid-m2.dtb")
+        );
+    }
+
+    #[test]
+    fn the_written_config_is_an_extlinux_file_with_the_partuuid_expanded() {
+        let script = extlinux_conf(&extlinux_board()).unwrap();
+        // The heredoc has to stay unquoted, with the identifiers exported
+        // ahead of it, or root= reaches the kernel as a literal ${...}.
+        assert!(script.contains("export BOOT_PART_UUID_2="));
+        let body = script.split("<<EOF\n").nth(1).unwrap();
+        assert_eq!(
+            body,
+            "DEFAULT gentoo\n\
+             TIMEOUT 30\n\
+             LABEL gentoo\n    \
+             MENU LABEL Gentoo Linux\n    \
+             LINUX /Image\n    \
+             FDT /rk3568-odroid-m1.dtb\n    \
+             APPEND root=PARTUUID=${BOOT_PART_UUID_2} rw rootwait \
+             rootfstype=ext4 console=ttyS2,1500000 earlycon\n\
+             EOF\n"
+        );
+    }
+
+    #[test]
+    fn extlinux_without_a_kernel_name_is_rejected() {
+        let mut board = extlinux_board();
+        board.kernel_name = None;
+        assert!(extlinux_conf(&board).is_err());
     }
 
     #[test]
