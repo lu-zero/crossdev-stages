@@ -16,11 +16,20 @@ scripts/config --enable DRM_ACCEL \
                --enable VSI_IOMMU
 make ARCH="${KERNEL_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" olddefconfig
 
-# olddefconfig silently drops symbols whose dependencies are unmet; fail here
-# rather than shipping an image without the NPU.
-for sym in CONFIG_DRM_ACCEL_ROCKET CONFIG_DRM_PANTHOR CONFIG_VIDEO_ROCKCHIP_VDEC \
-           CONFIG_VSI_IOMMU; do
-    grep -q "^${sym}=[ym]$" .config || { echo "Error: ${sym} not enabled"; exit 1; }
-done
+# olddefconfig silently drops symbols whose dependencies are unmet, and it can
+# hand back a module where a builtin was asked for.  Check the value, not just
+# that the symbol is present: VSI_IOMMU as a module is the exact silent failure
+# described above, and the old check accepted it.
+want() {
+    grep -q "^$1=$2\$" .config || { echo "Error: $1 is not =$2"; exit 1; }
+}
+want CONFIG_DRM_ACCEL y
+want CONFIG_DRM_ACCEL_ROCKET m
+want CONFIG_VIDEO_ROCKCHIP_VDEC m
+want CONFIG_VSI_IOMMU y
+
+# Comes from defconfig rather than from here; assert it has not gone away.
+grep -q "^CONFIG_DRM_PANTHOR=[ym]\$" .config ||
+    { echo "Error: CONFIG_DRM_PANTHOR not enabled"; exit 1; }
 
 make ARCH="${KERNEL_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" WERROR=0 -j"$(nproc)"
