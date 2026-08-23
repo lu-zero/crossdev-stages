@@ -724,6 +724,37 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
         cc = board.cross_compile,
     ))?;
 
+    // Firmware, in the two shapes a board actually has.  Every board carrying
+    // any firmware at all used to write these same few lines into its own
+    // post-assemble hook.
+    //
+    // Both forms fail if the directory is not there.  The version that lived in
+    // the hooks copied host paths with `2>/dev/null || true`, which meant a
+    // board could name firmware it never got: the copy runs inside the sandbox,
+    // whose rootfs has no /lib/firmware at all, so it silently did nothing on
+    // every board that used it.
+    if let Some(overlay) = &board.firmware_overlay {
+        // The overlay path ends in lib/firmware, so its *contents* land in
+        // /lib/firmware -- the vendor tree already lays out rtw89/, rtl_bt/ and
+        // the rest under the names the drivers request.
+        runner.run(&format!(
+            "[ -d /build/firmware/{overlay} ] || {{ \
+                 echo 'BOARD_FIRMWARE_OVERLAY: no {overlay} in the firmware repo' >&2; exit 1; }}; \
+             mkdir -p /build/gen/root/lib/firmware && \
+             cp -a /build/firmware/{overlay}/. /build/gen/root/lib/firmware/"
+        ))?;
+    }
+    for dir in &board.firmware_dirs {
+        // Path preserved: panthor asks for arm/mali/arch<N>.<M>/mali_csffw.bin
+        // and the network drivers are just as particular about their directory.
+        runner.run(&format!(
+            "[ -d /build/firmware/{dir} ] || {{ \
+                 echo 'FIRMWARE_DIRS: no {dir} in the firmware repo' >&2; exit 1; }}; \
+             mkdir -p /build/gen/root/lib/firmware/{dir} && \
+             cp -a /build/firmware/{dir}/. /build/gen/root/lib/firmware/{dir}/"
+        ))?;
+    }
+
     if let Some(dtb_glob) = &board.kernel_dtb_glob {
         runner.run(&format!("cp /build/linux/{dtb_glob} /build/gen/boot/"))?;
     }

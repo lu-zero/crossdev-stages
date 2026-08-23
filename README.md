@@ -250,7 +250,9 @@ by `uboot`.
 | `TFA_REPO` / `TFA_TAG` / `TFA_PLAT` | no | ARM Trusted Firmware-A (BL31) repo, tag (default `master`), platform |
 | `RKBIN_REPO` / `RKBIN_TAG` / `RKBIN_DDR` | no | Rockchip blob repo, tag (default `master`), DDR-init blob glob |
 | `FIP_REPO` / `FIP_TAG` | no | Amlogic boot-FIP packaging repo, tag (default `master`) |
-| `FIRMWARE_TAG` | no | Tag for the firmware overlay repo (default: `TAG`) |
+| `FIRMWARE_REPO` / `FIRMWARE_TAG` | no | Firmware repo cloned to `/build/firmware` (tag default: `TAG`) |
+| `BOARD_FIRMWARE_OVERLAY` | no | Path in that repo whose *contents* go to `/lib/firmware` |
+| `FIRMWARE_DIRS` | no | Directories in that repo copied to `/lib/firmware/<dir>`, path preserved |
 | `COMPRESSION` | no | Image compression: `xz` (default), `gz`, `none` |
 | `TAGS` | no | Free-form labels (bash array, e.g. `TAGS=("testing" "wip")`) -- shown in `board list` and `status` |
 | `DESCRIPTION` | no | Free-form note shown in `board info` |

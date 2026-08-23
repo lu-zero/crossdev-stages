@@ -61,8 +61,8 @@ pub struct BoardConfig {
     // Firmware overlay
     pub firmware_repo: Option<String>,
     pub firmware_tag: Option<String>,     // FIRMWARE_TAG; falls back to TAG
-    pub firmware_overlay: Option<String>, // path inside firmware repo
-    pub host_firmware_paths: Vec<String>, // host paths to copy into image
+    pub firmware_overlay: Option<String>, // path inside firmware repo, contents -> /lib/firmware
+    pub firmware_dirs: Vec<String>,       // dirs inside firmware repo, path preserved
 
     // Kernel
     pub kernel_repo: String,
@@ -319,10 +319,7 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         firmware_repo: kv.get("FIRMWARE_REPO").cloned(),
         firmware_tag: kv.get("FIRMWARE_TAG").or_else(|| kv.get("TAG")).cloned(),
         firmware_overlay: kv.get("BOARD_FIRMWARE_OVERLAY").cloned(),
-        host_firmware_paths: arrays
-            .get("HOST_FIRMWARE_PATHS")
-            .cloned()
-            .unwrap_or_default(),
+        firmware_dirs: arrays.get("FIRMWARE_DIRS").cloned().unwrap_or_default(),
 
         kernel_repo: req!("KERNEL_REPO"),
         kernel_tag: kv

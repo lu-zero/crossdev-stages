@@ -120,7 +120,7 @@ pub fn default_board_config(arch: &str) -> board::BoardConfig {
         firmware_repo: None,
         firmware_tag: None,
         firmware_overlay: None,
-        host_firmware_paths: vec![],
+        firmware_dirs: vec![],
         kernel_repo: String::new(),
         kernel_tag: String::new(),
         kernel_defconfig: String::new(),
