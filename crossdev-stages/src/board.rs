@@ -188,7 +188,9 @@ pub fn load(boards_root: &Utf8Path, name: &str) -> Result<BoardConfig> {
         merged.push('\n');
     }
     merged.push_str(&content);
-    parse(name, &path, &merged)
+    let board = parse(name, &path, &merged)?;
+    check_cflags(&board, &path)?;
+    Ok(board)
 }
 
 /// The `INCLUDE` list a board declares, read before parsing because it decides
@@ -384,6 +386,17 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
             })
             .unwrap_or_default(),
         description: kv.get("DESCRIPTION").cloned(),
+    })
+}
+
+/// Refuse a board whose CFLAGS cannot name a binary-package cache, before any
+/// of it is built.  The key is what keeps boards from sharing binaries they
+/// cannot run, so a flag set that would break the key is a configuration
+/// error, not something to discover from a fault on the hardware.
+fn check_cflags(board: &BoardConfig, path: &Utf8Path) -> Result<()> {
+    crate::cflags::check(&board.effective_cflags()).map_err(|msg| Error::BoardConfigParse {
+        file: path.to_string(),
+        msg: format!("BOARD_CFLAGS: {msg}"),
     })
 }
 

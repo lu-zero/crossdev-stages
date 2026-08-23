@@ -1,4 +1,4 @@
-use sokgi::{Dialect, FlagSet};
+use sokgi::{Dialect, FlagSet, Warning};
 
 /// Canonicalize a CFLAGS string and hash it into a short stable id.
 ///
@@ -20,6 +20,47 @@ pub fn canonicalize(cflags: &str) -> (String, String) {
     }
 }
 
+/// Reject CFLAGS that cannot honestly name a store key.
+///
+/// The hash is what keeps one board's binary packages away from another's, so
+/// two flag sets that produce different code must never reduce to the same
+/// key, and one flag set must not mean different things on different machines.
+/// Two of sokgi's warnings say exactly that has happened, and both are cheap
+/// to state and impossible to notice later:
+///
+///   * `-march=native` asks this machine what it is.  The key would be the
+///     same on a machine that answered differently.
+///   * `-march` together with `-mcpu`: sokgi 0.2 drops the `-mcpu` when both
+///     are given, so two boards differing only in their core would share a
+///     key and each other's binaries.
+///
+/// Returns the offending flag, so the caller can say which board.
+pub fn check(cflags: &str) -> Result<(), String> {
+    let Ok((_set, warnings)) = FlagSet::parse(cflags, Dialect::C) else {
+        // A parse failure falls back to hashing the raw string, which is
+        // still a faithful key.  Nothing to refuse.
+        return Ok(());
+    };
+    for warning in &warnings {
+        match warning {
+            Warning::MachineDependent(flag) => {
+                return Err(format!(
+                    "{flag} depends on the build machine, so it cannot name a \
+                     cache that outlives it"
+                ));
+            }
+            Warning::DroppedByOverride { dropped, by } => {
+                return Err(format!(
+                    "{dropped} is dropped when {by} is also given, so boards \
+                     differing only in {dropped} would share binary packages"
+                ));
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// FNV-1a-64 with sokgi's frozen constants, 16 hex chars — matches
 /// `FlagSet::stable_hash_hex` so both code paths key the same store.  Only
 /// the parse-error fallback needs it, as that path has no `FlagSet` to call
@@ -36,6 +77,32 @@ fn fnv1a_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_key_that_would_differ_per_machine_is_refused() {
+        assert!(check("-O2 -march=native -pipe").is_err());
+    }
+
+    #[test]
+    fn flags_that_would_silently_merge_two_boards_are_refused() {
+        // sokgi drops -mcpu here, so cortex-a76 and cortex-a53 would collide.
+        assert!(check("-O2 -march=armv8-a -mcpu=cortex-a76").is_err());
+    }
+
+    #[test]
+    fn every_board_in_the_tree_passes() {
+        for cflags in [
+            "-O3 -march=rv64gcv_zvl256b -pipe",
+            "-O3 -march=rv64gcv_zvl128b -pipe",
+            "-O3 -march=rv64gcv_zvl512b -pipe",
+            "-O3 -mcpu=cortex-a76.cortex-a55+crc+crypto -pipe",
+            "-O3 -mcpu=cortex-a55+crc+crypto -pipe",
+            "-O2 -march=armv7ve -mtune=cortex-a15.cortex-a7 -mfpu=neon-vfpv4 -mfloat-abi=hard -pipe",
+            "-march=pentium-mmx -O2 -pipe",
+        ] {
+            assert!(check(cflags).is_ok(), "{cflags}");
+        }
+    }
 
     #[test]
     fn reordering_yields_same_hash() {
