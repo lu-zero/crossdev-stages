@@ -130,32 +130,127 @@ fn run_step(
 
     let override_sh = format!("override-{step}.sh");
     if board_dir.join(&override_sh).exists() {
-        runner.run(&run_board_script(&board.name, &override_sh))?;
+        runner.run(&run_board_script(board, &override_sh))?;
         return build.mark_done(marker);
     }
 
     let pre_sh = format!("pre-{step}.sh");
     if board_dir.join(&pre_sh).exists() {
-        runner.run(&run_board_script(&board.name, &pre_sh))?;
+        runner.run(&run_board_script(board, &pre_sh))?;
     }
 
     default_fn(runner)?;
 
     let post_sh = format!("post-{step}.sh");
     if board_dir.join(&post_sh).exists() {
-        runner.run(&run_board_script(&board.name, &post_sh))?;
+        runner.run(&run_board_script(board, &post_sh))?;
     }
 
     build.mark_done(marker)
 }
 
-fn run_board_script(board_name: &str, script: &str) -> String {
+fn run_board_script(board: &BoardConfig, script: &str) -> String {
     format!(
-        "set -e\nexport LDCONFIG=/usr/local/bin/ldconfig\n\
+        "set -e\nexport LDCONFIG=/usr/local/bin/ldconfig\n{disk}\
          source /scripts/boards/{name}/board.conf\n\
          source /scripts/boards/{name}/{script}",
-        name = board_name,
+        disk = DiskId::of(board).exports(),
+        name = board.name,
     )
+}
+
+/// Identifiers for the partition table, derived from the board rather than
+/// written out by hand or drawn at random.
+///
+/// A board needs a stable name for its root filesystem that does not depend on
+/// which slot the card ends up in.  The kernel only understands `PARTUUID=`
+/// without an initramfs (`block/early-lookup.c`), so that name has to come from
+/// the partition table, which means it has to be decided before `assemble`
+/// writes the boot config -- genimage's own `disk-signature = random` happens a
+/// step too late to be of any use.
+///
+/// Deriving it from the board keeps both properties that matter: two boards
+/// never collide, and building the same board twice gives the same image.  The
+/// input is what actually decides the contents, not the whole file, so editing
+/// a comment in board.conf does not renumber the disk.
+struct DiskId {
+    /// MBR disk signature, never zero: the kernel spells the PARTUUID of slot
+    /// N as "{sig:08x}-{N:02x}" (`block/partitions/msdos.c`).
+    sig: u32,
+    /// GPT UUID, with the final byte left as the partition index.
+    uuid: [u8; 16],
+}
+
+impl DiskId {
+    fn of(board: &BoardConfig) -> Self {
+        let identity = format!(
+            "{}\n{}\n{}\n{}\n{}\n{}\n",
+            board.name,
+            board.arch,
+            board.chost(),
+            board.kernel_repo,
+            board.kernel_tag,
+            board.effective_cflags(),
+        );
+        let hi = fnv1a_64(identity.as_bytes());
+        let lo = fnv1a_64(format!("{identity}uuid\n").as_bytes());
+
+        let mut uuid = [0u8; 16];
+        uuid[..8].copy_from_slice(&hi.to_be_bytes());
+        uuid[8..].copy_from_slice(&lo.to_be_bytes());
+
+        // A zero signature is what genimage writes when none is configured, so
+        // every unsigned card in the world already claims it.
+        let sig = match (hi as u32) ^ ((hi >> 32) as u32) {
+            0 => 1,
+            n => n,
+        };
+        Self { sig, uuid }
+    }
+
+    /// `uuid` with its last byte set to `part`, so a disk and its partitions
+    /// read as an obviously related set.
+    fn part_uuid(&self, part: u8) -> String {
+        let mut b = self.uuid;
+        b[15] = part;
+        format!(
+            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-\
+             {:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13],
+            b[14], b[15],
+        )
+    }
+
+    /// Shell `export` lines, consumed both by board scripts (which source
+    /// board.conf after these, so `BOOT_ROOT_DEV` can refer to them) and by
+    /// genimage, whose config parser expands `${VAR}` through getenv.
+    fn exports(&self) -> String {
+        let mut out = format!(
+            "export BOOT_DISK_ID={:08x}\nexport BOOT_DISK_SIG=0x{:08x}\n\
+             export BOOT_DISK_UUID={}\n",
+            self.sig,
+            self.sig,
+            self.part_uuid(0),
+        );
+        for part in 1..=4u8 {
+            out.push_str(&format!(
+                "export BOOT_PART_UUID_{part}={}\n",
+                self.part_uuid(part)
+            ));
+        }
+        out
+    }
+}
+
+/// FNV-1a, 64-bit.  The same hash the CFLAGS tooling uses, and short enough to
+/// keep here rather than take a dependency for six lines.
+fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
 }
 
 // ── Default implementations ─────────────────────────────────────────────────
@@ -431,11 +526,16 @@ fn default_pack(
         .clone()
         .unwrap_or_else(|| format!("gentoo-linux-{}_dev-sdcard.img", board.name));
 
+    // genimage's config parser expands ${VAR} through getenv, so a board can
+    // write `disk-signature = "${BOOT_DISK_SIG}"` and stay in step with the
+    // root= that assemble already wrote.
     runner.run(&format!(
-        "rm -rf /build/tmp && cd /build && \
+        "set -e\n{disk}\
+         rm -rf /build/tmp && cd /build && \
          genimage --config {cfg_path} \
          --mkdosfs mkfs.vfat \
-         --inputpath /build --outputpath /build --rootpath /build/gen"
+         --inputpath /build --outputpath /build --rootpath /build/gen",
+        disk = DiskId::of(board).exports(),
     ))?;
 
     // Stamp the build timestamp into the image filename so successive builds
