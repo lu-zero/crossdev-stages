@@ -863,21 +863,9 @@ pub fn build(
     // make.conf ships into images.
     let binpkgs_dir = board_binpkgs_dir(ws, board)?;
 
-    let default_steps = if board.build_steps.is_empty() {
-        vec![
-            "deps",
-            "checkout",
-            "bootloader",
-            "kernel",
-            "assemble",
-            "pack",
-        ]
-    } else {
-        board.build_steps.iter().map(String::as_str).collect()
-    };
     let steps_to_run: Vec<&str> = match steps {
         Some(s) => s.iter().map(String::as_str).collect(),
-        None => default_steps,
+        None => board.effective_build_steps(),
     };
 
     let total = steps_to_run.len();

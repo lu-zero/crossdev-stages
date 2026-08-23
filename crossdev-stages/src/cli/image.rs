@@ -31,21 +31,11 @@ pub async fn run(
                 apply_pin_overrides(ws, &board_name, &mut board_cfg)?;
             }
 
-            let default_steps: Vec<String> = if board_cfg.build_steps.is_empty() {
-                [
-                    "deps",
-                    "checkout",
-                    "bootloader",
-                    "kernel",
-                    "assemble",
-                    "pack",
-                ]
+            let default_steps: Vec<String> = board_cfg
+                .effective_build_steps()
                 .iter()
                 .map(|s| s.to_string())
-                .collect()
-            } else {
-                board_cfg.build_steps.clone()
-            };
+                .collect();
             let steps_to_show = if steps.is_empty() {
                 &default_steps
             } else {

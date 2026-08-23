@@ -103,7 +103,27 @@ pub struct BoardConfig {
     pub description: Option<String>,
 }
 
+/// The steps `image build` runs for a board that does not list its own.
+/// A board.conf states BUILD_STEPS only to depart from this order.
+pub const DEFAULT_BUILD_STEPS: [&str; 6] = [
+    "deps",
+    "checkout",
+    "bootloader",
+    "kernel",
+    "assemble",
+    "pack",
+];
+
 impl BoardConfig {
+    /// The steps this board builds through: its own list, or the default.
+    pub fn effective_build_steps(&self) -> Vec<&str> {
+        if self.build_steps.is_empty() {
+            DEFAULT_BUILD_STEPS.to_vec()
+        } else {
+            self.build_steps.iter().map(String::as_str).collect()
+        }
+    }
+
     /// Derive the CHOST triple from the arch (e.g. "i586-pc-linux-gnu", "riscv64-unknown-linux-gnu").
     /// Uses explicit CHOST from board.conf if set, otherwise derives from arch.
     pub fn chost(&self) -> String {
