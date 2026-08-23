@@ -10,8 +10,15 @@ grep -q '^VIDEO_CARDS=' "${cross}/make.conf" ||
 
 # No X server on this board.  zink runs GL on top of panvk, which is the path
 # a wlroots compositor can actually accelerate on Mali-G610.
-grep -q '^USE=' "${cross}/make.conf" ||
-    echo 'USE="-X wayland vulkan zink alsa pipewire screencast"' >> "${cross}/make.conf"
+#
+# Appended to USE rather than assigned: crossdev already wrote USE="${ARCH}"
+# here, so testing for the variable at all just skips this silently and leaves
+# every package on the profile default -- which is how mpv ended up asking for
+# vulkan-loader[X].
+grep -q 'crossdev-stages USE' "${cross}/make.conf" || cat >> "${cross}/make.conf" <<'USEEOF'
+# crossdev-stages USE
+USE="${USE} -X wayland vulkan zink alsa pipewire screencast"
+USEEOF
 
 mkdir -p "${cross}/package.use"
 
@@ -24,6 +31,9 @@ echo 'media-video/ffmpeg gpl x264 v4l alsa opus srt' > "${cross}/package.use/ffm
 
 # alsa is off by default here and compositor/textoverlay live in -base.
 echo 'media-libs/gst-plugins-base alsa pango gles2 egl' > "${cross}/package.use/gstreamer"
+
+# modetest, which is how the HDMI output modes get read, ships only with tools.
+echo 'x11-libs/libdrm tools' > "${cross}/package.use/libdrm"
 
 # mesa_clc builds for CBUILD, so the card selection is repeated on the host.
 mkdir -p /etc/portage/package.use
