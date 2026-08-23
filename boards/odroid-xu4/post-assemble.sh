@@ -23,6 +23,11 @@ LABEL gentoo
     LINUX /${BOOT_KERNEL_NAME}
     FDT /exynos5422-odroidxu4.dtb
     APPEND root=${BOOT_ROOT_DEV} rw rootwait rootfstype=ext4 console=tty1 console=${BOOT_CONSOLE} earlycon
+LABEL gentoo-drm-debug
+    MENU LABEL Gentoo Linux (verbose display bring-up)
+    LINUX /${BOOT_KERNEL_NAME}
+    FDT /exynos5422-odroidxu4.dtb
+    APPEND root=${BOOT_ROOT_DEV} rw rootwait rootfstype=ext4 console=tty1 console=${BOOT_CONSOLE} earlycon drm.debug=0x1f log_buf_len=4M ignore_loglevel loglevel=8
 EXTEOF
 
 # The stage3 fstab is comments only, so /boot never mounts and kernel updates
@@ -30,6 +35,6 @@ EXTEOF
 # Same PARTUUID scheme as root: index-agnostic, so the card boots the same
 # whether or not an eMMC module is fitted.
 cat >> /build/gen/root/etc/fstab <<FSTAB
-PARTUUID=5422b001-02  /      ext4  defaults,noatime  0 1
-PARTUUID=5422b001-01  /boot  ext4  defaults,noatime  0 2
+PARTUUID=${BOOT_DISK_ID}-02  /      ext4  defaults,noatime  0 1
+PARTUUID=${BOOT_DISK_ID}-01  /boot  ext4  defaults,noatime  0 2
 FSTAB
