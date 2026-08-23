@@ -1,5 +1,19 @@
-# Mesa for the Mali-T628: panfrost GL on Midgard v4, scanning out through
-# exynos-drm.  VIDEO_CARDS is written into the crossdev prefix by pre-deps.sh.
-# There is no Vulkan for Midgard, so no panvk here.  Dropping this line leaves
-# a bootable image with the kernel-side GPU driver still in place.
+# Until defaults/target-packages.txt is back on master (it was dropped by
+# 37ccaa1), every board carries its own list.  Once the defaults land this
+# shrinks to the genuine extras and the rest comes for free.
+
+# Base userland.  parted is not optional: grow-rootfs calls it on first boot
+# and the rootfs stays at its built size without it.
+net-misc/ntp
+app-admin/metalog
+sys-apps/busybox
+sys-block/parted
+app-editors/vim
+sys-process/htop
+app-misc/fastfetch
+dev-vcs/git
+app-portage/gentoolkit
+
+# Mesa for the Mali-T620.  Midgard v4 caps at GLES 2.0 and there is no Vulkan,
+# so this is panfrost only; VIDEO_CARDS is written by pre-deps.sh.
 media-libs/mesa
