@@ -12,6 +12,7 @@ pub mod store;
 pub mod target;
 pub mod update;
 pub mod util;
+pub mod verify;
 
 // Saner default colored style.
 const fn cli_styles() -> Styles {
@@ -90,6 +91,19 @@ pub enum Commands {
     /// Maintenance: cleanup, logs, diagnostics.
     #[command(subcommand)]
     Maint(MaintCmd),
+
+    /// Check a board's binaries against the ISA its CFLAGS promise.
+    Verify {
+        /// Board name.
+        #[arg(long)]
+        board: String,
+        /// Sandbox name (default: most-recently-modified).
+        #[arg(long)]
+        sandbox: Option<String>,
+        /// Exit non-zero when a binary uses an extension the board lacks.
+        #[arg(long)]
+        strict: bool,
+    },
 
     /// Show overview of sandboxes, targets, builds, and boards.
     Status {
