@@ -67,6 +67,7 @@ impl Sandbox {
             mirror,
             binhost: None,
             pkgdir: None,
+            for_build_host: true,
         }
         .write(&self.dir.join("etc/portage"))?;
 
@@ -645,6 +646,7 @@ impl Sandbox {
             mirror: None,
             binhost: None,
             pkgdir: Some("/binpkgs"),
+            for_build_host: true,
         }
         .write(portage_dir)?;
 

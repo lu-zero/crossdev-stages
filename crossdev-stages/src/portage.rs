@@ -15,6 +15,11 @@ pub struct MakeConf<'a> {
     /// land.  When set, `FEATURES` gains `buildpkg` and `PKGDIR` is
     /// pointed at it.  `None` keeps portage defaults.
     pub pkgdir: Option<&'a str>,
+    /// Whether emerges driven by this config run on the machine doing the
+    /// build.  The sandbox and the crossdev prefix do; the target stage does
+    /// not -- it is carried onto the board, where this machine's core count
+    /// and log paths are not just useless but harmful.
+    pub for_build_host: bool,
 }
 
 impl<'a> MakeConf<'a> {
@@ -33,36 +38,49 @@ impl<'a> MakeConf<'a> {
         // Clean up the llvm:22 mask left in existing sandboxes.
         let _ = std::fs::remove_file(portage_dir.join("package.mask/llvm-unused-slot"));
 
-        let (jobs, load) = parallelism();
         let garch = gentoo_arch(self.arch)?;
         let cflags = self.cflags.unwrap_or_else(|| default_cflags(self.arch));
 
-        set_make_conf_var(
-            &make_conf,
-            "MAKEOPTS",
-            &format!("-j{jobs} --load-average {load}"),
-        )?;
-        set_make_conf_var(
-            &make_conf,
-            "EMERGE_DEFAULT_OPTS",
-            &format!("--jobs={jobs} --load-average {load}"),
-        )?;
-        let features = if self.pkgdir.is_some() {
-            "parallel-install -merge-wait buildpkg"
-        } else {
-            "parallel-install -merge-wait"
-        };
-        set_make_conf_var(&make_conf, "FEATURES", features)?;
         set_make_conf_var(&make_conf, "ACCEPT_KEYWORDS", &format!("~{garch}"))?;
-        set_make_conf_var(
-            &make_conf,
-            "PORT_LOGDIR",
-            &format!("/var/log/portage/{garch}"),
-        )?;
-        // PKGDIR only makes sense inside the sandbox (it names a bind-mount
-        // path).  Drop a stale line when unset so a target make.conf that
-        // once carried it (and would ship into images) is healed on the
-        // next prepare.
+
+        if self.for_build_host {
+            let (jobs, load) = parallelism();
+            set_make_conf_var(
+                &make_conf,
+                "MAKEOPTS",
+                &format!("-j{jobs} --load-average {load}"),
+            )?;
+            set_make_conf_var(
+                &make_conf,
+                "EMERGE_DEFAULT_OPTS",
+                &format!("--jobs={jobs} --load-average {load}"),
+            )?;
+            // buildpkg only where there is a keyed directory to build into:
+            // a binary package is only safe to reuse under the flags that
+            // made it, and that is what PKGDIR names.
+            let features = if self.pkgdir.is_some() {
+                "parallel-install -merge-wait buildpkg"
+            } else {
+                "parallel-install -merge-wait"
+            };
+            set_make_conf_var(&make_conf, "FEATURES", features)?;
+            set_make_conf_var(
+                &make_conf,
+                "PORT_LOGDIR",
+                &format!("/var/log/portage/{garch}"),
+            )?;
+        } else {
+            // Older target stages were written with this machine's tuning in
+            // them.  Take it back out rather than leave a board emerging with
+            // a build host's core count.
+            for stale in ["MAKEOPTS", "EMERGE_DEFAULT_OPTS", "FEATURES", "PORT_LOGDIR"] {
+                unset_make_conf_var(&make_conf, stale)?;
+            }
+        }
+
+        // PKGDIR names a bind-mount that exists only inside the sandbox, and
+        // the target's make.conf is copied into the image.  Drop a stale line
+        // when unset so a target that once carried one is healed.
         match self.pkgdir {
             Some(pkgdir) => set_make_conf_var(&make_conf, "PKGDIR", pkgdir)?,
             None => remove_make_conf_var(&make_conf, "PKGDIR")?,
@@ -167,6 +185,18 @@ else
     printf "%s\n" "$logs" | head -n 5
 fi
 "#;
+
+/// Remove a variable from a make.conf, leaving everything else alone.
+pub fn unset_make_conf_var(file: &Utf8Path, name: &str) -> Result<()> {
+    let content = std::fs::read_to_string(file).unwrap_or_default();
+    let prefix = format!("{name}=");
+    let kept: Vec<&str> = content
+        .lines()
+        .filter(|line| !line.starts_with(&prefix))
+        .collect();
+    std::fs::write(file, kept.join("\n") + "\n")?;
+    Ok(())
+}
 
 /// Portage operations that run *inside* a sandbox container.
 pub struct Portage<'a> {
