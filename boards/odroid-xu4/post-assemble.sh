@@ -22,11 +22,14 @@ LABEL gentoo
     MENU LABEL Gentoo Linux
     LINUX /${BOOT_KERNEL_NAME}
     FDT /exynos5422-odroidxu4.dtb
-    APPEND root=${BOOT_ROOT_DEV} rw rootwait rootfstype=ext4 console=${BOOT_CONSOLE} earlycon
+    APPEND root=${BOOT_ROOT_DEV} rw rootwait rootfstype=ext4 console=tty1 console=${BOOT_CONSOLE} earlycon
 EXTEOF
 
 # The stage3 fstab is comments only, so /boot never mounts and kernel updates
 # would land in the rootfs copy instead of the partition u-boot reads.
+# Same PARTUUID scheme as root: index-agnostic, so the card boots the same
+# whether or not an eMMC module is fitted.
 cat >> /build/gen/root/etc/fstab <<FSTAB
-/dev/mmcblk2p1  /boot  ext4  defaults,noatime  0 2
+PARTUUID=5422b001-02  /      ext4  defaults,noatime  0 1
+PARTUUID=5422b001-01  /boot  ext4  defaults,noatime  0 2
 FSTAB
