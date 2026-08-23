@@ -1,3 +1,26 @@
+# Until defaults/target-packages.txt is back on master (it was dropped by
+# 37ccaa1), every board carries its own list.  Once the defaults land this
+# shrinks to the genuine extras and the rest comes for free.
+
+# Base userland.  grow-rootfs needs no package of its own: it resizes with
+# sfdisk and partx, both from util-linux, which @system already pulls in.
+net-misc/ntp
+app-admin/metalog
+sys-apps/busybox
+app-editors/vim
+sys-process/htop
+app-misc/fastfetch
+dev-vcs/git
+app-portage/gentoolkit
+
+# The point of this board is the mainline media stack, and none of it can be
+# checked from a serial console without v4l2-ctl.  In Gentoo that lives in
+# media-libs/libv4l (the old media-tv/v4l-utils is blocked by it), behind the
+# `utils` USE flag, which is on by default.  It answers the only question that
+# matters on first boot:
+#   v4l2-ctl --list-devices | grep -A2 snps_hdmirx
+media-libs/libv4l
+
 # Mesa for the Mali-G610: panfrost GL + panvk Vulkan.  VIDEO_CARDS is written
 # into the crossdev prefix by pre-deps.sh.  Cross-emerge of mesa is not proven
 # yet; dropping this line leaves a bootable image with the kernel-side GPU,

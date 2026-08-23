@@ -21,3 +21,10 @@ LABEL gentoo
     FDT /rk3588-orangepi-5-ultra.dtb
     APPEND root=${BOOT_ROOT_DEV} rw rootwait rootfstype=ext4 console=${BOOT_CONSOLE} earlycon cma=256M
 EXTEOF
+
+# The stage3 fstab is comments only, so /boot never mounts and a kernel update
+# would land in the rootfs copy instead of the partition u-boot reads.
+cat >> /build/gen/root/etc/fstab <<FSTAB
+PARTUUID=${BOOT_PART_UUID_2}  /      ext4  defaults,noatime  0 1
+PARTUUID=${BOOT_PART_UUID_1}  /boot  ext4  defaults,noatime  0 2
+FSTAB
