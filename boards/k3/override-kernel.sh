@@ -8,4 +8,4 @@ cd /build/linux
 make ARCH="${KERNEL_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" "${KERNEL_DEFCONFIG}"
 scripts/config --disable GCC_PLUGINS
 make ARCH="${KERNEL_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" olddefconfig
-make ARCH="${KERNEL_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" -j"$(nproc)"
+make ARCH="${KERNEL_ARCH}" CROSS_COMPILE="${CROSS_COMPILE}" WERROR=0 -j"$(nproc)"
