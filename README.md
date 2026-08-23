@@ -21,7 +21,6 @@ Rootless cross-compilation of Gentoo stages using crossdev and hakoniwa
 | Board | Arch | Kernel | Boot chain | CFLAGS | Status |
 |---|---|---|---|---|---|
 | k1 | riscv64 | spacemit 6.6 | OpenSBI + U-Boot | `-O3 -march=rv64gcv_zvl256b` | stable |
-| k1-upstream | riscv64 | spacemit k3 | OpenSBI + U-Boot | `-O3 -march=rv64gcv_zvl256b` | testing |
 | k3 | riscv64 | spacemit 6.18 | OpenSBI + U-Boot | `-O3 -march=rva23u64` | stable |
 | k230 | riscv64 | canaan (hdmi) | OpenSBI (payload) + U-Boot | `-O3 -march=rv64gcv_zvl128b` | stable |
 | ky-x1 | riscv64 | spacemit 6.6 | OpenSBI + U-Boot | `-O3 -march=rv64gcv_zvl256b` | stable |
