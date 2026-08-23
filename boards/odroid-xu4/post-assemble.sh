@@ -24,3 +24,9 @@ LABEL gentoo
     FDT /exynos5422-odroidxu4.dtb
     APPEND root=${BOOT_ROOT_DEV} rw rootwait rootfstype=ext4 console=${BOOT_CONSOLE} earlycon
 EXTEOF
+
+# The stage3 fstab is comments only, so /boot never mounts and kernel updates
+# would land in the rootfs copy instead of the partition u-boot reads.
+cat >> /build/gen/root/etc/fstab <<FSTAB
+/dev/mmcblk2p1  /boot  ext4  defaults,noatime  0 2
+FSTAB
