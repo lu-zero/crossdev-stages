@@ -1,3 +1,8 @@
 # u-boot's mkeficapsule host tool calls gnutls_pkcs11_*, which Gentoo's gnutls
 # only provides with USE=pkcs11; without it the tools link fails.
 net-libs/gnutls
+
+# orcc generates SIMD code at build time and therefore runs on the build host,
+# not the target.  gst-plugins-base stops at configure without it:
+# "Program 'orcc' not found or not executable".
+dev-lang/orc
