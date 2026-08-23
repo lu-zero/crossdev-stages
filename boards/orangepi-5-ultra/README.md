@@ -46,6 +46,10 @@ ls /dev/accel/          # accel0
 dmesg | grep -e rocket -e panthor
 ```
 
+The kernel command line carries `cma=256M`.  The 160 MiB HDMI-RX pool is a
+separate reservation; the global CMA default of 32 MiB is what the VPU and the
+GPU allocate from, and 32 MiB does not cover 4K buffers.
+
 ## Firmware
 
 Pulled from upstream linux-firmware (`FIRMWARE_REPO`, pinned by
