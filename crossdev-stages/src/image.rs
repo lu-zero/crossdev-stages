@@ -368,8 +368,14 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     ))?;
 
     if let (Some(tty), Some(baud)) = (&board.serial_tty, &board.serial_baud) {
+        // baselayout ships an enabled `s0` getty on ttyS0.  Boards whose serial
+        // port is anything else (ttySAC2, ttyAMA0, hvc0) have no such device,
+        // so agetty exits at once and init respawns it until it gives up:
+        // "INIT: Id \"s0\" respawning too fast", forever, every five minutes.
+        // Disable the stock serial gettys and install the board's own.
         runner.run(&format!(
-            "echo 'x1:12345:respawn:/sbin/agetty {baud} {tty} linux' \
+            "sed -i -e '/^s[0-9]*:/s/^/#/' /build/gen/root/etc/inittab && \
+             echo 's0:12345:respawn:/sbin/agetty {baud} {tty} linux' \
              >> /build/gen/root/etc/inittab"
         ))?;
     }
