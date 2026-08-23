@@ -17,7 +17,12 @@ grep -q '^VIDEO_CARDS=' "${cross}/make.conf" ||
 # vulkan-loader[X].
 grep -q 'crossdev-stages USE' "${cross}/make.conf" || cat >> "${cross}/make.conf" <<'USEEOF'
 # crossdev-stages USE
-USE="${USE} -X wayland vulkan zink alsa pipewire screencast"
+#
+# -introspection is not a preference.  glib builds gobject-introspection as a
+# subproject and its g-ir-compiler is a target binary that meson wants to run
+# on the build host: "An exe_wrapper is needed for .../tools/g-ir-compiler".
+# There is no such thing when the target is aarch64 and the host is x86_64.
+USE="${USE} -X wayland vulkan zink alsa pipewire screencast -introspection"
 USEEOF
 
 mkdir -p "${cross}/package.use"
