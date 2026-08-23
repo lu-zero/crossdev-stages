@@ -26,3 +26,38 @@ media-libs/libv4l
 # yet; dropping this line leaves a bootable image with the kernel-side GPU,
 # NPU and VPU drivers still in place.
 media-libs/mesa
+
+# Desktop.  sway is wlroots, so there is no X server anywhere in here; USE
+# carries -X, and see make.conf.
+gui-wm/sway
+gui-apps/foot
+gui-apps/wl-clipboard
+gui-apps/wmenu
+media-video/pipewire
+media-video/wireplumber
+
+# sway is wlroots, and wlroots needs a seat manager.  Without logind that is
+# seatd, and without seatd sway does not start at all.
+sys-auth/seatd
+media-sound/alsa-utils
+
+# The point of the board.  Mainline RK3588 has no H.264 encoder -- the only
+# encoder in the tree is JPEG (hantro_h1_jpeg_enc, rockchip_vpu2_hw_jpeg_enc)
+# -- so H.264 is software or it is nothing.  x264 forces the gpl USE flag.
+media-video/ffmpeg
+media-libs/x264
+media-video/mpv
+
+# GStreamer for the capture pipeline: v4l2src reads the HDMI receiver,
+# v4l2convert reaches RGA for colour conversion, x264enc encodes, srtsink
+# ships it.  1.26 has all of these; only RK3588 stateless decode via
+# v4l2codecs would need 1.28.
+media-libs/gstreamer
+media-libs/gst-plugins-base
+media-libs/gst-plugins-good
+media-libs/gst-plugins-bad
+media-plugins/gst-plugins-v4l2
+media-plugins/gst-plugins-x264
+media-plugins/gst-plugins-srt
+media-plugins/gst-plugins-jpeg
+media-plugins/gst-plugins-opus
