@@ -66,6 +66,10 @@ pub struct BoardConfig {
     pub kernel_repo: String,
     pub kernel_tag: String,
     pub kernel_defconfig: String,
+    /// Names looked up as boards/<board>/kernel-config/<name>, falling back
+    /// to defaults/kernel-config/<name>.  Appended to .config in listed
+    /// order after the defconfig, and every line is checked afterwards.
+    pub kernel_config_fragments: Vec<String>,
     pub kernel_dtb_glob: Option<String>,
 
     pub dracut_modules: Option<String>,
@@ -258,6 +262,10 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
             .cloned()
             .unwrap_or(tag.clone()),
         kernel_defconfig: req!("KERNEL_DEFCONFIG"),
+        kernel_config_fragments: kv
+            .get("KERNEL_CONFIG_FRAGMENTS")
+            .map(|v| v.split_whitespace().map(str::to_string).collect())
+            .unwrap_or_default(),
         kernel_dtb_glob: kv.get("BOARD_DTB_GLOB").cloned(),
 
         dracut_modules: kv.get("DRACUT_MODULES").cloned(),

@@ -553,11 +553,60 @@ fn default_kernel(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
          export KBUILD_BUILD_USER=crossdev-stages\n\
          export KBUILD_BUILD_HOST={board_name}\n\
          make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} {defconfig}\n\
+         {fragments}\
          make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} WERROR=0 -j$(nproc)",
         cc = board.cross_compile,
         defconfig = board.kernel_defconfig,
         board_name = board.name,
+        fragments = kernel_config_fragments(board),
     ))
+}
+
+/// Shell that appends each fragment to .config, reruns olddefconfig, and then
+/// checks that every line the fragments asked for actually survived.
+///
+/// The check is the point.  olddefconfig drops a symbol whose dependencies are
+/// unmet and can hand back a module where a builtin was asked for, both
+/// silently, and a board that says `# CONFIG_X is not set` has no way to find
+/// out that X came back on.  Checking the fragments themselves means the whole
+/// request is covered rather than whichever symbols someone remembered to list.
+fn kernel_config_fragments(board: &BoardConfig) -> String {
+    if board.kernel_config_fragments.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    for name in &board.kernel_config_fragments {
+        out.push_str(&format!(
+            "f=/scripts/boards/{board}/kernel-config/{name}\n\
+             [ -f \"$f\" ] || f=/scripts/defaults/kernel-config/{name}\n\
+             [ -f \"$f\" ] || {{ echo \"no kernel config fragment {name}\" >&2; exit 1; }}\n\
+             cat \"$f\" >> /build/linux/.config\n\
+             frags=\"$frags $f\"\n",
+            board = board.name,
+        ));
+    }
+    format!(
+        "frags=\n\
+         {out}\
+         make -C /build/linux ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig\n\
+         for f in $frags; do\n\
+             while read -r line; do\n\
+                 case \"$line\" in\n\
+                     '#'*' is not set')\n\
+                         sym=${{line#\\# }}; sym=${{sym%% *}}\n\
+                         if grep -q \"^$sym=\" /build/linux/.config; then\n\
+                             echo \"$sym came back on, fragment asked for it off\" >&2\n\
+                             exit 1\n\
+                         fi ;;\n\
+                     CONFIG_*=*)\n\
+                         grep -qx \"$line\" /build/linux/.config || {{\n\
+                             echo \"kernel config lost: $line\" >&2\n\
+                             exit 1\n\
+                         }} ;;\n\
+                 esac\n\
+             done < \"$f\"\n\
+         done\n"
+    )
 }
 
 fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
@@ -992,7 +1041,31 @@ fn format_duration(d: std::time::Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::atom_cpn;
+    use super::{atom_cpn, kernel_config_fragments};
+    use crate::board::BoardConfig;
+
+    fn board_with(fragments: &[&str]) -> BoardConfig {
+        let mut board = crate::cli::util::default_board_config("riscv64");
+        board.name = "demo".into();
+        board.kernel_config_fragments = fragments.iter().map(|s| s.to_string()).collect();
+        board
+    }
+
+    #[test]
+    fn no_fragments_generates_nothing() {
+        assert!(kernel_config_fragments(&board_with(&[])).is_empty());
+    }
+
+    #[test]
+    fn a_fragment_is_looked_up_board_first_then_defaults() {
+        let script = kernel_config_fragments(&board_with(&["riscv64-no-vector"]));
+        assert!(script.contains("/scripts/boards/demo/kernel-config/riscv64-no-vector"));
+        assert!(script.contains("/scripts/defaults/kernel-config/riscv64-no-vector"));
+        // Both directions of the check have to be generated: a symbol that was
+        // asked for and lost, and one asked to be off that came back.
+        assert!(script.contains("kernel config lost"));
+        assert!(script.contains("came back on"));
+    }
 
     #[test]
     fn an_atom_reduces_to_the_directory_that_would_hold_it() {
