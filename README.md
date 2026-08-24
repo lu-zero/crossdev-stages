@@ -244,7 +244,7 @@ by `uboot`.
 | `BOOT_APPEND` | no | Kernel arguments added to that entry |
 | `BOOT_DTB_NAME` | no | DTB to boot, when `BOARD_DTB_GLOB` matches more than one |
 | `ISA_STRICT` | no | `false` downgrades an unrunnable binary to a warning (default: fail) |
-| `ROOTFS_PROVIDER` | no | Who fills the image rootfs: `gentoo` (default; stage3 + cross-emerge + OpenRC), `debian` or `ubuntu` (debootstrap + systemd), `alpine` (apk + OpenRC), `fedora` (container base image + dnf5 + systemd), `buildroot` (defconfig build), or `none` (board hooks own it) |
+| `ROOTFS_PROVIDER` | no | Who fills the image rootfs: `gentoo` (default; stage3 + cross-emerge + OpenRC), `debian` or `ubuntu` (debootstrap + systemd), `alpine` (apk + OpenRC), `fedora` (container base image + dnf5 + systemd), `buildroot` (defconfig build), `openwrt` (ImageBuilder + procd), or `none` (board hooks own it) |
 | `DEBIAN_SUITE` | no | debian provider: suite to debootstrap (default `stable`) |
 | `DEBIAN_MIRROR` | no | debian provider: mirror URL (default `https://deb.debian.org/debian`) |
 | `UBUNTU_SUITE` | yes for `ubuntu` | Suite codename, e.g. `noble`; Ubuntu has no rolling alias to default to |
@@ -258,6 +258,12 @@ by `uboot`.
 | `BUILDROOT_DEFCONFIG` | with `buildroot` | A file in `boards/<board>/` if one is there, otherwise a name in buildroot's own `configs/` |
 | `BUILDROOT_REPO` | no | buildroot provider: git repo (default `https://gitlab.com/buildroot.org/buildroot.git`) |
 | `BUILDROOT_TAG` | no | buildroot provider: release tag, branch or commit SHA (default `master`, warned as unpinned) |
+| `OPENWRT_RELEASE` | with `openwrt` | Release to build against, e.g. `25.12.5` |
+| `OPENWRT_TARGET` | with `openwrt` | OpenWrt target, e.g. `sifiveu`, `rockchip`, `armsr`, `x86` |
+| `OPENWRT_SUBTARGET` | with `openwrt` | Subtarget, e.g. `generic`, `armv8`, `legacy` |
+| `OPENWRT_PROFILE` | with `openwrt` | Device profile inside that subtarget |
+| `OPENWRT_SHA256` | no | openwrt provider: expected sha256 of the ImageBuilder tarball |
+| `OPENWRT_MIRROR` | no | openwrt provider: mirror URL (default `https://downloads.openwrt.org`) |
 | `OPENSBI_FW_TYPE` | no | OpenSBI firmware type: `dynamic` (default), `jump`, `payload` |
 | `OPENSBI_MAKE_FLAGS` | no | Extra opensbi make arguments |
 | `U_BOOT_MAKE_FLAGS` | no | Extra u-boot make arguments |

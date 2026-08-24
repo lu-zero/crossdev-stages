@@ -145,9 +145,16 @@ buildroot deps clones buildroot (BUILDROOT_REPO/BUILDROOT_TAG, through the
          build, and unpacks output/images/rootfs.tar into /target;
          assemble installs the kernel and DTBs the board named out of
          output/images/ and writes no OS config at all.
+openwrt  deps fetches the pinned per-release, per-target ImageBuilder
+         (OPENWRT_RELEASE/TARGET/SUBTARGET/PROFILE), checks it against
+         the release's published sha256sums, and runs `make image`
+         with openwrt-packages.txt; nothing is compiled.  assemble
+         writes procd config (hostname via uci-defaults, the console
+         login line in /etc/inittab).  musl + busybox, so the ABI and
+         ISA checks find nothing to read: OpenWrt ships its binaries
+         without section headers.
 none     nothing seeded, installed, or configured; board hook scripts
-         (override-deps.sh, post-assemble.sh, ...) own the rootfs.
-```
+         (override-deps.sh, post-assemble.sh, ...) own the rootfs.```
 
 Providers other than gentoo set up the toolchain store only when
 BUILD_STEPS compiles target code (kernel/bootloader).
