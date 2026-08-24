@@ -381,7 +381,7 @@ fn check_package_lists(
 /// Per-(chost, cflags-hash) binpkg cache dir for a board's target packages.
 /// Single source for both the build-step runners and default_deps.
 fn board_binpkgs_dir(ws: &Workspace, board: &BoardConfig) -> Result<Utf8PathBuf> {
-    let hash = crate::cflags::key_for_board(board);
+    let hash = crate::cflags::binpkg_key(board);
     let dir = ws.binpkgs_dir().join(board.chost()).join(hash);
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
@@ -969,8 +969,19 @@ pub fn build(
     let gcc_spec = sandbox.gcc_spec_for(board, None)?;
     target.prepare_portage_with_cflags(ws, &board.chost(), &board_cflags, &gcc_spec)?;
     let (canonical, _) = crate::cflags::canonicalize(&board_cflags);
-    let hash = crate::cflags::key_for_board(board);
+    let hash = crate::cflags::toolchain_key(board);
     tracing::info!("Target make.conf CFLAGS={canonical:?} (key {hash})");
+
+    // Say what the binary package cache is and how the toolchain has moved
+    // since it was last written to.  Advisory: nothing here invalidates the
+    // cache, because a stamp that triggers rebuilds is only a cache key with
+    // worse ergonomics.  If the drift produced something the board cannot
+    // load, the ABI check at the end of assemble says so against the image.
+    let _ = crate::binpkg_meta::report(
+        &board_binpkgs_dir(ws, board)?,
+        &ws.store_dir()
+            .join(crate::workspace::store_key(&board.chost(), &hash, &gcc_spec)),
+    );
 
     // Per-(chost, cflags-hash) binpkg dir bind-mounted at /binpkgs.
     // PKGDIR=/binpkgs lives in the crossdev prefix make.conf (the config

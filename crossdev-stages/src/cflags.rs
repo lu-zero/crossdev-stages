@@ -22,6 +22,17 @@ pub fn canonicalize(cflags: &str) -> (String, String) {
     }
 }
 
+/// The key a board's *toolchain* lives under: its CFLAGS, nothing else.
+///
+/// Deliberately not [`binpkg_key`].  A per-package workaround changes what
+/// some target packages are compiled with; it does not change the compiler,
+/// and folding it in here would rebuild crossdev from scratch every time a
+/// board works around one ebuild.
+pub fn toolchain_key(board: &BoardConfig) -> String {
+    let (_canonical, hash) = canonicalize(&board.effective_cflags());
+    hash
+}
+
 /// The key a board's binary packages live under.
 ///
 /// A board's CFLAGS are not the whole story.  `WORKAROUND_PKGS` builds named
@@ -34,7 +45,7 @@ pub fn canonicalize(cflags: &str) -> (String, String) {
 /// which is the direction a cache key is allowed to be wrong in.  A board with
 /// no workarounds keys exactly as its CFLAGS alone did, so nothing that was
 /// already correct is invalidated.
-pub fn key_for_board(board: &BoardConfig) -> String {
+pub fn binpkg_key(board: &BoardConfig) -> String {
     let (_canonical, base) = canonicalize(&board.effective_cflags());
     if board.workaround_pkgs.is_empty() {
         return base;
@@ -126,24 +137,27 @@ mod tests {
         let mut board = crate::cli::util::default_board_config("riscv64");
         board.cflags = Some("-O3 -march=rv64gcv_zvl128b -pipe".into());
         let (_, plain) = canonicalize(&board.effective_cflags());
-        assert_eq!(key_for_board(&board), plain);
+        assert_eq!(binpkg_key(&board), plain);
     }
 
     #[test]
     fn a_workaround_changes_the_key_and_its_order_does_not() {
         let mut a = crate::cli::util::default_board_config("riscv64");
         a.cflags = Some("-O3 -march=rv64gcv_zvl128b -pipe".into());
-        let plain = key_for_board(&a);
+        let plain = binpkg_key(&a);
 
         a.workaround_pkgs = vec!["dev-libs/libgcrypt".into(), "sys-libs/zlib".into()];
         a.workaround_cflags = vec!["-O3 -march=rv64gc -pipe".into(), "-O2 -pipe".into()];
-        let with = key_for_board(&a);
+        let with = binpkg_key(&a);
         assert_ne!(plain, with);
 
         let mut b = a.clone();
         b.workaround_pkgs.reverse();
         b.workaround_cflags.reverse();
-        assert_eq!(key_for_board(&b), with);
+        assert_eq!(binpkg_key(&b), with);
+        // The toolchain is unaffected: a workaround does not change the compiler.
+        assert_eq!(toolchain_key(&a), toolchain_key(&b));
+        assert_eq!(toolchain_key(&a), plain);
     }
 
     #[test]
