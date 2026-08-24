@@ -88,6 +88,22 @@ pub fn run(boards_root: &Utf8Path, cmd: BoardCmd) -> Result<()> {
             if let Some(t) = &board_cfg.fip_tag {
                 println!("FIP tag:        {t}");
             }
+            println!(
+                "Rootfs:         {}",
+                board_cfg.rootfs_provider.name()
+            );
+            if let Some(deb) = board_cfg.rootfs_provider.debootstrap() {
+                let suite = board_cfg
+                    .suite
+                    .as_deref()
+                    .or(deb.default_suite)
+                    .unwrap_or("(unset)");
+                println!("Suite:          {suite}");
+                if let Some(m) = &board_cfg.mirror {
+                    println!("Mirror:         {m}");
+                }
+                println!("Second stage:   {}", board_cfg.second_stage.name());
+            }
             let pipeline = crate::bootloader::pipeline(&board_cfg);
             let default_marker = if board_cfg.boot_pipeline.is_none() {
                 " (default)"
