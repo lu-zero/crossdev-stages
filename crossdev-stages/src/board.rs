@@ -39,6 +39,21 @@ pub struct BoardConfig {
     pub buildroot_repo: Option<String>, // BUILDROOT_REPO; None → upstream git
     pub buildroot_tag: Option<String>,  // BUILDROOT_TAG; None → "master" (warned as unpinned)
 
+    // OpenWrt (openwrt provider).  Release, target and subtarget name one
+    // immutable directory on the download server, and the profile names one
+    // device in it; all four are required so an image is reproducible from
+    // board.conf alone.
+    pub openwrt_release: Option<String>,   // OPENWRT_RELEASE, e.g. "25.12.5"
+    pub openwrt_target: Option<String>,    // OPENWRT_TARGET, e.g. "sifiveu"
+    pub openwrt_subtarget: Option<String>, // OPENWRT_SUBTARGET, e.g. "generic"
+    pub openwrt_profile: Option<String>,   // OPENWRT_PROFILE, e.g. "sifive_unmatched"
+    pub openwrt_mirror: Option<String>,    // OPENWRT_MIRROR; None → downloads.openwrt.org
+    /// OPENWRT_SHA256: the ImageBuilder tarball's hash as the board saw it.
+    /// The published `sha256sums` is fetched over the same connection as the
+    /// tarball, so it proves the download arrived intact and nothing more;
+    /// this is the value a mirror cannot talk its way out of.
+    pub openwrt_sha256: Option<String>,
+
     // OpenSBI
     pub opensbi_repo: Option<String>,
     pub opensbi_tag: Option<String>,
@@ -306,7 +321,7 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
             file: path.to_string(),
             msg: format!(
                 "unknown ROOTFS_PROVIDER '{v}' \
-                 (valid: gentoo, debian, ubuntu, alpine, fedora, buildroot, none)"
+                 (valid: gentoo, debian, ubuntu, alpine, fedora, buildroot, openwrt, none)"
             ),
         })?,
         None => RootfsProvider::default(),
@@ -355,6 +370,13 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         // No TAG fallback, for the reason tfa/rkbin/fip have none: TAG
         // names a vendor-SDK ref that means nothing in buildroot's tree.
         buildroot_tag: kv.get("BUILDROOT_TAG").cloned(),
+
+        openwrt_release: kv.get("OPENWRT_RELEASE").cloned(),
+        openwrt_target: kv.get("OPENWRT_TARGET").cloned(),
+        openwrt_subtarget: kv.get("OPENWRT_SUBTARGET").cloned(),
+        openwrt_profile: kv.get("OPENWRT_PROFILE").cloned(),
+        openwrt_mirror: kv.get("OPENWRT_MIRROR").cloned(),
+        openwrt_sha256: kv.get("OPENWRT_SHA256").cloned(),
 
         opensbi_repo: kv.get("OPENSBI_REPO").cloned(),
         opensbi_tag: kv.get("OPENSBI_TAG").cloned(),
