@@ -255,8 +255,21 @@ by `uboot`.
 | `BOARD_FIRMWARE_OVERLAY` | no | Path in that repo whose *contents* go to `/lib/firmware` |
 | `FIRMWARE_DIRS` | no | Directories in that repo copied to `/lib/firmware/<dir>`, path preserved |
 | `COMPRESSION` | no | Image compression: `xz` (default), `gz`, `none` |
-| `TAGS` | no | Free-form labels (bash array, e.g. `TAGS=("testing" "wip")`) -- shown in `board list` and `status` |
-| `DESCRIPTION` | no | Free-form note shown in `board info` |
+| `TAGS` | no | Labels: arch, SoC, vendor, and `testing`. What CI selects on |
+| `DESCRIPTION` | no | One-line note shown by `board info` |
+
+### Board tags
+
+`TAGS` labels a board by what it is -- architecture, SoC, vendor -- so a
+selection can be written once instead of listing board names:
+
+```
+TAGS=("aarch64" "rockchip" "rk3588" "odroid" "testing")
+```
+
+`board list` prints them, and CI filters on them. A tag is not inherited
+through `INCLUDE`: a board states its own list in full, because a tag is an
+identity and identity is the one thing a family should not hand down.
 
 ### Shared board config
 
