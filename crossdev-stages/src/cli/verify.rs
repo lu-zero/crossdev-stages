@@ -16,14 +16,6 @@ pub fn run(
 ) -> Result<()> {
     let board_cfg = board::load(boards_root, board_name)?;
 
-    if !isa::applies(&board_cfg) {
-        println!(
-            "{board_name} is {}: no ELF carries its ISA, so there is nothing to check.",
-            board_cfg.arch
-        );
-        return Ok(());
-    }
-
     let sb = Sandbox::open(ws.resolve_sandbox(sandbox)?)?;
     let tgt = crate::target::Target::open(ws.resolve_target_for_arch(None, &board_cfg.arch)?)?;
 
@@ -44,8 +36,14 @@ pub fn run(
         (base, "/target")
     };
 
-    let report = isa::verify(&runner, &board_cfg, root)?;
-    let fatal = isa::print(&report, Utf8Path::new(root));
+    // Every architecture: can the image load what it ships?
+    let abi = crate::abi::verify(&runner, root, &format!("{}readelf", board_cfg.cross_compile))?;
+    let mut fatal = crate::abi::print(&abi);
+
+    if isa::applies(&board_cfg) {
+        let report = isa::verify(&runner, &board_cfg, root)?;
+        fatal |= isa::print(&report, Utf8Path::new(root));
+    }
 
     if fatal && strict {
         return Err(crate::error::Error::CommandFailed {

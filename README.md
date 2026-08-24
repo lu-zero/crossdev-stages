@@ -342,6 +342,23 @@ crossdev-stages enter --board k230 -- emerge --info
 The target stage and the build directory are attached when they exist, so a
 board that has never been built still opens.
 
+### ABI verification
+
+Nothing in a binary package records the libc or the compiler that produced it.
+Portage stores CFLAGS, CHOST, USE and the sonames a file needs, but not one
+symbol version and not the toolchain, so a package cached from a different
+prefix installs without complaint.
+
+That matters because glibc and libstdc++ are backward compatible and not
+forward compatible: a binary built against glibc 2.43 asks the loader for
+`GLIBC_2.43`, and on an image carrying 2.41 it does not start.
+
+So rather than key the cache on a proxy for the toolchain, `assemble` reads
+what every binary in the image actually asks for (`.gnu.version_r`) and checks
+the libraries the image ships actually define it (`.gnu.version_d`). Exact,
+covers glibc, libstdc++, libgcc and anything else versioned at once, and it
+works on every architecture.
+
 ### ISA verification
 
 Portage decides a binary package fits by matching CHOST, KEYWORDS, USE and
