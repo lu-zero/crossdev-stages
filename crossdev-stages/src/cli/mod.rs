@@ -3,6 +3,7 @@ use clap::builder::styling::{AnsiColor, Styles};
 use clap::{Args, Parser, Subcommand};
 
 pub mod board;
+pub mod chroot;
 pub mod enter;
 pub mod image;
 pub mod maint;
@@ -92,6 +93,16 @@ pub enum Commands {
     /// Maintenance: cleanup, logs, diagnostics.
     #[command(subcommand)]
     Maint(MaintCmd),
+
+    /// Open a shell inside a board's own rootfs, through qemu-user.
+    Chroot {
+        /// Board name.
+        #[arg(long)]
+        board: String,
+        /// Run this command instead of an interactive shell.
+        #[arg(trailing_var_arg = true)]
+        cmd: Vec<String>,
+    },
 
     /// Open a shell in the container a board's build runs in.
     Enter {

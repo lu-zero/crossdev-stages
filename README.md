@@ -331,6 +331,37 @@ exactly one file; a board that copies a whole directory of them sets
 `BOOT_DTB_NAME`. A board needing a different shape -- several labels, a kernel
 named by version -- writes its own file from `post-assemble.sh` instead.
 
+### A shell inside the image
+
+`chroot` opens a shell in the board's own rootfs -- the filesystem that goes on
+the card -- where `/bin/bash` is a riscv64 or aarch64 executable:
+
+```
+crossdev-stages chroot --board k230
+crossdev-stages chroot --board k230 -- emerge --info
+```
+
+Portage runs in there:
+
+```
+Portage 3.0.79 (python 3.14.6, gcc-16, glibc-2.43-r2, ... riscv64)
+```
+
+Nothing is copied into the rootfs to make this work. Linux registers qemu's
+binfmt_misc handlers with the `F` flag, which opens the interpreter once and
+keeps the descriptor in the kernel, so it stays reachable from a mount
+namespace that cannot see the host's `/usr`. Where a handler is missing or was
+registered without `F`, the command says so and gives the explicit
+`qemu-<arch>-static -L <rootfs>` form instead of failing obscurely.
+
+It prefers the built image tree and falls back to the shared target stage, so
+it works before an image has ever been packed.
+
+Distinct from `enter` below, which opens a shell in the container the *build*
+runs in: the build host, with the cross compiler, and the target mounted at
+`/target`.
+
+### Debugging a build
 ### Debugging a build
 
 `enter` opens a shell in the very container a build step runs in -- same

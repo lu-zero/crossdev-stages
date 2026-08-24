@@ -291,13 +291,13 @@ fn can_bindmount_resolv(sandbox_dir: &Utf8Path) -> bool {
 }
 
 /// Build UID maps: caller → root + subordinate range. Mirrors hakoniwa CLI `--userns=auto`.
-fn uid_maps() -> Vec<(u32, u32, u32)> {
+pub(crate) fn uid_maps() -> Vec<(u32, u32, u32)> {
     let my_id = unsafe { libc::getuid() } as u32;
     idmaps_for(my_id, "/etc/subuid")
 }
 
 /// Build GID maps: caller → root + subordinate range. Mirrors hakoniwa CLI `--userns=auto`.
-fn gid_maps() -> Vec<(u32, u32, u32)> {
+pub(crate) fn gid_maps() -> Vec<(u32, u32, u32)> {
     let my_id = unsafe { libc::getgid() } as u32;
     idmaps_for(my_id, "/etc/subgid")
 }

@@ -3,6 +3,7 @@ mod binpkg_meta;
 mod board;
 mod bootloader;
 mod cflags;
+mod chroot;
 mod cli;
 mod container;
 mod error;
@@ -66,6 +67,10 @@ async fn main() -> anyhow::Result<()> {
         Commands::Maint(cmd) => {
             cli::maint::run(&ws, cmd, &boards_root, dry_run)?;
         }
+        Commands::Chroot { board, cmd } => {
+            cli::chroot::run(&ws, &boards_root, &board, &cmd)?
+        }
+
         Commands::Enter {
             board,
             sandbox,
