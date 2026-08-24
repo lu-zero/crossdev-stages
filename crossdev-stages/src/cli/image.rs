@@ -442,6 +442,10 @@ fn apply_pin_overrides(
             applied += 1;
         }
     }
+    if let Some(src) = lock.sources.get("buildroot").and_then(pin) {
+        board_cfg.buildroot_tag = Some(src);
+        applied += 1;
+    }
     if let Some(src) = lock.sources.get("kernel").and_then(pin) {
         board_cfg.kernel_tag = src;
         applied += 1;

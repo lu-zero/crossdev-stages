@@ -44,6 +44,49 @@ pub enum RootfsProvider {
     /// with dev-libs/libsolv and dev-libs/librepo, the rest of the
     /// closure being in the tree already.
     Fedora,
+    /// Buildroot: a source build system, not a package archive.  The
+    /// `deps` step clones buildroot, runs its defconfig and its build,
+    /// and unpacks the `rootfs.tar` it emits into `/target`; buildroot
+    /// configures its own OS, so `assemble` writes nothing.
+    ///
+    /// ## The two-toolchain question
+    ///
+    /// Buildroot builds its own cross toolchain, and this project exists
+    /// to build one with crossdev and keep it in the store.  Two
+    /// toolchains for one board is either waste or a contradiction, and
+    /// there are three ways out:
+    ///
+    /// (a) buildroot builds everything, crossdev is skipped;
+    /// (b) buildroot is pointed at the store prefix through
+    ///     `BR2_TOOLCHAIN_EXTERNAL`;
+    /// (c) buildroot supplies only the rootfs, this project keeps
+    ///     building the kernel and bootloader.
+    ///
+    /// What is implemented is (a), and (a) and (c) are the same code:
+    /// the provider itself never asks for the toolchain, so a board
+    /// picks between them with `BUILD_STEPS` alone.  `(deps assemble
+    /// pack)` is (a) -- buildroot's own kernel and bootloader, no
+    /// crossdev.  Adding `checkout kernel bootloader` back is (c), and
+    /// then two toolchains really are built, which is a cost a board has
+    /// to mean to pay.
+    ///
+    /// (b) is the end state this design points at and is not here.  It
+    /// is not a flag: buildroot checks an external toolchain against
+    /// what the defconfig claims about it -- libc, gcc version series,
+    /// kernel-headers series, sysroot layout, C++ support -- so the
+    /// provider would have to generate those symbols from the store key
+    /// and probe the prefix for the rest, and be wrong loudly rather
+    /// than late.  It also leaves CFLAGS with two owners:
+    /// `BOARD_CFLAGS` builds the prefix (and so glibc), while
+    /// `BR2_TARGET_OPTIMIZATION` builds everything buildroot compiles on
+    /// top of it.  Worth doing, not worth faking.
+    ///
+    /// What (a) costs today: with no crossdev prefix there is no
+    /// `{CROSS_COMPILE}readelf` and no `-gcc` to compile a probe with,
+    /// so the ABI and ISA checks after `assemble` warn instead of
+    /// running.  (b) would hand both of them back, which is the
+    /// strongest argument for it.
+    Buildroot,
     /// Nothing is seeded, installed, or configured; board hooks
     /// (`override-deps.sh`, `post-assemble.sh`, ...) fill the rootfs.
     None,
@@ -58,6 +101,7 @@ impl RootfsProvider {
             "ubuntu" => Some(Self::Ubuntu),
             "alpine" => Some(Self::Alpine),
             "fedora" => Some(Self::Fedora),
+            "buildroot" => Some(Self::Buildroot),
             "none" => Some(Self::None),
             _ => Option::None,
         }
@@ -69,7 +113,12 @@ impl RootfsProvider {
     pub fn needs_cross_toolchain(&self, steps: &[&str]) -> bool {
         match self {
             Self::Gentoo => true,
-            Self::Debian | Self::Ubuntu | Self::Alpine | Self::Fedora | Self::None => steps
+            Self::Debian
+            | Self::Ubuntu
+            | Self::Alpine
+            | Self::Fedora
+            | Self::Buildroot
+            | Self::None => steps
                 .iter()
                 .any(|s| matches!(*s, "kernel" | "bootloader")),
         }
@@ -91,6 +140,7 @@ impl RootfsProvider {
             Self::Ubuntu => "ubuntu",
             Self::Alpine => "alpine",
             Self::Fedora => "fedora",
+            Self::Buildroot => "buildroot",
             Self::None => "none",
         }
     }
@@ -100,7 +150,7 @@ impl RootfsProvider {
         match self {
             Self::Debian => Some(Debootstrap::DEBIAN),
             Self::Ubuntu => Some(Debootstrap::UBUNTU),
-            Self::Gentoo | Self::Alpine | Self::Fedora | Self::None => None,
+            Self::Gentoo | Self::Alpine | Self::Fedora | Self::Buildroot | Self::None => None,
         }
     }
 }
@@ -399,6 +449,10 @@ mod tests {
         assert_eq!(RootfsProvider::parse("ubuntu"), Some(RootfsProvider::Ubuntu));
         assert_eq!(RootfsProvider::parse("alpine"), Some(RootfsProvider::Alpine));
         assert_eq!(RootfsProvider::parse("fedora"), Some(RootfsProvider::Fedora));
+        assert_eq!(
+            RootfsProvider::parse("buildroot"),
+            Some(RootfsProvider::Buildroot)
+        );
         assert_eq!(RootfsProvider::parse("none"), Some(RootfsProvider::None));
         assert_eq!(RootfsProvider::parse("suse"), Option::None);
     }
@@ -416,6 +470,7 @@ mod tests {
             RootfsProvider::Ubuntu,
             RootfsProvider::Alpine,
             RootfsProvider::Fedora,
+            RootfsProvider::Buildroot,
             RootfsProvider::None,
         ] {
             assert_eq!(RootfsProvider::parse(p.name()), Some(p));
@@ -433,6 +488,23 @@ mod tests {
         assert!(!p.needs_cross_toolchain(&["deps", "assemble", "pack"]));
         assert!(p.needs_cross_toolchain(&["kernel", "assemble", "pack"]));
         assert!(p.needs_cross_toolchain(&["bootloader", "pack"]));
+    }
+
+    /// Which of (a) and (c) a buildroot board gets is decided by
+    /// BUILD_STEPS, not by the provider: no crossdev for a board whose
+    /// kernel comes out of the defconfig, crossdev for one that still
+    /// builds its own.
+    #[test]
+    fn buildroot_needs_a_toolchain_only_when_the_board_builds_one_itself() {
+        let p = RootfsProvider::Buildroot;
+        assert!(!p.needs_cross_toolchain(&["deps", "assemble", "pack"]));
+        assert!(p.needs_cross_toolchain(&["deps", "checkout", "kernel", "assemble", "pack"]));
+    }
+
+    #[test]
+    fn no_provider_but_gentoo_seeds_a_stage3() {
+        assert!(RootfsProvider::Gentoo.provisions_stage3());
+        assert!(!RootfsProvider::Buildroot.provisions_stage3());
     }
 
     #[test]
