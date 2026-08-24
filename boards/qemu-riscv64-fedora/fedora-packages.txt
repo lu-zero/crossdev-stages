@@ -1,0 +1,16 @@
+# Installed on top of the container base image by dnf5 during the deps
+# step.  The base image is a userland with no PID 1 (Fedora composes it
+# from a KIWI profile that takes systemd-standalone-sysusers instead of
+# systemd), so an image that boots has to ask for one.
+systemd
+# udev is a weak dep of systemd, and the root has no /dev nodes of its
+# own; without it nothing gets created at boot.
+systemd-udev
+# DHCP on the qemu user network.  systemd-networkd rather than
+# NetworkManager: one unit, no dbus service to enable by hand.
+systemd-networkd
+systemd-resolved
+openssh-server
+# fsck at boot, and the tools a first-boot resize would want.
+e2fsprogs
+util-linux

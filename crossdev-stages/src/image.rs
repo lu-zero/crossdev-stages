@@ -856,11 +856,10 @@ const FEDORA_MIRROR_DEFAULT: &str = "https://dl.fedoraproject.org/pub";
 /// Provision a Fedora rootfs in /target from a published container base
 /// image.
 ///
-/// No emulation, and no package manager either.  Fedora composes one
-/// OCI archive per architecture per release, so `deps` is a checksummed
-/// download and two `tar` calls: nothing target-arch is executed, no
-/// dependency is resolved, and no scriptlet is skipped, because none
-/// ever runs.
+/// Seeding needs no emulation.  Fedora composes one OCI archive per
+/// architecture per release, so this part is a checksummed download and
+/// two `tar` calls: nothing target-arch is executed, nothing is
+/// resolved, and no scriptlet is skipped, because none ever runs.
 ///
 /// The archive is an OCI image layout, not a flat rootfs tarball.  The
 /// outer `.tar.xz` unpacks to `index.json` plus `blobs/sha256/*`, and
@@ -868,32 +867,9 @@ const FEDORA_MIRROR_DEFAULT: &str = "https://dl.fedoraproject.org/pub";
 /// exactly one layer, which is why there is no whiteout handling below;
 /// a second layer is refused rather than merged wrong.
 ///
-/// ## Why it installs nothing
-///
-/// There is no `fedora-packages.txt`.  Every other provider installs on
-/// top of its seed and this one cannot, for reasons that are Fedora's
-/// rather than this code's:
-///
-/// - ::gentoo has no dnf.  Checked against the tree in the sandbox, not
-///   just the web index: no libsolv, no librepo, no libcomps, no
-///   libdnf, no dnf, in any category.  That part is only four ebuilds
-///   (sys-libs/libmodulemd, dev-cpp/sdbus-c++, app-arch/zchunk,
-///   app-arch/rpm and the rest of the closure are already in the tree),
-///   so it is a cost, not a wall.
-/// - The wall is on the other side.  riscv64's repository is
-///   `repos-dist/f<rel>/latest/riscv64`, and `latest` is a symlink koji
-///   moves; the numbered repos behind it are garbage-collected.  There
-///   is nothing there to pin, and `/pub/alt/risc-v/release/<rel>/`
-///   carries images only, no RPM tree.
-/// - And it is unsigned.  Fedora's own `fedora-riscv.repo` ships
-///   `gpgcheck=0`, no `RPM-GPG-KEY-fedora-<rel>-riscv64` exists, and
-///   the RPMs carry no OpenPGP signature at all: reading the signature
-///   header of one shows no RSA tag, no DSA tag, no PGP tag, against an
-///   aarch64 package of the same NVR that has them.
-///
-/// A resolver that can only be pointed at an unsigned, unpinnable
-/// repository is not worth four ebuilds, so the image is the package
-/// set and a board that needs more says so in `post-deps.sh`.
+/// Board extras come from `fedora-packages.txt` and are installed by
+/// `fedora_install` below, on top of the image's own rpmdb, the same
+/// shape as stage3 + cross-emerge on the gentoo side.
 fn fedora_deps(
     runner: &SandboxRunner,
     target: &Target,
@@ -930,20 +906,8 @@ fn fedora_deps(
             ),
         }
     })?;
-    // Every other provider reads a <distro>-packages.txt at this point.
-    // Say why this one does not, rather than ignoring the file quietly.
-    let pkgs = boards_root.join(&board.name).join("fedora-packages.txt");
-    if pkgs.exists() {
-        return Err(crate::error::Error::BoardConfigParse {
-            file: pkgs.to_string(),
-            msg: "the fedora provider installs nothing, it unpacks a \
-                  container base image and stops.  Fedora's riscv64 \
-                  repository is unsigned and its `latest` is a moving \
-                  symlink, so there is nothing pinnable to install from.  \
-                  Add packages from post-deps.sh, or pick another provider"
-                .to_string(),
-        });
-    }
+    let extra =
+        read_distro_packages(&boards_root.join(&board.name).join("fedora-packages.txt"))?;
     let mirror = board
         .fedora_mirror
         .as_deref()
@@ -1002,18 +966,126 @@ fn fedora_deps(
     // Same flags as the stage3 unpack: ownership and capability xattrs
     // are part of the rootfs, since Fedora ships ping and friends with
     // security.capability instead of a suid bit.
+    // The unpacked OCI layout is 70-odd MB of scratch and the image
+    // itself is already cached under /cache/sources; drop it once the
+    // tree is out rather than leaving it in the build dir.
     runner.run(
         "set -e\n\
          layer=$(cat /build/fedora-layer)\n\
          tar --overwrite -xpf \"$layer\" \
-           --xattrs-include='*.*' --numeric-owner -C /target",
+           --xattrs-include='*.*' --numeric-owner -C /target\n\
+         rm -rf /build/fedora-oci /build/fedora-layer",
     )?;
+
+    if !extra.is_empty() {
+        fedora_install(runner, arch, release, &extra)?;
+    }
 
     report_fedora_missing_init(runner);
 
     // No /dev cleanup: the layer ships /dev as an empty directory,
     // which is exactly the mountpoint devtmpfs needs at boot.
     std::fs::write(done, chrono::Utc::now().to_rfc3339())?;
+    Ok(())
+}
+
+/// Install a board's `fedora-packages.txt` into the unpacked root.
+///
+/// dnf5 is not in ::gentoo, and neither are two of its libraries, so
+/// `defaults/overlay/` carries `sys-apps/dnf5`, `dev-libs/libsolv` and
+/// `dev-libs/librepo`.  Those three are the whole gap: everything else
+/// dnf5 wants (app-arch/rpm, dev-cpp/sdbus-c++, sys-libs/libmodulemd,
+/// app-arch/zchunk, dev-cpp/toml11, dev-libs/libfmt, json-c, glib) is
+/// already in the tree.
+///
+/// No repository configuration is written here, and none is needed.
+/// The container base image ships Fedora's own /etc/yum.repos.d, dnf5
+/// reads its configuration from the installroot rather than the host,
+/// and what is there is already per-arch correct: the riscv64 image
+/// enables `[fedora-riscv]`, the SIG's koji dist-repo, and disables the
+/// primary metalink; the primary images do the opposite.
+///
+/// `--nogpgcheck` is not passed either.  Fedora's own config decides,
+/// the release key is already in the image's rpmdb as a `gpg-pubkey`,
+/// and on aarch64 and x86_64 signatures are therefore checked.
+///
+/// riscv64 is the exception, and it is Fedora's exception rather than
+/// one invented here.  The SIG's packages carry no OpenPGP signature at
+/// all, its repo file says `gpgcheck=0`, and Fedora's own rpm ships
+/// `%_pkgverify_level digest` in /usr/lib/rpm/macros.  ::gentoo's rpm
+/// keeps upstream's stricter `all`, so without matching Fedora's value
+/// the transaction aborts with "does not verify: no signature" for
+/// every package.  So for riscv64, and only riscv64, that same value is
+/// set for the length of the transaction, with the warning above naming
+/// what it costs.  `digest` still checks the header and payload SHA256,
+/// so corruption is still caught; what cannot be checked is authorship,
+/// because Fedora published none.
+///
+/// This is also the step that needs qemu-user binfmt with the F flag,
+/// for the same reason the debian provider does: rpm runs each
+/// package's scriptlets inside the installroot, and glibc's own file
+/// trigger execs ldconfig there.  Unpacking the image needs none of it.
+fn fedora_install(
+    runner: &SandboxRunner,
+    arch: &str,
+    release: &str,
+    packages: &[String],
+) -> Result<()> {
+    if arch == "riscv64" {
+        tracing::warn!(
+            "Fedora's riscv64 repository is unsigned: its own \
+             fedora-riscv.repo sets gpgcheck=0, no \
+             RPM-GPG-KEY-fedora-{release}-riscv64 exists, and the RPMs carry \
+             no OpenPGP signature.  Packages installed here are trusted on \
+             TLS alone.  Its `latest` is also a moving koji symlink, so this \
+             step is not reproducible the way the pinned base image is"
+        );
+    }
+
+    let portage = Portage::new(runner);
+    portage.emerge(&["--noreplace", "sys-apps/dnf5"])?;
+
+    let forcearch = if arch == std::env::consts::ARCH {
+        String::new()
+    } else {
+        format!("--forcearch={arch} ")
+    };
+    // Only for the architecture Fedora publishes unsigned, only while the
+    // transaction runs, and removed on the way out either way: the
+    // sandbox outlives this step and must not keep a relaxed rpm.
+    let pkgverify = if arch == "riscv64" {
+        "echo '%_pkgverify_level digest' > /etc/rpm/macros.crossdev-stages-fedora\n\
+         trap 'rm -f /etc/rpm/macros.crossdev-stages-fedora' EXIT\n"
+    } else {
+        ""
+    };
+
+    // rpm chroots into the installroot to run the scriptlets and they
+    // read /proc, so the kernel filesystems have to be visible where the
+    // chroot looks for them.  Mounts and transaction go in one run: each
+    // runner.run is its own container with its own mount namespace, so
+    // they vanish when it exits and `assemble` never sees a live bind
+    // under /target.
+    runner
+        .run(&format!(
+            "set -e\n\
+             mkdir -p /etc/rpm\n\
+             {pkgverify}\
+             for d in proc sys dev; do mkdir -p /target/$d; \
+                 mount --bind /$d /target/$d; done\n\
+             dnf5 --installroot=/target --releasever={release} {forcearch}\
+                 --assumeyes install {packages}\n",
+            packages = packages.join(" "),
+        ))
+        .inspect_err(|_| {
+            tracing::error!(
+                "dnf5 install failed.  Installing a foreign-arch root runs \
+                 the packages' rpm scriptlets under the target architecture, \
+                 so the host needs qemu-user binfmt registered with the F \
+                 flag, the same requirement the debian provider has.  On \
+                 Debian: apt install qemu-user-binfmt"
+            );
+        })?;
     Ok(())
 }
 

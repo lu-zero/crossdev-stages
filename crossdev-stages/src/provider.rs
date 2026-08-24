@@ -31,16 +31,18 @@ pub enum RootfsProvider {
     /// binfmt.  `assemble` writes OpenRC config.
     Alpine,
     /// Fedora rootfs unpacked from a published container base image
-    /// during the `deps` step; `assemble` writes systemd config.
+    /// during the `deps` step, with `fedora-packages.txt` installed on
+    /// top by dnf5; `assemble` writes systemd config.
     ///
-    /// The second provider that needs no emulation, and for a different
-    /// reason than Alpine: nothing resolves or installs anything, the
-    /// image *is* the package set.  Fedora composes one OCI archive per
-    /// architecture per release with a published checksum, so the whole
-    /// `deps` step is a download, a sha256 and two `tar` calls.
+    /// The only provider whose emulation cost is conditional.  Unpacking
+    /// the image executes nothing, so a board that asks for no packages
+    /// builds on a host with no binfmt at all.  Installing does need
+    /// qemu-user binfmt, like the debian provider: rpm runs scriptlets
+    /// inside the installroot.
     ///
-    /// What it does not do is add packages.  See `fedora_deps` in
-    /// image.rs for why that has no honest implementation today.
+    /// dnf5 is not in ::gentoo; `defaults/overlay/` carries it along
+    /// with dev-libs/libsolv and dev-libs/librepo, the rest of the
+    /// closure being in the tree already.
     Fedora,
     /// Nothing is seeded, installed, or configured; board hooks
     /// (`override-deps.sh`, `post-assemble.sh`, ...) fill the rootfs.
