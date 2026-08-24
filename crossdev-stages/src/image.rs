@@ -443,15 +443,22 @@ fn default_deps(
         // /usr/{chost}, not the sandbox's own /etc/portage.  Without this a
         // line like `sys-boot/syslinux **` gets its atom emerged and its
         // keyword silently dropped, and the emerge fails on a masked package.
-        let cross_portage = sandbox
-            .dir
-            .join(format!("usr/{}/etc/portage", board.chost()));
-        crate::package_list::write_accept_keywords(&target_pkgs, &cross_portage)?;
-
         let target_runner = sandbox
             .runner_for_board(ws, &board.arch, board)?
             .with_target(&target.dir)
             .with_binpkgs(&board_binpkgs_dir(ws, board)?);
+        // Written through the runner, not on the host: /usr/<chost> is an
+        // overlay mount and a host-side write lands under it, where nothing in
+        // the container can read it.  This is where `{chost}-emerge` looks
+        // (PORTAGE_CONFIGROOT=/usr/<chost>), so a line like
+        // `sys-boot/syslinux **` gets its keyword here or nowhere.
+        if let Some(script) = crate::package_list::accept_keywords_script(
+            &target_pkgs,
+            &format!("/usr/{}/etc/portage", board.chost()),
+        ) {
+            target_runner.run(&script)?;
+        }
+
         let portage = Portage::new(&target_runner);
         portage.cross_emerge(&board.chost(), &crate::package_list::atoms(&target_pkgs))?;
     }
