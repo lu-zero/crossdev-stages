@@ -317,10 +317,10 @@ A board whose bootloader reads `/extlinux/extlinux.conf` sets
 `BOOT_EXTLINUX="true"` and `assemble` writes the file:
 
 ```
-DEFAULT gentoo
+DEFAULT linux
 TIMEOUT 30
-LABEL gentoo
-    MENU LABEL Gentoo Linux
+LABEL linux
+    MENU LABEL <DESCRIPTION, or the board name>
     LINUX /<BOOT_KERNEL_NAME>
     FDT /<dtb>
     APPEND root=<BOOT_ROOT_DEV> rw rootwait rootfstype=ext4 console=<BOOT_CONSOLE> <BOOT_APPEND>
