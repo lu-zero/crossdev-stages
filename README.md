@@ -245,9 +245,12 @@ by `uboot`.
 | `BOOT_APPEND` | no | Kernel arguments added to that entry |
 | `BOOT_DTB_NAME` | no | DTB to boot, when `BOARD_DTB_GLOB` matches more than one |
 | `ISA_STRICT` | no | `false` downgrades an unrunnable binary to a warning (default: fail) |
-| `ROOTFS_PROVIDER` | no | Who fills the image rootfs: `gentoo` (default; stage3 + cross-emerge + OpenRC), `debian` (debootstrap + systemd), or `none` (board hooks own it) |
+| `ROOTFS_PROVIDER` | no | Who fills the image rootfs: `gentoo` (default; stage3 + cross-emerge + OpenRC), `debian` or `ubuntu` (debootstrap + systemd), or `none` (board hooks own it) |
 | `DEBIAN_SUITE` | no | debian provider: suite to debootstrap (default `stable`) |
 | `DEBIAN_MIRROR` | no | debian provider: mirror URL (default `https://deb.debian.org/debian`) |
+| `UBUNTU_SUITE` | yes for `ubuntu` | Suite codename, e.g. `noble`; Ubuntu has no rolling alias to default to |
+| `UBUNTU_MIRROR` | no | ubuntu provider: mirror URL (default `http://ports.ubuntu.com/ubuntu-ports`, or `http://archive.ubuntu.com/ubuntu` on amd64/i386) |
+| `ROOTFS_SECOND_STAGE` | no | debootstrap providers: `chroot` (default, build-time, needs qemu-user binfmt) or `first-boot` (deferred to the board) |
 | `OPENSBI_FW_TYPE` | no | OpenSBI firmware type: `dynamic` (default), `jump`, `payload` |
 | `OPENSBI_MAKE_FLAGS` | no | Extra opensbi make arguments |
 | `U_BOOT_MAKE_FLAGS` | no | Extra u-boot make arguments |
@@ -263,6 +266,32 @@ by `uboot`.
 | `COMPRESSION` | no | Image compression: `xz` (default), `gz`, `none` |
 | `TAGS` | no | Labels: arch, SoC, vendor, and `testing`. What CI selects on |
 | `DESCRIPTION` | no | One-line note shown by `board info` |
+
+### Rootfs providers
+
+`ROOTFS_PROVIDER` decides who fills the image rootfs. `gentoo` (the default)
+seeds a stage3 and cross-emerges into it. `debian` and `ubuntu` run
+debootstrap inside the sandbox; the board's extra packages come from
+`boards/<name>/<provider>-packages.txt`, one name per line. `none` leaves it
+to board hooks.
+
+The debootstrap providers differ only in keyring, mirror and suite naming:
+Ubuntu keeps everything but amd64/i386 on `ports.ubuntu.com`, uses
+`app-crypt/ubuntu-keyring`, and has no rolling alias, so `UBUNTU_SUITE` must
+name a codename.
+
+`debootstrap --foreign` downloads every .deb and unpacks only the
+Priority:required set, so something still has to run the second stage.
+`ROOTFS_SECOND_STAGE="chroot"` (the default) runs it in a chroot at build
+time and ships a finished image; a foreign arch needs qemu-user binfmt
+registered with the `F` flag on the host. `ROOTFS_SECOND_STAGE="first-boot"`
+is the opt-in for a host that cannot do that: `assemble` installs a
+`/sbin/init` shim that finishes the bootstrap on the board instead. The image
+then carries every downloaded .deb, roughly doubling its size until the shim
+runs `apt-get clean` after a successful second stage, and the first boot
+spends minutes configuring packages over the serial console. A failure there
+writes `/etc/.debootstrap-second-stage`, keeps the output in
+`/var/log/crossdev-first-boot.log`, and drops to a root shell.
 
 ### Board tags
 
