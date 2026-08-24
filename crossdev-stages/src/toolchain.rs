@@ -21,6 +21,7 @@ use crate::stage::chost_for_arch;
 /// which is the only place they take effect.
 pub struct ToolchainEnv {
     chost: String,
+    rust_target: String,
     sandbox_dir: Utf8PathBuf,
 }
 
@@ -28,7 +29,11 @@ impl ToolchainEnv {
     /// Build a toolchain env for an explicit CHOST triple
     /// (e.g. `riscv64-unknown-linux-gnu`) and the sandbox it runs in.
     pub fn new(chost: String, sandbox_dir: Utf8PathBuf) -> Self {
-        Self { chost, sandbox_dir }
+        Self {
+            rust_target: rust_target_for_chost(&chost),
+            chost,
+            sandbox_dir,
+        }
     }
 
     /// Build a toolchain env for an OS arch string (e.g. `riscv64`),
@@ -69,9 +74,16 @@ impl ToolchainEnv {
         format!("{}-ar", self.chost)
     }
 
-    /// The Cargo/Rust target triple. Equal to the CHOST triple.
+    /// The Cargo/Rust target triple.
+    ///
+    /// **Not** the CHOST.  GCC and rustc name the same machine differently,
+    /// and on two of the three architectures in this tree they disagree:
+    /// `riscv64-unknown-linux-gnu` is `riscv64gc-unknown-linux-gnu` to rustc,
+    /// and `i586-pc-linux-gnu` is `i586-unknown-linux-gnu`.  Handing cargo a
+    /// CHOST gets "target may not be installed" if you are lucky, and a
+    /// `CARGO_TARGET_*` variable cargo never reads if you are not.
     pub fn target_triple(&self) -> &str {
-        &self.chost
+        &self.rust_target
     }
 
     /// pkg-config sysroot: the crossdev prefix `/usr/{chost}` **inside the
@@ -93,24 +105,99 @@ impl ToolchainEnv {
         )
     }
 
-    /// Layer the cross-toolchain environment onto `runner` via
-    /// [`SandboxRunner::with_env`], returning the updated runner.
+    /// Layer the cross-toolchain environment onto `runner`.
     ///
-    /// Sets `CC`, `CXX`, `AR`, `PKG_CONFIG_SYSROOT_DIR`, and
-    /// `CARGO_TARGET_<TRIPLE>_LINKER`.
+    /// The bare `CC`/`CXX`/`AR` are what a Makefile or an autotools configure
+    /// reads.  The target-suffixed ones are what the `cc` crate reads, and it
+    /// prefers them over the bare names -- which matters because it also
+    /// compiles build scripts, and those have to run on the machine doing the
+    /// building.  `HOST_CC`/`HOST_CXX` are how it is told which compiler that
+    /// is.  Without the pair, a build script gets cross-compiled and cargo
+    /// tries to execute a foreign binary.
     pub fn apply(&self, runner: SandboxRunner) -> SandboxRunner {
+        let target = self.target_triple().to_string();
         runner
             .with_env("CC", self.cc())
             .with_env("CXX", self.cxx())
             .with_env("AR", self.ar())
-            .with_env("PKG_CONFIG_SYSROOT_DIR", self.pkg_config_sysroot_dir())
+            .with_env(format!("CC_{target}"), self.cc())
+            .with_env(format!("CXX_{target}"), self.cxx())
+            .with_env(format!("AR_{target}"), self.ar())
+            // Build scripts and proc macros run here, not on the board.
+            .with_env("HOST_CC", "gcc")
+            .with_env("HOST_CXX", "g++")
+            // Without this cargo builds for the host while CC points at the
+            // cross compiler, and the two disagree about everything.
+            .with_env("CARGO_BUILD_TARGET", &target)
             .with_env(self.cargo_linker_key(), self.cc())
+            .with_env("PKG_CONFIG_SYSROOT_DIR", self.pkg_config_sysroot_dir())
+            // SYSROOT alone only rewrites the prefixes of what pkg-config
+            // already found, and what it finds by default is the host's.
+            .with_env(
+                "PKG_CONFIG_LIBDIR",
+                format!("{}/usr/lib/pkgconfig", self.pkg_config_sysroot_dir()),
+            )
+            .with_env("PKG_CONFIG_ALLOW_CROSS", "1")
     }
+}
+
+/// The Rust target triple for a GCC CHOST.
+///
+/// rustc names a machine by the ISA it will actually emit; GCC names it by the
+/// family and leaves the rest to `-march`.  So `riscv64` has to become
+/// `riscv64gc` (rustc ships no plain `riscv64` Linux target), `armv7a` becomes
+/// `armv7`, and the vendor field is always `unknown` where GCC says `pc`.
+///
+/// An architecture with no known mapping keeps its CHOST: wrong, but wrong in
+/// the direction that fails loudly at `cargo build` rather than silently
+/// producing a variable nothing reads.
+fn rust_target_for_chost(chost: &str) -> String {
+    let mut parts = chost.splitn(3, '-');
+    let arch = parts.next().unwrap_or("");
+    // The ABI suffix is the part GCC and rustc do agree on.
+    let abi = chost
+        .rsplit_once("-linux-")
+        .map(|(_, abi)| abi)
+        .unwrap_or("gnu");
+
+    let rust_arch = match arch {
+        "riscv64" => "riscv64gc",
+        "riscv32" => "riscv32gc",
+        "armv7a" | "armv7" => "armv7",
+        "armv6j" | "armv6" => "arm",
+        other => other,
+    };
+    format!("{rust_arch}-unknown-linux-{abi}")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every triple here was checked against `rustc --print target-list`.
+    #[test]
+    fn a_chost_becomes_the_triple_rustc_actually_knows() {
+        for (chost, rust) in [
+            ("riscv64-unknown-linux-gnu", "riscv64gc-unknown-linux-gnu"),
+            ("riscv32-unknown-linux-musl", "riscv32gc-unknown-linux-musl"),
+            ("aarch64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"),
+            ("armv7a-unknown-linux-gnueabihf", "armv7-unknown-linux-gnueabihf"),
+            // GCC says the vendor is pc here and rustc says unknown.
+            ("i586-pc-linux-gnu", "i586-unknown-linux-gnu"),
+            ("x86_64-pc-linux-gnu", "x86_64-unknown-linux-gnu"),
+        ] {
+            assert_eq!(rust_target_for_chost(chost), rust, "{chost}");
+        }
+    }
+
+    #[test]
+    fn the_compiler_prefix_stays_the_chost_not_the_rust_triple() {
+        let te = ToolchainEnv::for_arch("riscv64", Utf8PathBuf::from("/sandbox")).unwrap();
+        // crossdev installs the wrappers under the CHOST name; rustc's name
+        // for the same machine would find nothing on PATH.
+        assert!(te.cc().starts_with(te.chost()));
+        assert_ne!(te.chost(), te.target_triple());
+    }
 
     #[test]
     fn riscv64_toolchain_names() {
@@ -118,11 +205,11 @@ mod tests {
         assert_eq!(te.cc(), "riscv64-unknown-linux-gnu-gcc");
         assert_eq!(te.cxx(), "riscv64-unknown-linux-gnu-g++");
         assert_eq!(te.ar(), "riscv64-unknown-linux-gnu-ar");
-        assert_eq!(te.target_triple(), "riscv64-unknown-linux-gnu");
+        assert_eq!(te.target_triple(), "riscv64gc-unknown-linux-gnu");
         assert_eq!(te.pkg_config_sysroot_dir(), "/usr/riscv64-unknown-linux-gnu");
         assert_eq!(
             te.cargo_linker_key(),
-            "CARGO_TARGET_RISCV64_UNKNOWN_LINUX_GNU_LINKER"
+            "CARGO_TARGET_RISCV64GC_UNKNOWN_LINUX_GNU_LINKER"
         );
     }
 }
