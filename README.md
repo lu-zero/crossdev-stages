@@ -26,10 +26,10 @@ Rootless cross-compilation of Gentoo stages using crossdev and hakoniwa
 | k230 | riscv64 | canaan (hdmi) | OpenSBI (payload) + U-Boot | `-O3 -march=rv64gcv_zvl128b` | stable |
 | ky-x1 | riscv64 | spacemit 6.6 | OpenSBI + U-Boot | `-O3 -march=rv64gcv_zvl256b` | stable |
 | blackhole | riscv64 | tenstorrent | OpenSBI (jump, PCIe BAR) | `-O3 -march=rv64gcv_zvl512b` | stable |
-| odroid-m1 | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a55` | testing |
-| odroid-m1s | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a55` | testing |
-| odroid-m2 | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a76.cortex-a55` | testing |
-| pentium-mmx | i586 | mainline v6.12 | BIOS (no firmware) | `-O2 -march=pentium-mmx` | testing |
+| odroid-m1 | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a55+crc+crypto` | testing |
+| odroid-m1s | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a55+crc+crypto` | testing |
+| odroid-m2 | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a76.cortex-a55+crc+crypto` | testing |
+| pentium-mmx | i586 | mainline v6.18 | BIOS (no firmware) | `-O2 -march=pentium-mmx` | testing |
 
 ## CLI
 
