@@ -57,7 +57,7 @@ impl Sandbox {
         // The overlay refreshes on every prepare, even on an already-prepared
         // sandbox: defaults/overlay/ is the source of truth and the copy is
         // cheap and idempotent.
-        install_overlay(&self.dir, defaults_root)?;
+        install_overlay(&self.runner(), &self.dir, defaults_root)?;
 
         if self.dir.join(".prepared").exists() {
             tracing::info!("Sandbox already prepared, skipping.");
@@ -786,13 +786,24 @@ pub struct SandboxInfo {
 /// Copy `<defaults_root>/overlay/` into the sandbox as the
 /// `crossdev-stages` portage overlay and write a repos.conf entry.
 /// No-op if the source overlay directory doesn't exist.
-fn install_overlay(sandbox: &Utf8Path, defaults_root: &Utf8Path) -> Result<()> {
+fn install_overlay(
+    runner: &SandboxRunner,
+    sandbox: &Utf8Path,
+    defaults_root: &Utf8Path,
+) -> Result<()> {
     let src = defaults_root.join("overlay");
     if !src.is_dir() {
         return Ok(());
     }
     let dst = sandbox.join("var/db/repos/crossdev-stages");
     tracing::info!("Installing crossdev-stages overlay at {dst}…");
+    // /var/db/repos is created by portage inside the container, so it ends up
+    // owned by a subordinate uid the host user cannot write to.  Container
+    // root maps back to the caller, so let it create the directory; the copy
+    // itself then lands in something the host owns.
+    if !dst.is_dir() {
+        runner.run("mkdir -p /var/db/repos/crossdev-stages")?;
+    }
     copy_tree(&src, &dst)?;
 
     let repos_conf = sandbox.join("etc/portage/repos.conf");
