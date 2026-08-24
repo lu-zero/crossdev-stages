@@ -121,6 +121,8 @@ pub fn default_board_config(arch: &str) -> board::BoardConfig {
         alpine_branch: None,
         alpine_mirror: None,
         alpine_repos: None,
+        fedora_release: None,
+        fedora_mirror: None,
         opensbi_repo: None,
         opensbi_tag: None,
         opensbi_platform: None,
