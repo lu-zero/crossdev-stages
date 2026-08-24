@@ -181,7 +181,7 @@ pub fn sandbox_default_specs(ws: &Workspace) -> Vec<String> {
 /// when the board needs a default spec and no sandbox can provide one.
 pub fn board_store_keys(board: &BoardConfig, default_specs: &[String]) -> Vec<Utf8PathBuf> {
     let chost = board.chost();
-    let (_, hash) = crate::cflags::canonicalize(&board.effective_cflags());
+    let hash = crate::cflags::key_for_board(board);
     let specs: Vec<&str> = match &board.gcc_version {
         Some(s) => vec![s.as_str()],
         None => default_specs.iter().map(String::as_str).collect(),
@@ -245,7 +245,7 @@ fn live_set(ws: &Workspace, boards_root: &Utf8Path) -> Result<LiveSet> {
             continue;
         };
         live.store.extend(board_store_keys(&b, &default_specs));
-        let (_, hash) = crate::cflags::canonicalize(&b.effective_cflags());
+        let hash = crate::cflags::key_for_board(&b);
         live.binpkgs.insert(Utf8PathBuf::from(b.chost()).join(hash));
         arches.insert(b.arch.clone());
     }
@@ -383,7 +383,7 @@ mod tests {
     fn board_keys_use_gcc_version_verbatim() {
         let mut b = crate::cli::util::default_board_config("riscv64");
         b.gcc_version = Some("15.2.1_p20260214".into());
-        let (_, hash) = crate::cflags::canonicalize(&b.effective_cflags());
+        let hash = crate::cflags::key_for_board(&b);
         assert_eq!(
             board_store_keys(&b, &["14".into()]),
             vec![store_key(&b.chost(), &hash, "15.2.1_p20260214")]
@@ -393,7 +393,7 @@ mod tests {
     #[test]
     fn board_keys_fall_back_to_sandbox_default_specs() {
         let b = crate::cli::util::default_board_config("riscv64");
-        let (_, hash) = crate::cflags::canonicalize(&b.effective_cflags());
+        let hash = crate::cflags::key_for_board(&b);
         assert_eq!(
             board_store_keys(&b, &["14".into(), "15".into()]),
             vec![

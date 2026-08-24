@@ -1,5 +1,7 @@
 use sokgi::{Dialect, FlagSet, Warning};
 
+use crate::board::BoardConfig;
+
 /// Canonicalize a CFLAGS string and hash it into a short stable id.
 ///
 /// Returns `(canonical, hash)`.  The hash is sokgi's frozen 16-hex FNV-1a
@@ -18,6 +20,45 @@ pub fn canonicalize(cflags: &str) -> (String, String) {
             (canonical, hash)
         }
     }
+}
+
+/// The key a board's binary packages live under.
+///
+/// A board's CFLAGS are not the whole story.  `WORKAROUND_PKGS` builds named
+/// packages with different flags through `package.env`, and those land in the
+/// same directory as everything else.  Two boards agreeing on BOARD_CFLAGS but
+/// differing in their workarounds would swap binaries neither asked for --
+/// k230 and zhihe-a210 both use this.
+///
+/// Folding the workaround set in costs a rebuild when a workaround is added,
+/// which is the direction a cache key is allowed to be wrong in.  A board with
+/// no workarounds keys exactly as its CFLAGS alone did, so nothing that was
+/// already correct is invalidated.
+pub fn key_for_board(board: &BoardConfig) -> String {
+    let (_canonical, base) = canonicalize(&board.effective_cflags());
+    if board.workaround_pkgs.is_empty() {
+        return base;
+    }
+
+    // Sorted, so the key does not depend on the order the board happened to
+    // list its workarounds in.
+    let mut entries: Vec<String> = board
+        .workaround_pkgs
+        .iter()
+        .zip(board.workaround_cflags.iter())
+        .map(|(pkg, flags)| {
+            let (canonical, _) = canonicalize(flags);
+            format!("{pkg}={canonical}")
+        })
+        .collect();
+    entries.sort();
+
+    let mut input = base;
+    for entry in entries {
+        input.push('\n');
+        input.push_str(&entry);
+    }
+    fnv1a_hex(input.as_bytes())
 }
 
 /// Reject CFLAGS that cannot honestly name a store key.
@@ -77,6 +118,33 @@ fn fnv1a_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[allow(unused_imports)]
+    use crate::board::BoardConfig;
+
+    #[test]
+    fn a_board_without_workarounds_keys_as_its_cflags_alone() {
+        let mut board = crate::cli::util::default_board_config("riscv64");
+        board.cflags = Some("-O3 -march=rv64gcv_zvl128b -pipe".into());
+        let (_, plain) = canonicalize(&board.effective_cflags());
+        assert_eq!(key_for_board(&board), plain);
+    }
+
+    #[test]
+    fn a_workaround_changes_the_key_and_its_order_does_not() {
+        let mut a = crate::cli::util::default_board_config("riscv64");
+        a.cflags = Some("-O3 -march=rv64gcv_zvl128b -pipe".into());
+        let plain = key_for_board(&a);
+
+        a.workaround_pkgs = vec!["dev-libs/libgcrypt".into(), "sys-libs/zlib".into()];
+        a.workaround_cflags = vec!["-O3 -march=rv64gc -pipe".into(), "-O2 -pipe".into()];
+        let with = key_for_board(&a);
+        assert_ne!(plain, with);
+
+        let mut b = a.clone();
+        b.workaround_pkgs.reverse();
+        b.workaround_cflags.reverse();
+        assert_eq!(key_for_board(&b), with);
+    }
 
     #[test]
     fn a_key_that_would_differ_per_machine_is_refused() {

@@ -399,7 +399,31 @@ fn check_cflags(board: &BoardConfig, path: &Utf8Path) -> Result<()> {
     crate::cflags::check(&board.effective_cflags()).map_err(|msg| Error::BoardConfigParse {
         file: path.to_string(),
         msg: format!("BOARD_CFLAGS: {msg}"),
-    })
+    })?;
+
+    // The two arrays are read pairwise, and `zip` stops at the shorter one, so
+    // a board that lists three packages and two flag sets loses the third
+    // without a word -- and the package is then built with the board's own
+    // flags, which is the case the workaround existed to avoid.
+    if board.workaround_pkgs.len() != board.workaround_cflags.len() {
+        return Err(Error::BoardConfigParse {
+            file: path.to_string(),
+            msg: format!(
+                "WORKAROUND_PKGS has {} entries and WORKAROUND_CFLAGS has {}; \
+                 they are read pairwise",
+                board.workaround_pkgs.len(),
+                board.workaround_cflags.len()
+            ),
+        });
+    }
+
+    for flags in &board.workaround_cflags {
+        crate::cflags::check(flags).map_err(|msg| Error::BoardConfigParse {
+            file: path.to_string(),
+            msg: format!("WORKAROUND_CFLAGS: {msg}"),
+        })?;
+    }
+    Ok(())
 }
 
 /// Strip surrounding `"…"` or `'…'` quotes.

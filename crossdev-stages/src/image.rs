@@ -381,7 +381,7 @@ fn check_package_lists(
 /// Per-(chost, cflags-hash) binpkg cache dir for a board's target packages.
 /// Single source for both the build-step runners and default_deps.
 fn board_binpkgs_dir(ws: &Workspace, board: &BoardConfig) -> Result<Utf8PathBuf> {
-    let (_, hash) = crate::cflags::canonicalize(&board.effective_cflags());
+    let hash = crate::cflags::key_for_board(board);
     let dir = ws.binpkgs_dir().join(board.chost()).join(hash);
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
@@ -968,8 +968,9 @@ pub fn build(
     let board_cflags = board.effective_cflags();
     let gcc_spec = sandbox.gcc_spec_for(board, None)?;
     target.prepare_portage_with_cflags(ws, &board.chost(), &board_cflags, &gcc_spec)?;
-    let (canonical, hash) = crate::cflags::canonicalize(&board_cflags);
-    tracing::info!("Target make.conf CFLAGS={canonical:?} (hash {hash})");
+    let (canonical, _) = crate::cflags::canonicalize(&board_cflags);
+    let hash = crate::cflags::key_for_board(board);
+    tracing::info!("Target make.conf CFLAGS={canonical:?} (key {hash})");
 
     // Per-(chost, cflags-hash) binpkg dir bind-mounted at /binpkgs.
     // PKGDIR=/binpkgs lives in the crossdev prefix make.conf (the config
