@@ -1,7 +1,7 @@
 # qemu-riscv64-alpine
 
 Example board for `ROOTFS_PROVIDER="alpine"`: an Alpine v3.24 riscv64
-rootfs unpacked by a static `apk` inside the sandbox, plus a mainline LTS
+rootfs unpacked by `apk` inside the sandbox, plus a mainline LTS
 kernel, packed as a bare ext4 image for `qemu-system-riscv64 -M virt`.
 No bootloader is built; qemu loads the kernel directly.
 
@@ -21,8 +21,9 @@ rather than 404ing partway through.
 Package signatures are verified.  `defaults/alpine-keys/riscv64/` is
 copied into the rootfs before the first `apk add`, so apk has the
 architecture's signing keys and `--allow-untrusted` is never passed.
-apk-tools itself is not in ::gentoo, so it is fetched from a pinned URL
-and checked against a pinned sha256 (see `crossdev-stages/src/provider.rs`).
+apk-tools itself is not in ::gentoo, so the `crossdev-stages` overlay
+carries `app-arch/apk-tools` and the deps step emerges it; the release
+tarball is pinned by the ebuild's Manifest.
 
 ## Build
 

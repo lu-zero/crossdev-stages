@@ -205,9 +205,16 @@ each pass their own `--keyring`.  Alpine's per-architecture signing keys
 are committed under `defaults/alpine-keys/<arch>/` and copied into the
 root before the first `apk add`, so `--allow-untrusted` is never needed:
 they are the trust anchor, and fetching an anchor over the channel it is
-about to authenticate would buy nothing.  apk-tools itself is not in
-::gentoo, so it is fetched from a pinned URL and checked against a pinned
-sha256 (both in `provider.rs`).
+about to authenticate would buy nothing.
+
+apk-tools itself is not in ::gentoo, so the crossdev-stages overlay
+carries `app-arch/apk-tools` (category following ::gentoo's own
+`app-arch/dpkg` and `app-arch/rpm`) and the deps step emerges it.  An
+ebuild rather than a pinned binary: portage enforces the release
+tarball's checksum from the Manifest, the sandbox VDB records what was
+built and against which USE flags, and the result is cached as a binpkg
+like every other host package instead of being a blob nothing accounts
+for.
 
 ### Why there is no fedora provider
 
@@ -227,9 +234,12 @@ things stop it here, and the first is decisive:
   that motivated adding a third.
 
 A provider that needs a package manager the sandbox cannot install is a
-stub, so the enum does not carry the variant.  Reviving it needs an
-in-tree dnf, or a vendored static one pinned the way apk-tools is, and it
-would still be documented as needing binfmt.
+stub, so the enum does not carry the variant.  Reviving it needs a dnf
+the sandbox can build, whether from ::gentoo or from an overlay ebuild
+the way `app-arch/apk-tools` is, and it would still be documented as
+needing binfmt.  That is a far larger job than apk-tools was: apk-tools
+is one meson project over openssl and zlib, while dnf5 needs libsolv,
+libdnf5 and librepo written first, none of which ::gentoo has.
 
 ---
 
