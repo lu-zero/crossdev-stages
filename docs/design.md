@@ -133,6 +133,9 @@ debian   deps runs debootstrap in the sandbox; board extras install via
 ubuntu   the same, with ubuntu-packages.txt, app-crypt/ubuntu-keyring,
          the ports.ubuntu.com mirror off amd64/i386, and no rolling
          suite alias to default to.
+alpine   deps runs a static apk in the sandbox; board extras come from
+         alpine-packages.txt; assemble writes OpenRC config.  Needs no
+         emulation at all (see below).
 none     nothing seeded, installed, or configured; board hook scripts
          (override-deps.sh, post-assemble.sh, ...) own the rootfs.
 ```
@@ -167,6 +170,66 @@ first-boot  opt-in for a host that cannot register binfmt.  deps stops
 The `.debootstrap-done` marker in the target records which mode built
 it, so flipping the key re-bootstraps instead of shipping a rootfs the
 board.conf no longer describes.
+
+### Emulation, per provider
+
+The seam splits three ways, not two, and the split is what decides
+whether a board can be built on a host with no binfmt registration:
+
+```
+gentoo   no emulation.  Everything is cross-compiled; nothing target-arch
+         is ever executed.
+alpine   no emulation.  apk is a host-arch binary that only reads and
+         writes files, and --no-scripts stops it exec'ing the packages'
+         shell scriptlets; upstream documents that flag for exactly this
+         ("useful for extracting a system image for different
+         architecture on alternative ROOT").
+debian   qemu-user binfmt required.  debootstrap's second stage runs
+ubuntu   target binaries in a chroot, and there is no equivalent of
+         --no-scripts, because that stage *is* the configuration.
+         ROOTFS_SECOND_STAGE="first-boot" moves that stage onto the
+         board rather than removing it; see `SecondStage` above.
+```
+
+`--no-scripts` is not free.  Three packages in the alpine-base closure
+carry install scriptlets, and the deps step reproduces their effects
+without running them: busybox's applet symlinks, which are the whole
+userland including /sbin/init; alpine-baselayout's shadow group; and
+openrc's, which is a no-op on a fresh root.  Any *other* package whose
+scriptlet did not run is named in the build log, read back from apk's own
+record of the scripts it stored, so a board can handle it from
+post-assemble.sh.
+
+Signatures are checked for every non-Gentoo provider.  Debian and Ubuntu
+each pass their own `--keyring`.  Alpine's per-architecture signing keys
+are committed under `defaults/alpine-keys/<arch>/` and copied into the
+root before the first `apk add`, so `--allow-untrusted` is never needed:
+they are the trust anchor, and fetching an anchor over the channel it is
+about to authenticate would buy nothing.  apk-tools itself is not in
+::gentoo, so it is fetched from a pinned URL and checked against a pinned
+sha256 (both in `provider.rs`).
+
+### Why there is no fedora provider
+
+`dnf --installroot=/target --forcearch=<arch> --releasever=<n> install
+@core` is the right shape and the flag is long since merged, but two
+things stop it here, and the first is decisive:
+
+- ::gentoo carries no dnf.  Checked across every category of the tree:
+  no `dnf`, no `dnf5`, no `yum`, no `libdnf`, no `libsolv`.  What is
+  there is `app-arch/rpm` and `app-arch/createrepo_c`, which give you an
+  unpacker and an indexer, not a dependency resolver.  The sandbox is a
+  Gentoo stage3, so there is nothing to emerge and nothing to run.
+- Even with dnf, rpm scriptlets execute during the transaction, and
+  `--forcearch`'s own documented prerequisite is qemu-user-static plus a
+  binfmt registration.  Fedora would land in the debian bucket above,
+  not the alpine one, so it would not be the emulation-free provider
+  that motivated adding a third.
+
+A provider that needs a package manager the sandbox cannot install is a
+stub, so the enum does not carry the variant.  Reviving it needs an
+in-tree dnf, or a vendored static one pinned the way apk-tools is, and it
+would still be documented as needing binfmt.
 
 ---
 
