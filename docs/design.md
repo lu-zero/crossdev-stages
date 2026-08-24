@@ -140,6 +140,11 @@ fedora   deps unpacks a pinned container base image, then installs
          fedora-packages.txt with dnf5 from the crossdev-stages overlay;
          assemble writes the same systemd config as debian.  Seeding
          needs no emulation; installing does.
+buildroot deps clones buildroot (BUILDROOT_REPO/BUILDROOT_TAG, through the
+         source cache every other tree uses), runs its defconfig and its
+         build, and unpacks output/images/rootfs.tar into /target;
+         assemble installs the kernel and DTBs the board named out of
+         output/images/ and writes no OS config at all.
 none     nothing seeded, installed, or configured; board hook scripts
          (override-deps.sh, post-assemble.sh, ...) own the rootfs.
 ```
@@ -177,7 +182,7 @@ board.conf no longer describes.
 
 ### Emulation, per provider
 
-The seam splits three ways, not two, and the split is what decides
+The seam splits more than two ways, and the split is what decides
 whether a board can be built on a host with no binfmt registration:
 
 ```
@@ -188,6 +193,9 @@ alpine   no emulation.  apk is a host-arch binary that only reads and
          shell scriptlets; upstream documents that flag for exactly this
          ("useful for extracting a system image for different
          architecture on alternative ROOT").
+buildroot no emulation.  Buildroot cross-compiles with a toolchain it
+         builds itself and assembles the rootfs from the files it just
+         installed; nothing target-arch is executed.
 debian   qemu-user binfmt required.  debootstrap's second stage runs
 ubuntu   target binaries in a chroot, and there is no equivalent of
          --no-scripts, because that stage *is* the configuration.
@@ -314,6 +322,46 @@ What is still built i686 today is multilib libraries: `glibc`,
 `systemd`, `util-linux` and `rpm-libs` have i686 builds, `bash`,
 `coreutils`, `rpm` and `filesystem` do not, so there is no first
 transaction to run, never mind i586's missing SSE2.
+
+### Buildroot and the second toolchain
+
+Buildroot is not a package archive to unpack from: it is a source build
+system that produces a toolchain, a rootfs, and optionally a kernel and
+a bootloader from one defconfig.  It therefore overlaps with the reason
+this project exists, and two toolchains for one board is either waste or
+a contradiction.  Three ways out, and which one a board gets is decided
+by BUILD_STEPS rather than by a provider flag:
+
+```
+(a) BUILD_STEPS=(deps assemble pack)
+    Buildroot builds everything.  needs_cross_toolchain() is false, the
+    store is never touched, crossdev is never set up.  Implemented.
+(c) BUILD_STEPS=(deps checkout kernel ... assemble pack)
+    Buildroot supplies only the rootfs; this project builds the kernel
+    and bootloader with crossdev.  Falls out of the same code, and
+    really does build two toolchains.
+(b) BR2_TOOLCHAIN_EXTERNAL pointed at the store prefix.
+    Not implemented.  The end state, and not a flag: buildroot checks an
+    external toolchain against what the defconfig claims about it (libc,
+    gcc series, kernel-headers series, C++), so the provider has to
+    generate those symbols from the store key and probe the prefix for
+    the rest.  It also leaves CFLAGS with two owners: BOARD_CFLAGS
+    builds the prefix and its glibc, BR2_TARGET_OPTIMIZATION builds
+    everything buildroot compiles on top of it.
+```
+
+(a) costs the ABI and ISA checks: both need the cross prefix's readelf
+and gcc, which a board that never sets up crossdev does not have, so
+they warn and skip.  (b) hands them back, which is the strongest
+argument for it.
+
+A related use of buildroot, purely as a cross-toolchain provider with a
+stripped defconfig and a meson cross file whose `exe_wrapper` runs
+qemu-user against the target dir, is (b) seen from the other end.  This
+project already has the qemu-user half: `crossdev-stages chroot` runs
+the board's own binaries through binfmt_misc.  What it does not expose
+is a cross file, and it is the toolchain half that is missing, not the
+emulation half.
 
 ---
 
