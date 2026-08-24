@@ -192,6 +192,15 @@ pub fn print(report: &Report, root: &Utf8Path) -> bool {
             .collect::<Vec<_>>()
             .join(" ")
     );
+    if report.scanned == 0 {
+        // Not a pass.  A rootfs whose binaries carry no section headers -- an
+        // OpenWrt image, say -- has no `.riscv.attributes` for readelf to
+        // find, so this guard provided nothing.  Saying "every binary matches"
+        // after looking at none of them is the shape of bug this check exists
+        // to catch.
+        println!("    no binary carried an ISA attribute; nothing was verified");
+        return false;
+    }
     if report.findings.is_empty() {
         println!("    every binary matches the board");
         return false;
