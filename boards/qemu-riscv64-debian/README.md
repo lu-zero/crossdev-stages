@@ -16,6 +16,11 @@ registered with the F (fix-binary) flag:
 
 Without it the second stage fails with "Exec format error".
 
+A host that cannot register binfmt can set
+`ROOTFS_SECOND_STAGE="first-boot"` instead, which defers the second stage
+to the board; `boards/qemu-riscv64-ubuntu` uses it and its README spells
+out what it costs.
+
 ## Build
 
 ```sh
