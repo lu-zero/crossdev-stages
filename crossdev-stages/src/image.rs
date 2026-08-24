@@ -509,6 +509,31 @@ fn default_deps(
     Ok(())
 }
 
+/// Read a `<distro>-packages.txt`: one package name per line, `#`
+/// comments, blanks ignored.  Deliberately not the portage-atom parser --
+/// that one takes a second whitespace-separated token as a KEYWORDS
+/// request and would silently drop it here.
+fn read_distro_packages(path: &Utf8Path) -> Result<Vec<String>> {
+    let mut out = Vec::new();
+    if !path.exists() {
+        return Ok(out);
+    }
+    for line in std::fs::read_to_string(path)?.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.split_whitespace().nth(1).is_some() {
+            return Err(crate::error::Error::BoardConfigParse {
+                file: path.to_string(),
+                msg: format!("one package per line: '{line}'"),
+            });
+        }
+        out.push(line.to_string());
+    }
+    Ok(out)
+}
+
 /// Provision and populate a Debian or Ubuntu rootfs in /target via
 /// debootstrap.  Runs inside the sandbox: stage 1 (`--foreign`)
 /// downloads every .deb and unpacks the Priority:required set without
@@ -585,27 +610,11 @@ fn debootstrap_deps(
         .as_deref()
         .unwrap_or_else(|| deb.default_mirror(arch));
 
-    // One package name per line; the portage-atom parser would silently
-    // drop a second whitespace-separated token, so parse strictly here.
-    let list_path = boards_root
-        .join(&board.name)
-        .join(format!("{provider}-packages.txt"));
-    let mut extra: Vec<String> = Vec::new();
-    if list_path.exists() {
-        for line in std::fs::read_to_string(&list_path)?.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            if line.split_whitespace().nth(1).is_some() {
-                return Err(crate::error::Error::BoardConfigParse {
-                    file: list_path.to_string(),
-                    msg: format!("one package per line: '{line}'"),
-                });
-            }
-            extra.push(line.to_string());
-        }
-    }
+    let extra = read_distro_packages(
+        &boards_root
+            .join(&board.name)
+            .join(format!("{provider}-packages.txt")),
+    )?;
     let include = if extra.is_empty() {
         String::new()
     } else {
@@ -656,6 +665,199 @@ fn debootstrap_deps(
         format!("{} {}\n", mode.name(), chrono::Utc::now().to_rfc3339()),
     )?;
     Ok(())
+}
+
+/// Alpine's default branch.  A codename-free distro, so unlike
+/// DEBIAN_SUITE this is a real version and pinning it is the default.
+const ALPINE_BRANCH_DEFAULT: &str = "v3.24";
+
+/// Packages whose install scriptlets `alpine_deps` reproduces by hand
+/// after `--no-scripts`, keyed by package name.  Anything else with an
+/// unrun scriptlet is reported to the user instead.
+const ALPINE_SCRIPTS_REPLICATED: [&str; 3] = ["busybox", "alpine-baselayout", "openrc"];
+
+/// Provision and populate an Alpine rootfs in /target with a static apk.
+///
+/// The one provider that fills a foreign-arch root with no emulation at
+/// all: apk is a host-arch binary that only reads and writes files, and
+/// `--no-scripts` stops it exec'ing the packages' own shell scriptlets --
+/// upstream documents that flag for exactly this ("useful for extracting
+/// a system image for different architecture on alternative ROOT").
+/// Contrast the debian provider, whose debootstrap second stage runs
+/// target binaries in a chroot and so needs qemu-user binfmt on the host.
+///
+/// Signatures are checked.  `defaults/alpine-keys/<arch>/` is copied into
+/// the root before the first `apk add`, so apk has the target arch's
+/// signing keys and `--allow-untrusted` is never needed; apk-tools itself
+/// is pinned by URL and sha256.
+///
+/// What `--no-scripts` costs is paid back below where it is structural
+/// (busybox's applet symlinks are the whole userland, `/sbin/init`
+/// included) and reported where it is not.
+fn alpine_deps(
+    runner: &SandboxRunner,
+    target: &Target,
+    board: &BoardConfig,
+    boards_root: &Utf8Path,
+) -> Result<()> {
+    let done = target.dir.join(".apk-done");
+    if done.exists() {
+        tracing::info!("Alpine rootfs already provisioned, skipping apk.");
+        return Ok(());
+    }
+    let arch = crate::provider::alpine_arch(&board.arch).ok_or_else(|| {
+        crate::error::Error::BoardConfigParse {
+            file: board.name.clone(),
+            msg: format!("no Alpine port for arch '{}'", board.arch),
+        }
+    })?;
+    let branch = board
+        .alpine_branch
+        .as_deref()
+        .unwrap_or(ALPINE_BRANCH_DEFAULT);
+    if matches!(branch, "edge" | "latest-stable") {
+        tracing::warn!(
+            "ALPINE_BRANCH '{branch}' is a moving target; pin a release \
+             (e.g. {ALPINE_BRANCH_DEFAULT}) for reproducible builds"
+        );
+    }
+    if !crate::provider::alpine_branch_serves(branch, arch) {
+        return Err(crate::error::Error::BoardConfigParse {
+            file: board.name.clone(),
+            msg: format!(
+                "Alpine {branch} has no {arch} repository -- riscv64 is a \
+                 supported architecture from Alpine 3.20 on"
+            ),
+        });
+    }
+    let mirror = board
+        .alpine_mirror
+        .as_deref()
+        .unwrap_or("https://dl-cdn.alpinelinux.org/alpine");
+    let repos = board.alpine_repos.as_deref().unwrap_or("main community");
+    let extra = read_distro_packages(&boards_root.join(&board.name).join("alpine-packages.txt"))?;
+
+    // A failed run leaves a half-unpacked tree; wipe everything but the
+    // workspace markers so a retry starts from nothing.
+    runner.run(
+        "find /target -mindepth 1 -maxdepth 1 \
+         ! -name '.arch' ! -name '.stage3' ! -name '.provider' -exec rm -rf {} +",
+    )?;
+
+    // apk-tools is not in ::gentoo (checked: no apk, no apk-tools, in any
+    // category), so it is fetched rather than emerged -- pinned URL, pinned
+    // checksum, cached in the workspace so the second build is offline.
+    runner.run(&format!(
+        "set -e\n\
+         mkdir -p /cache/sources\n\
+         apk=/cache/sources/apk.static-{ver}\n\
+         if ! echo '{sha}  '\"$apk\" | sha256sum -c --status 2>/dev/null; then\n\
+         \x20   wget -O \"$apk.tmp\" '{url}'\n\
+         \x20   echo '{sha}  '\"$apk.tmp\" | sha256sum -c\n\
+         \x20   mv -f \"$apk.tmp\" \"$apk\"\n\
+         fi\n\
+         install -m 0755 \"$apk\" /usr/local/bin/apk.static\n",
+        ver = crate::provider::APK_STATIC_VERSION,
+        sha = crate::provider::APK_STATIC_SHA256,
+        url = crate::provider::APK_STATIC_URL,
+    ))?;
+
+    // Keys first: apk reads them from <root>/etc/apk/keys, so they have to
+    // be in place before the first package is verified.  Per-arch, because
+    // Alpine signs each architecture with its own builder key.
+    runner.run(&format!(
+        "set -e\n\
+         mkdir -p /target/etc/apk/keys\n\
+         cp /scripts/defaults/alpine-keys/{arch}/*.rsa.pub /target/etc/apk/keys/\n\
+         : > /target/etc/apk/repositories\n\
+         for r in {repos}; do echo '{mirror}/{branch}/'\"$r\" \
+             >> /target/etc/apk/repositories; done"
+    ))?;
+
+    // --initdb also records the arch in /target/etc/apk/arch, so apk on the
+    // booted board keeps installing for the right architecture.
+    let add = std::iter::once("alpine-base".to_string())
+        .chain(extra)
+        .collect::<Vec<_>>()
+        .join(" ");
+    runner.run(&format!(
+        "apk.static --arch {arch} --root /target --initdb --no-scripts add {add}"
+    ))?;
+
+    // busybox ships one binary and a list of the paths its applets answer
+    // to; the post-install scriptlet turns that list into symlinks.  Without
+    // them the root has no /bin/ls and no /sbin/init.  The list is a plain
+    // file (/etc/busybox-paths.d/<binary>), so recreate them here -- same
+    // rule as `busybox --install -s`, which never overwrites an existing
+    // path.  -L as well as -e, because a link to a target that only
+    // resolves once the image is the root reads as absent to -e.
+    // bbsuid then claims its eight applets, as its own --install does.
+    runner.run(
+        "set -e\n\
+         for list in /target/etc/busybox-paths.d/*; do\n\
+         \x20   [ -f \"$list\" ] || continue\n\
+         \x20   bin=/bin/${list##*/}\n\
+         \x20   [ -e \"/target$bin\" ] || continue\n\
+         \x20   while read -r p; do\n\
+         \x20       [ -n \"$p\" ] || continue\n\
+         \x20       mkdir -p \"/target/${p%/*}\"\n\
+         \x20       [ -e \"/target/$p\" ] || [ -L \"/target/$p\" ] || \\\n\
+         \x20           ln -s \"$bin\" \"/target/$p\"\n\
+         \x20   done < \"$list\"\n\
+         done\n\
+         if [ -e /target/bin/bbsuid ]; then\n\
+         \x20   for a in bin/mount bin/umount bin/su usr/bin/crontab usr/bin/passwd \\\n\
+         \x20            usr/bin/traceroute usr/bin/traceroute6 usr/bin/vlock; do\n\
+         \x20       ln -sf /bin/bbsuid \"/target/$a\"\n\
+         \x20   done\n\
+         fi",
+    )?;
+
+    // alpine-baselayout's post-install, the part that matters: /etc/group is
+    // written after /etc/shadow, so the shadow group (gid 42) only gets
+    // applied afterwards.
+    runner.run("[ -f /target/etc/shadow ] && chgrp 42 /target/etc/shadow; :")?;
+
+    report_unrun_alpine_scripts(runner);
+
+    // No /dev cleanup: apk never mknods here (with --no-scripts it does not
+    // reach its device-node setup at all) and alpine-base carries no device
+    // nodes, so /target/dev is already just the pts and shm mountpoints.
+    std::fs::write(done, chrono::Utc::now().to_rfc3339())?;
+    Ok(())
+}
+
+/// apk stores every package's scriptlets in the root even when it is told
+/// not to run them, so the image can say exactly which ones did not run.
+/// Advisory: the three whose effects `alpine_deps` reproduces are dropped,
+/// and what is left is a board's to handle from post-assemble.sh.
+fn report_unrun_alpine_scripts(runner: &SandboxRunner) {
+    let Ok(listing) = runner.run_output(
+        "tar tzf /target/lib/apk/db/scripts.tar.gz 2>/dev/null \
+         | grep -E '\\.(pre|post)-install$' \
+         | sed -E 's/\\.X1[0-9a-f]+\\.(pre|post)-install$//' | sort -u",
+    ) else {
+        return;
+    };
+    let mut rest: Vec<&str> = listing
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        // "alpine-baselayout-3.7.2-r1" -> "alpine-baselayout": strip the
+        // -r<rel> and the version, both of which move independently.
+        .filter(|s| {
+            let name = s.rsplitn(3, '-').nth(2).unwrap_or(s);
+            !ALPINE_SCRIPTS_REPLICATED.contains(&name)
+        })
+        .collect();
+    rest.sort_unstable();
+    if !rest.is_empty() {
+        tracing::warn!(
+            "apk ran with --no-scripts (no emulation); install scriptlets \
+             did not run for: {}",
+            rest.join(" ")
+        );
+    }
 }
 
 fn default_checkout(
@@ -918,7 +1120,8 @@ fn default_assemble(
     runner.run(
         "rm -f /build/gen/root/.arch /build/gen/root/.stage3 \
          /build/gen/root/.provider /build/gen/root/.stage1 \
-         /build/gen/root/.updated /build/gen/root/.debootstrap-done",
+         /build/gen/root/.updated /build/gen/root/.debootstrap-done \
+         /build/gen/root/.apk-done",
     )?;
     // unpack_tarball excludes ./dev to avoid permission errors in rootless containers.
     // Recreate the empty mount-point directories so the kernel can mount devtmpfs,
@@ -996,6 +1199,7 @@ fn default_assemble(
     match board.rootfs_provider {
         RootfsProvider::Gentoo => os_config_openrc(runner, board)?,
         RootfsProvider::Debian | RootfsProvider::Ubuntu => os_config_deb(runner, board)?,
+        RootfsProvider::Alpine => os_config_alpine(runner, board)?,
         RootfsProvider::None => {}
     }
 
@@ -1016,17 +1220,19 @@ fn default_assemble(
     runner.run("/usr/local/bin/ldconfig -v -r /build/gen/root")
 }
 
-/// OpenRC configuration of the assembled rootfs: runlevels, first-boot
-/// grow-rootfs service, BOOT_SERVICES symlinks, hostname, serial getty,
-/// empty root password, permissive sshd.  Gentoo-provider only; other
-/// rootfs providers configure their OS in their own way.
-fn os_config_openrc(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+/// The OpenRC parts Gentoo and Alpine genuinely share: the runlevel
+/// directories, the first-boot grow-rootfs oneshot, and BOOT_SERVICES.
+/// Both distros use `/etc/init.d/<svc>` and `/etc/runlevels/<level>/<svc>`
+/// and neither needs the target arch to run for any of it.
+///
+/// grow-rootfs itself calls findmnt, sfdisk, partx and resize2fs; on
+/// Gentoo those are all in @system, on Alpine they are extra packages
+/// (util-linux-misc, e2fsprogs-extra).  It exits with a warning rather
+/// than failing the boot when they are missing.
+fn os_config_openrc_common(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     runner
         .run("mkdir -p /build/gen/root/etc/runlevels/{boot,default,nonetwork,shutdown,sysinit}")?;
 
-    // Board-agnostic: grow-rootfs oneshot, runs once on first boot, fills
-    // the rootfs partition out to the disk end + resize2fs.  Needs
-    // sys-block/parted + sys-fs/e2fsprogs in the target.
     runner.run(
         "install -m 0755 /scripts/defaults/scripts/grow-rootfs.initd \
            /build/gen/root/etc/init.d/grow-rootfs && \
@@ -1041,6 +1247,15 @@ fn os_config_openrc(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
             ))?;
         }
     }
+    Ok(())
+}
+
+/// OpenRC configuration of the assembled rootfs: runlevels, first-boot
+/// grow-rootfs service, BOOT_SERVICES symlinks, hostname, serial getty,
+/// empty root password, permissive sshd.  Gentoo-provider only; other
+/// rootfs providers configure their OS in their own way.
+fn os_config_openrc(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+    os_config_openrc_common(runner, board)?;
 
     runner.run(&format!(
         "mkdir -p /build/gen/root/etc/conf.d && \
@@ -1095,6 +1310,46 @@ fn os_config_openrc(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     runner.run(
         "mkdir -p /build/gen/root/etc/ssh && \
          printf 'PermitRootLogin yes\nPermitEmptyPasswords yes\nStrictModes yes\n' \
+         >> /build/gen/root/etc/ssh/sshd_config",
+    )
+}
+
+/// OpenRC configuration of an assembled Alpine rootfs.
+///
+/// Alpine runs OpenRC, so the runlevel machinery above is shared with the
+/// Gentoo provider verbatim.  The rest of `os_config_openrc` is not
+/// reusable and is redone here: Alpine's hostname service reads
+/// /etc/hostname in preference to /etc/conf.d/hostname; init is busybox
+/// init, whose inittab lines are `<tty>::<action>:<cmd>` and whose getty
+/// is busybox's, not agetty; root's password lives in /etc/shadow, not
+/// /etc/passwd; and there is no /etc/portage to append a make.conf to.
+fn os_config_alpine(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+    os_config_openrc_common(runner, board)?;
+
+    runner.run(&format!(
+        "printf '{}\n' > /build/gen/root/etc/hostname",
+        board.hostname
+    ))?;
+
+    if let (Some(tty), Some(baud)) = (&board.serial_tty, &board.serial_baud) {
+        // Alpine ships this exact line commented out; uncommenting is not
+        // enough because the board picks the port and the speed.  Drop any
+        // line an earlier assemble added first, so repeating the step cannot
+        // stack up gettys on one port.  -L for the same reason the Gentoo
+        // path passes it: a debug header has no carrier detect.
+        runner.run(&format!(
+            "sed -i -E '/^{tty}::respawn:/d' /build/gen/root/etc/inittab && \
+             echo '{tty}::respawn:/sbin/getty -L {baud} {tty} vt100' \
+             >> /build/gen/root/etc/inittab"
+        ))?;
+    }
+
+    runner.run("sed -i -e 's/^root:[^:]*:/root::/' /build/gen/root/etc/shadow")?;
+    // Alpine's sshd_config carries no Include, so append rather than drop a
+    // file into sshd_config.d.  Harmless when openssh isn't installed.
+    runner.run(
+        "mkdir -p /build/gen/root/etc/ssh && \
+         printf 'PermitRootLogin yes\nPermitEmptyPasswords yes\n' \
          >> /build/gen/root/etc/ssh/sshd_config",
     )
 }
@@ -1370,6 +1625,9 @@ pub fn build(
                     Some(deb) => debootstrap_deps(_r, target, board, boards_root, deb),
                     None if provider == RootfsProvider::Gentoo => {
                         default_deps(_r, ws, sandbox, target, board, boards_root, defaults_root)
+                    }
+                    None if provider == RootfsProvider::Alpine => {
+                        alpine_deps(_r, target, board, boards_root)
                     }
                     // No default package installation; override-deps.sh
                     // (already handled by run_step) is the provider.

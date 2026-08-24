@@ -21,6 +21,14 @@ pub enum RootfsProvider {
     /// keyring, the mirror (everything but amd64/i386 lives on
     /// ports.ubuntu.com) and in having no rolling suite alias.
     Ubuntu,
+    /// Alpine rootfs unpacked by a static `apk` during the `deps` step.
+    /// The only provider that populates a foreign-arch root without
+    /// executing a single target binary: apk runs on the host arch and
+    /// `--no-scripts` (upstream's own answer for "extracting a system
+    /// image for different architecture on alternative ROOT") keeps the
+    /// packages' shell scriptlets from ever being exec'd.  No qemu, no
+    /// binfmt.  `assemble` writes OpenRC config.
+    Alpine,
     /// Nothing is seeded, installed, or configured; board hooks
     /// (`override-deps.sh`, `post-assemble.sh`, ...) fill the rootfs.
     None,
@@ -33,6 +41,7 @@ impl RootfsProvider {
             "gentoo" => Some(Self::Gentoo),
             "debian" => Some(Self::Debian),
             "ubuntu" => Some(Self::Ubuntu),
+            "alpine" => Some(Self::Alpine),
             "none" => Some(Self::None),
             _ => Option::None,
         }
@@ -44,7 +53,7 @@ impl RootfsProvider {
     pub fn needs_cross_toolchain(&self, steps: &[&str]) -> bool {
         match self {
             Self::Gentoo => true,
-            Self::Debian | Self::Ubuntu | Self::None => steps
+            Self::Debian | Self::Ubuntu | Self::Alpine | Self::None => steps
                 .iter()
                 .any(|s| matches!(*s, "kernel" | "bootloader")),
         }
@@ -64,6 +73,7 @@ impl RootfsProvider {
             Self::Gentoo => "gentoo",
             Self::Debian => "debian",
             Self::Ubuntu => "ubuntu",
+            Self::Alpine => "alpine",
             Self::None => "none",
         }
     }
@@ -73,7 +83,7 @@ impl RootfsProvider {
         match self {
             Self::Debian => Some(Debootstrap::DEBIAN),
             Self::Ubuntu => Some(Debootstrap::UBUNTU),
-            Self::Gentoo | Self::None => None,
+            Self::Gentoo | Self::Alpine | Self::None => None,
         }
     }
 }
@@ -187,6 +197,67 @@ pub fn dpkg_arch(arch: &str) -> Option<&'static str> {
     }
 }
 
+/// Alpine's name for a Gentoo-style arch string.
+///
+/// riscv64 became a supported Alpine architecture in **3.20** (2024-05-22);
+/// `ALPINE_BRANCH` older than v3.20 has no riscv64 repository and
+/// `alpine_branch_serves()` refuses it rather than letting apk 404.
+///
+/// No mapping for i586: Alpine's x86 port is compiled with SSE (its
+/// busybox alone uses xmm registers), so the pentium-mmx board cannot
+/// run it.  i686 maps to `x86` and gets the same SSE floor -- a genuine
+/// SSE-less i686 is out too, which the ISA check catches against the
+/// assembled image.
+pub fn alpine_arch(arch: &str) -> Option<&'static str> {
+    match arch {
+        "riscv64" => Some("riscv64"),
+        "aarch64" => Some("aarch64"),
+        "x86_64" => Some("x86_64"),
+        "i686" => Some("x86"),
+        "armv7a" | "armv7" => Some("armv7"),
+        _ => None,
+    }
+}
+
+/// Whether an `ALPINE_BRANCH` carries a repository for `alpine_arch`.
+/// Only says no when it is certain: a `vN.M` branch strictly older than
+/// the release that introduced the port.  `edge`, `latest-stable` and
+/// anything unparseable pass through.
+pub fn alpine_branch_serves(branch: &str, alpine_arch: &str) -> bool {
+    let since = match alpine_arch {
+        "riscv64" => (3, 20),
+        _ => return true,
+    };
+    let Some((major, minor)) = parse_alpine_branch(branch) else {
+        return true;
+    };
+    (major, minor) >= since
+}
+
+/// "v3.24" -> (3, 24).  None for edge, latest-stable, anything else.
+fn parse_alpine_branch(branch: &str) -> Option<(u32, u32)> {
+    let (major, minor) = branch.strip_prefix('v')?.split_once('.')?;
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
+/// Static apk-tools used to unpack the foreign-arch root, pinned by URL
+/// and checksum.  GitLab's generic package registry rather than a
+/// dl-cdn `.apk`: a stable branch keeps only the current version of each
+/// package, so a CDN pin rots on the next apk-tools bump, while these
+/// per-release uploads are permanent.
+///
+/// The signing keys are *not* fetched.  They are the trust anchor, and
+/// downloading an anchor over the channel it is about to authenticate
+/// buys nothing, so they are committed under `defaults/alpine-keys/` and
+/// copied into the root before the first `apk add`.  Every key there was
+/// taken from `alpine-keys-2.6-r0.apk` and byte-compared against the
+/// aports `v3.24.1` tag.  `--allow-untrusted` is never passed.
+pub const APK_STATIC_VERSION: &str = "3.0.7";
+pub const APK_STATIC_URL: &str = "https://gitlab.alpinelinux.org/api/v4/projects/5/\
+                                  packages/generic/v3.0.7/x86_64/apk.static";
+pub const APK_STATIC_SHA256: &str =
+    "c07bf5356eacc9dd7a8c56bc537f46702f007170287403299d52a04264e74b3c";
+
 #[cfg(test)]
 mod tests {
     use super::{Debootstrap, RootfsProvider, SecondStage};
@@ -196,7 +267,10 @@ mod tests {
         assert_eq!(RootfsProvider::parse("gentoo"), Some(RootfsProvider::Gentoo));
         assert_eq!(RootfsProvider::parse("debian"), Some(RootfsProvider::Debian));
         assert_eq!(RootfsProvider::parse("ubuntu"), Some(RootfsProvider::Ubuntu));
+        assert_eq!(RootfsProvider::parse("alpine"), Some(RootfsProvider::Alpine));
         assert_eq!(RootfsProvider::parse("none"), Some(RootfsProvider::None));
+        // No fedora provider: ::gentoo carries no dnf, and dnf's scriptlets
+        // would need emulation anyway.  See docs/design.md.
         assert_eq!(RootfsProvider::parse("fedora"), Option::None);
     }
 
@@ -211,6 +285,7 @@ mod tests {
             RootfsProvider::Gentoo,
             RootfsProvider::Debian,
             RootfsProvider::Ubuntu,
+            RootfsProvider::Alpine,
             RootfsProvider::None,
         ] {
             assert_eq!(RootfsProvider::parse(p.name()), Some(p));
@@ -285,5 +360,36 @@ mod tests {
         for s in [SecondStage::Chroot, SecondStage::FirstBoot] {
             assert_eq!(SecondStage::parse(s.name()), Some(s));
         }
+    }
+
+    #[test]
+    fn alpine_arch_mapping() {
+        assert_eq!(super::alpine_arch("riscv64"), Some("riscv64"));
+        assert_eq!(super::alpine_arch("aarch64"), Some("aarch64"));
+        assert_eq!(super::alpine_arch("x86_64"), Some("x86_64"));
+        assert_eq!(super::alpine_arch("i686"), Some("x86"));
+        assert_eq!(super::alpine_arch("armv7a"), Some("armv7"));
+        // pentium-mmx: Alpine's x86 port needs SSE.
+        assert_eq!(super::alpine_arch("i586"), Option::None);
+        assert_eq!(super::alpine_arch("riscv32"), Option::None);
+    }
+
+    #[test]
+    fn riscv64_needs_alpine_320() {
+        assert!(!super::alpine_branch_serves("v3.19", "riscv64"));
+        assert!(!super::alpine_branch_serves("v3.9", "riscv64"));
+        assert!(super::alpine_branch_serves("v3.20", "riscv64"));
+        assert!(super::alpine_branch_serves("v3.24", "riscv64"));
+        // Unparseable and moving branches are not second-guessed.
+        assert!(super::alpine_branch_serves("edge", "riscv64"));
+        assert!(super::alpine_branch_serves("latest-stable", "riscv64"));
+        // Every other arch predates every branch this can name.
+        assert!(super::alpine_branch_serves("v3.9", "aarch64"));
+    }
+
+    #[test]
+    fn apk_static_url_matches_pinned_version() {
+        assert!(super::APK_STATIC_URL.contains(super::APK_STATIC_VERSION));
+        assert_eq!(super::APK_STATIC_SHA256.len(), 64);
     }
 }
