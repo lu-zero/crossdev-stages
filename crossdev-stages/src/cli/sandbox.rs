@@ -58,6 +58,20 @@ pub async fn run(
             )
             .await?;
         }
+        SandboxCmd::Update { name, no_sync } => {
+            let dir = ws.resolve_sandbox(name.as_deref())?;
+            let sb = sandbox::Sandbox::open(dir)?;
+            let runner = sb.runner();
+            let portage = crate::portage::Portage::new(&runner);
+            if !no_sync {
+                tracing::info!("Syncing the ebuild tree...");
+                portage.webrsync()?;
+                portage.getuto()?;
+            }
+            tracing::info!("Updating the sandbox's own packages...");
+            portage.update_world()?;
+            println!("Sandbox {} updated.", sb.dir.file_name().unwrap_or_default());
+        }
         SandboxCmd::Enter { name } => {
             let dir = ws.resolve_sandbox(name.as_deref())?;
             let sb = sandbox::Sandbox::open(dir)?;

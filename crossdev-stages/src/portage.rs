@@ -307,6 +307,28 @@ impl<'a> Portage<'a> {
         self.run_emerge("emerge -b -k -e @world")
     }
 
+    /// Bring the world set up to date: newer versions, changed USE, and the
+    /// dependencies that follow from either.  `--keep-going` because one
+    /// package failing to build is not a reason to leave the other ninety
+    /// un-updated, and the log of what failed is printed either way.
+    pub fn update_world(&self) -> Result<()> {
+        self.run_emerge("emerge -b -k -uDN --keep-going --with-bdeps=y @world")
+    }
+
+    /// Bring a set of packages up to date without touching the rest.
+    pub fn update(&self, packages: &[&str]) -> Result<()> {
+        let pkgs = packages.join(" ");
+        self.run_emerge(&format!("emerge -b -k -uDN --keep-going {pkgs}"))
+    }
+
+    /// Same, cross-emerged into the target stage.
+    pub fn cross_update(&self, chost: &str, packages: &[&str]) -> Result<()> {
+        let pkgs = packages.join(" ");
+        self.run_emerge(&format!(
+            "ROOT=/target {chost}-emerge -b -k -uDN --keep-going {pkgs}"
+        ))
+    }
+
     /// Cross-emerge packages into the target stage (mounted at `/target`).
     /// Uses `{chost}-emerge` which crossdev installs.
     pub fn cross_emerge(&self, chost: &str, packages: &[&str]) -> Result<()> {
