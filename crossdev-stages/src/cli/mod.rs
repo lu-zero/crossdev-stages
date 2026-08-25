@@ -193,6 +193,16 @@ pub enum SandboxCmd {
         #[arg(long)]
         gcc_version: Option<String>,
     },
+    /// Sync the ebuild tree and update the sandbox's own packages.
+    Update {
+        /// Sandbox name (default: most-recently-modified).
+        #[arg(long)]
+        name: Option<String>,
+        /// Update installed packages without syncing the tree first.
+        #[arg(long)]
+        no_sync: bool,
+    },
+
     /// Open an interactive shell in a sandbox.
     Enter {
         #[arg(long)]
@@ -373,6 +383,19 @@ pub enum MaintCmd {
 pub enum StoreCmd {
     /// List crossdev prefixes in the workspace store.
     List,
+    /// Rebuild a board's cached binary packages against the current tree.
+    Update {
+        /// Board name.
+        #[arg(long)]
+        board: String,
+        /// Sandbox name (default: most-recently-modified).
+        #[arg(long)]
+        sandbox: Option<String>,
+        /// Update the packages without syncing the tree first.
+        #[arg(long)]
+        no_sync: bool,
+    },
+
     /// Show prefixes no current board would build into.
     Gc {
         /// Delete instead of just listing.

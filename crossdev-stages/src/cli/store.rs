@@ -11,7 +11,74 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, cmd: StoreCmd) -> Result<()> 
     match cmd {
         StoreCmd::List => list(ws),
         StoreCmd::Gc { force } => gc(ws, boards_root, force),
+        StoreCmd::Update {
+            board,
+            sandbox,
+            no_sync,
+        } => update(ws, boards_root, &board, sandbox.as_deref(), no_sync),
     }
+}
+
+/// Bring a board's cached binary packages up to date against the current tree.
+///
+/// The cache is what makes the next image build fast, and it goes stale the
+/// moment the ebuild tree moves.  Doing this on its own means the staleness is
+/// paid for deliberately, once, instead of turning up inside a build that was
+/// supposed to be quick.
+fn update(
+    ws: &Workspace,
+    boards_root: &Utf8Path,
+    board_name: &str,
+    sandbox: Option<&str>,
+    no_sync: bool,
+) -> Result<()> {
+    let board = crate::board::load(boards_root, board_name)?;
+    let sb = crate::sandbox::Sandbox::open(ws.resolve_sandbox(sandbox)?)?;
+    let target = crate::target::Target::open(ws.resolve_target_for_arch(
+        None,
+        &board.arch,
+        board.rootfs_provider.name(),
+    )?)?;
+
+    let defaults_root = boards_root.parent().unwrap_or(boards_root).join("defaults");
+    let board_dir = boards_root.join(board_name);
+    let packages = crate::package_list::merge(
+        crate::package_list::read_required(&defaults_root.join("target-packages.txt"))?,
+        crate::package_list::read_optional(&board_dir.join("target-packages.txt"))?,
+    );
+    if packages.is_empty() {
+        println!("{board_name} declares no target packages.");
+        return Ok(());
+    }
+
+    let binpkgs_dir = ws
+        .binpkgs_dir()
+        .join(board.chost())
+        .join(crate::cflags::binpkg_key(&board));
+    std::fs::create_dir_all(&binpkgs_dir)?;
+
+    let runner = sb
+        .runner_for_board(ws, &board.arch, &board)?
+        .with_target(&target.dir)
+        .with_binpkgs(&binpkgs_dir);
+    let portage = crate::portage::Portage::new(&runner);
+
+    if !no_sync {
+        tracing::info!("Syncing the ebuild tree...");
+        portage.webrsync()?;
+    }
+    crate::binpkg_meta::report(
+        &binpkgs_dir,
+        &ws.store_dir().join(store_key(
+            &board.chost(),
+            &crate::cflags::toolchain_key(&board),
+            &sb.gcc_spec_for(&board, None)?,
+        )),
+    )?;
+
+    tracing::info!("Updating {board_name}'s target packages...");
+    portage.cross_update(&board.chost(), &crate::package_list::atoms(&packages))?;
+    Ok(())
 }
 
 fn list(ws: &Workspace) -> Result<()> {
