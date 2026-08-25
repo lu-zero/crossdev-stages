@@ -33,7 +33,7 @@ and the cross-compilation toolchain (GCC/crossdev) conventions.
 | **sandbox** | An unpacked amd64 stage3 that serves as the host build environment.  Analogous to catalyst's `chroot_path`, but rootless (hakoniwa). |
 | **target stage** | The cross-compiled Gentoo root filesystem being built (mounted at `/target` inside the sandbox container during cross-emerge). |
 | **crossdev prefix** | The `/usr/<chost>` tree inside the sandbox where crossdev installs the cross-toolchain (compiler, headers, stage1 libs).  Not a "sysroot" — that term is reserved for the `--sysroot` compiler flag. |
-| **build** | A per-board working directory under `builds/` used during the image pipeline. |
+| **build** | A working directory under `builds/<board>/<timestamp>/` used during the image pipeline; one fresh leaf per build. |
 | **board** | A hardware target described by `boards/<name>/board.conf` and optional hook scripts. |
 | **stage1** | The bootstrap phase for a target stage: cross-emerge `baselayout` → `packages.build` → `portage`.  Mirrors catalyst's stage1 concept. |
 
@@ -48,9 +48,11 @@ Everything lives under `~/.cache/crossdev-stages/`:
   stages/      Downloaded stage3 source tarballs (keyed by arch + variant).
   sandboxes/   Unpacked host build environments.
   targets/     Cross-compiled target stage roots.
-  builds/      Per-board image build working directories.
+  builds/      Image build working directories, nested builds/<board>/<timestamp>/.
   sources/     Bare-repo git source cache (kernel, u-boot, opensbi, …).
   logs/        Portage and build logs, bind-mounted from sandbox containers.
+  store/       Content-addressed crossdev prefix store (chost + CFLAGS hash).
+  binpkgs/     Shared binary-package cache (PKGDIR), keyed the same way.
 ```
 
 The project directory (where `boards/` lives) is separate and passed via

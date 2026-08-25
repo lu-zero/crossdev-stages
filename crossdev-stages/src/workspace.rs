@@ -9,9 +9,11 @@ const TARGETS: &str = "targets";
 const BUILDS: &str = "builds";
 const SOURCES: &str = "sources";
 const LOGS: &str = "logs";
+const STORE: &str = "store";
+const BINPKGS: &str = "binpkgs";
 
-/// Manages the on-disk cache layout:
-/// ~/.cache/crossdev-stages/{stages,sandboxes,targets,builds}/
+/// Manages the on-disk cache layout under `~/.cache/crossdev-stages/`:
+/// stages, sandboxes, targets, builds, sources, logs, store, binpkgs.
 pub struct Workspace {
     base: Utf8PathBuf,
 }
@@ -51,6 +53,18 @@ impl Workspace {
         self.base.join(LOGS)
     }
 
+    /// Content-addressed crossdev prefix store.  Keyed by `(chost,
+    /// cflags-hash)`; populated by Phase 3.
+    pub fn store_dir(&self) -> Utf8PathBuf {
+        self.base.join(STORE)
+    }
+
+    /// Shared binpkg cache (`PKGDIR`).  Populated by `FEATURES=buildpkg`
+    /// once Phase 3 wires it.
+    pub fn binpkgs_dir(&self) -> Utf8PathBuf {
+        self.base.join(BINPKGS)
+    }
+
     /// Create all cache subdirectories if they don't exist.
     pub fn ensure_dirs(&self) -> Result<()> {
         for dir in [
@@ -60,6 +74,8 @@ impl Workspace {
             self.builds_dir(),
             self.sources_dir(),
             self.logs_dir(),
+            self.store_dir(),
+            self.binpkgs_dir(),
         ] {
             std::fs::create_dir_all(&dir)?;
         }
@@ -85,8 +101,40 @@ impl Workspace {
     }
 
     /// Return all build directories, newest first (by mtime).
+    ///
+    /// Layout is `builds/<board>/<timestamp>/`; we walk one level of
+    /// per-board containers and flatten.  A first-level dir that itself
+    /// carries a `.board` marker is a legacy flat build (pre-nesting
+    /// layout): it is yielded as an opaque leaf and never recursed into —
+    /// its children are the build tree (linux/, gen/, …), and yielding
+    /// those would let prune/cleanup delete them.
     pub fn list_builds(&self) -> Result<Vec<Utf8PathBuf>> {
-        list_dirs_by_mtime(&self.builds_dir())
+        let root = self.builds_dir();
+        if !root.exists() {
+            return Ok(vec![]);
+        }
+        let mut all = Vec::new();
+        for entry in std::fs::read_dir(&root)? {
+            let entry = entry?;
+            let dir = match Utf8PathBuf::try_from(entry.path()) {
+                Ok(p) if p.is_dir() => p,
+                _ => continue,
+            };
+            all.extend(build_leaves(
+                dir,
+                |p| p.join(".board").is_file(),
+                |p| list_dirs_by_mtime(p).unwrap_or_default(),
+            ));
+        }
+        all.sort_by(|a, b| {
+            let m = |p: &Utf8PathBuf| {
+                std::fs::metadata(p)
+                    .and_then(|m| m.modified())
+                    .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+            };
+            m(b).cmp(&m(a))
+        });
+        Ok(all)
     }
 
     /// Resolve a sandbox by name or fall back to the most recently modified one.
@@ -191,9 +239,77 @@ fn list_dirs_by_mtime(dir: &Utf8Path) -> Result<Vec<Utf8PathBuf>> {
     Ok(entries.into_iter().map(|(p, _)| p).collect())
 }
 
+/// Classify one first-level entry under `builds/` and return its build
+/// leaves.  Pure: filesystem access is injected so the classification is
+/// unit-testable.
+///
+/// - dir carries a `.board` marker → legacy flat build; the dir IS the
+///   leaf.  Never descend: its children are the build tree, not builds.
+/// - otherwise → per-board container; children with `.board` are leaves.
+fn build_leaves(
+    dir: Utf8PathBuf,
+    has_marker: impl Fn(&Utf8Path) -> bool,
+    children: impl Fn(&Utf8Path) -> Vec<Utf8PathBuf>,
+) -> Vec<Utf8PathBuf> {
+    if has_marker(&dir) {
+        return vec![dir];
+    }
+    children(&dir)
+        .into_iter()
+        .filter(|c| has_marker(c))
+        .collect()
+}
+
 /// Read the `.arch` marker file from a sandbox/target directory.
 pub fn read_arch(dir: &Utf8Path) -> Option<String> {
     std::fs::read_to_string(dir.join(".arch"))
         .ok()
         .map(|s| s.trim().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn legacy_flat_build_is_an_opaque_leaf() {
+        // builds/k1/ carries .board itself (pre-nesting layout); its
+        // children are the build tree and must never surface as builds
+        // (prune would remove_dir_all them).
+        let leaves = build_leaves(
+            Utf8PathBuf::from("/builds/k1"),
+            |p| p.as_str() == "/builds/k1",
+            |_| vec!["/builds/k1/linux".into(), "/builds/k1/gen".into()],
+        );
+        assert_eq!(leaves, vec![Utf8PathBuf::from("/builds/k1")]);
+    }
+
+    #[test]
+    fn nested_layout_yields_marked_leaves_only() {
+        let marked = ["/builds/k1/20260101T000000Z", "/builds/k1/20260202T000000Z"];
+        let leaves = build_leaves(
+            Utf8PathBuf::from("/builds/k1"),
+            |p| marked.contains(&p.as_str()),
+            |_| {
+                vec![
+                    "/builds/k1/20260101T000000Z".into(),
+                    "/builds/k1/20260202T000000Z".into(),
+                    "/builds/k1/stray".into(),
+                ]
+            },
+        );
+        assert_eq!(
+            leaves,
+            vec![
+                Utf8PathBuf::from("/builds/k1/20260101T000000Z"),
+                Utf8PathBuf::from("/builds/k1/20260202T000000Z"),
+            ]
+        );
+    }
+
+    #[test]
+    fn empty_container_yields_nothing() {
+        let leaves = build_leaves(Utf8PathBuf::from("/builds/k1"), |_| false, |_| vec![]);
+        assert!(leaves.is_empty());
+    }
 }

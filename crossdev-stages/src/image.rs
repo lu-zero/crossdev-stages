@@ -23,20 +23,28 @@ pub struct Build {
 
 impl Build {
     pub fn create(ws: &Workspace, board: &str) -> Result<Self> {
-        // One build directory per board.  Reuse it across re-runs: the
-        // timestamp written at first create stays put, so a re-pack
-        // overwrites the same `*-<ts>.img.xz` instead of accumulating
-        // copies.  To start over (and pick up a fresh timestamp), prune
-        // the board's build dir first.
-        let dir = ws.builds_dir().join(board);
-        if let Some(b) = Self::open(dir.clone()) {
-            tracing::info!("Reusing build: {}", dir);
-            return Ok(b);
+        // Layout is builds/<board>/<timestamp>/, one fresh leaf per build.
+        // A flat pre-nesting dir (builds/<board>/ carrying the .board
+        // marker itself) would swallow new leaves, so migrate it into a
+        // nested leaf first.
+        migrate_legacy_build(ws, board)?;
+
+        // Resume the newest unpacked leaf for this board; steps resume
+        // via the .{step} markers inside the leaf.
+        if let Ok(builds) = ws.list_builds() {
+            for dir in builds {
+                if let Some(b) = Self::open(dir.clone()) {
+                    if b.board == board && !b.is_done("packed") {
+                        tracing::info!("Resuming build: {}", dir);
+                        return Ok(b);
+                    }
+                }
+            }
         }
+        let ts = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
+        let dir = ws.builds_dir().join(board).join(&ts);
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join(".board"), board)?;
-        let ts = Utc::now().format("%Y%m%dT%H%M%SZ").to_string();
-        std::fs::write(dir.join(".timestamp"), &ts)?;
         Ok(Self {
             dir,
             board: board.to_string(),
@@ -50,12 +58,13 @@ impl Build {
         Some(Self { dir, board })
     }
 
-    /// Wall-clock build timestamp embedded in the produced image filename
-    /// (stable across resume — written once at create).
+    /// Wall-clock build timestamp embedded in the produced image filename.
+    /// The leaf directory name is the timestamp (builds/<board>/<ts>/) —
+    /// single source of truth, stable across resume.
     pub fn timestamp(&self) -> String {
-        std::fs::read_to_string(self.dir.join(".timestamp"))
-            .ok()
-            .map(|s| s.trim().to_string())
+        self.dir
+            .file_name()
+            .map(str::to_string)
             .unwrap_or_else(|| Utc::now().format("%Y%m%dT%H%M%SZ").to_string())
     }
 
@@ -71,6 +80,30 @@ impl Build {
         std::fs::write(self.marker(step), Utc::now().to_rfc3339())?;
         Ok(())
     }
+}
+
+/// Move a flat pre-nesting build (builds/<board>/ containing .board) into
+/// the nested layout: builds/<board>/<ts>/.  The timestamp comes from the
+/// legacy .timestamp file when present.  Without this, a new leaf created
+/// under the legacy dir would be invisible to list_builds(), which treats
+/// any first-level dir with a .board marker as an opaque legacy leaf.
+fn migrate_legacy_build(ws: &Workspace, board: &str) -> Result<()> {
+    let board_dir = ws.builds_dir().join(board);
+    if !board_dir.join(".board").exists() {
+        return Ok(());
+    }
+    let ts = std::fs::read_to_string(board_dir.join(".timestamp"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "legacy".to_string());
+    let staging = ws.builds_dir().join(format!(".migrate-{board}"));
+    std::fs::rename(&board_dir, &staging)?;
+    std::fs::create_dir_all(&board_dir)?;
+    let leaf = board_dir.join(&ts);
+    std::fs::rename(&staging, &leaf)?;
+    // Leaf name is the timestamp now; the marker file is retired.
+    let _ = std::fs::remove_file(leaf.join(".timestamp"));
+    tracing::info!("Migrated legacy build dir to {}", leaf);
+    Ok(())
 }
 
 // ── Step runner with file-convention hooks ───────────────────────────────────
@@ -333,6 +366,21 @@ fn default_pack(
     };
     runner.run(&format!("mv /build/{cfg_name} /build/{img_name}"))?;
 
+    // Emit the sidecar manifest after the timestamped mv (so it records the
+    // final image name) and BEFORE compression: partition sources are still
+    // in-place and the sha256 covers the uncompressed bytes users will dd.
+    let host_cfg = if board_cfg.exists() {
+        board_cfg.clone()
+    } else {
+        project_root(boards_root).join("genimage.cfg")
+    };
+    crate::manifest::write_image_sidecar(
+        &build.dir,
+        &board.name,
+        &img_name,
+        host_cfg.exists().then_some(host_cfg.as_path()),
+    )?;
+
     let compression = board.compression.as_deref().unwrap_or("xz");
     let final_name = match compression {
         "none" => {
@@ -376,6 +424,8 @@ pub fn build(
     steps: Option<&[String]>,
 ) -> Result<()> {
     let bld = Build::create(ws, &board.name)?;
+    let mut manifest = crate::manifest::ManifestBuilder::new(board);
+    warn_unpinned_sources(board);
 
     let default_steps = if board.build_steps.is_empty() {
         vec![
@@ -454,8 +504,100 @@ pub fn build(
         result?;
     }
 
+    // Collect and write manifest before returning. Build fails if manifest
+    // collection fails -- but every probe is best-effort so this should only
+    // fire on pathological runtime issues.
+    let runner = board_runner(sandbox, board)
+        .with_target(&target.dir)
+        .with_build(&bld.dir, &project_root(boards_root))
+        .with_cache(ws.base());
+    record_sources(&runner, &mut manifest, board)?;
+    if manifest.has_resolved_source() {
+        let manifest_path = bld.dir.join("build.lock.toml");
+        manifest.write(&runner, &manifest_path)?;
+        tracing::info!("Manifest written: {manifest_path}");
+    } else {
+        // Partial builds (e.g. `--steps deps`) leave every source as
+        // kind=missing because checkout hasn't run.  Skipping the lock
+        // write here keeps `crossdev-stages update` from picking up a
+        // useless lock as the newest one for the board.
+        tracing::info!("Skipping manifest write: no resolved git sources yet");
+    }
+
     let total_elapsed = build_start.elapsed();
     println!("\nBuild complete: {}", format_duration(total_elapsed));
+    Ok(())
+}
+
+/// Flag sources that follow a default branch instead of a named tag, so
+/// stale sysroots and silent upstream drifts stand out in build output.
+/// Phase 4 turns this into a proper `status` command; for now it's a warn
+/// at the top of every `image build`.
+fn warn_unpinned_sources(board: &BoardConfig) {
+    let check = |name: &str, repo: Option<&str>, tag: Option<&str>| {
+        if let Some(repo) = repo {
+            let t = tag.unwrap_or("master");
+            if matches!(t, "master" | "main" | "trunk" | "HEAD") {
+                tracing::warn!(
+                    "source '{name}' ({repo}) tracks branch '{t}' -- no pin. \
+                     Build is reproducible only against the resolved commit in \
+                     build.lock.toml, not against the board.conf TAG field."
+                );
+            }
+        }
+    };
+    check(
+        "opensbi",
+        board.opensbi_repo.as_deref(),
+        board.opensbi_tag.as_deref(),
+    );
+    check(
+        "uboot",
+        board.u_boot_repo.as_deref(),
+        board.u_boot_tag.as_deref(),
+    );
+    check(
+        "syslinux",
+        board.syslinux_repo.as_deref(),
+        board.syslinux_tag.as_deref(),
+    );
+    // default_checkout clones firmware at the U-Boot tag ("main" fallback).
+    check(
+        "firmware",
+        board.firmware_repo.as_deref(),
+        board.u_boot_tag.as_deref().or(Some("main")),
+    );
+    check("kernel", Some(&board.kernel_repo), Some(&board.kernel_tag));
+    // TODO: check fip once BOOT_PIPELINE lands fip_repo/fip_tag on BoardConfig.
+}
+
+fn record_sources(
+    runner: &SandboxRunner,
+    manifest: &mut crate::manifest::ManifestBuilder,
+    board: &BoardConfig,
+) -> Result<()> {
+    if let (Some(repo), Some(tag)) = (&board.opensbi_repo, &board.opensbi_tag) {
+        manifest.record_source(runner, "opensbi", repo, tag, "/build/opensbi")?;
+    }
+    if let (Some(repo), Some(tag)) = (&board.u_boot_repo, &board.u_boot_tag) {
+        manifest.record_source(runner, "uboot", repo, tag, "/build/u-boot")?;
+    }
+    if let (Some(repo), Some(tag)) = (&board.syslinux_repo, &board.syslinux_tag) {
+        manifest.record_source(runner, "syslinux", repo, tag, "/build/syslinux")?;
+    }
+    if let Some(repo) = &board.firmware_repo {
+        // default_checkout clones firmware at the U-Boot tag ("main" fallback).
+        let tag = board.u_boot_tag.as_deref().unwrap_or("main");
+        manifest.record_source(runner, "firmware", repo, tag, "/build/firmware")?;
+    }
+    // TODO: record fip once BOOT_PIPELINE lands fip_repo/fip_tag on BoardConfig.
+    manifest.record_source(
+        runner,
+        "kernel",
+        &board.kernel_repo,
+        &board.kernel_tag,
+        "/build/linux",
+    )?;
     Ok(())
 }
 
