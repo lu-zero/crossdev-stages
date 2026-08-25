@@ -1,4 +1,4 @@
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8Path;
 
 use crate::error::{Error, Result};
 use crate::provider::{RootfsProvider, SecondStage};
