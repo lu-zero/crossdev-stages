@@ -414,12 +414,20 @@ pub fn unpack_tarball(
     container.uidmaps(&uid_maps());
     container.gidmaps(&gid_maps());
 
+    // Exclude /dev/* (contents) but keep the /dev/ directory itself:
+    // catalyst-built stage3 tarballs include /dev/console + /dev/null as
+    // real device nodes, which mknod() can't create inside a user-
+    // namespace container (CAP_MKNOD isn't granted).  We need /dev/ to
+    // exist as an empty directory so the kernel's devtmpfs auto-mount
+    // (CONFIG_DEVTMPFS_MOUNT=y) has a mountpoint to attach to — without
+    // it, VFS mounts root but / has no /dev/console and PID 1 can't open
+    // stdio.  `./dev/*` matches the contents but not the directory.
     let cmd = format!(
         "mkdir -p {dest} && \
          tar --overwrite -xpf {stage} \
            --xattrs-include='*.*' \
            --numeric-owner \
-           --exclude='./dev' \
+           --exclude='./dev/*' \
            -C {dest}",
         stage = stage_in_container,
         dest = dest_in_container,
@@ -462,10 +470,14 @@ pub fn pack_tarball(
         _ => "-J", // xz
     };
 
+    // Exclude *contents* of runtime mountpoint dirs but keep the dirs
+    // themselves — mirrors catalyst stage3 layout (empty /dev /proc /sys
+    // /run /tmp with the dirs present as mountpoints).  See
+    // unpack_tarball above for why /dev needs to be a real directory.
     let cmd = format!(
         "tar -cp{compress} --xattrs --xattrs-include='*.*' --numeric-owner \
-         --exclude='./dev' --exclude='./proc' --exclude='./sys' \
-         --exclude='./run' --exclude='./tmp' \
+         --exclude='./dev/*' --exclude='./proc/*' --exclude='./sys/*' \
+         --exclude='./run/*' --exclude='./tmp/*' \
          -f {tarball} -C {src} .",
         compress = compress_flag,
         tarball = tarball_in_container,

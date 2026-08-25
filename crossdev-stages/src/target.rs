@@ -98,17 +98,31 @@ impl Target {
         portage.cross_emerge_build(&chost, &["sys-apps/baselayout"])?;
 
         tracing::info!("Cross-emerging packages.build…");
-        let packages = runner.run_output(
+        // rv32-musl: sys-apps/net-tools needs linux/rose.h which musl libc
+        // does not ship, and the rest of packages.build has never been
+        // cross-emerged for that profile.  Drop net-tools (busybox provides
+        // the same utilities) and let the remaining set report failures
+        // instead of aborting the bootstrap on the first one.  Every other
+        // arch keeps the strict behaviour: a packages.build failure there is
+        // a real regression, not an untested profile.
+        let (extra_filter, keep_going) = if self.arch == "riscv32" {
+            ("| grep -v 'sys-apps/net-tools'", " --keep-going")
+        } else {
+            ("", "")
+        };
+        let packages = runner.run_output(&format!(
             "grep -v '^#' /var/db/repos/gentoo/profiles/default/linux/packages.build \
-             | grep -v '^[[:space:]]*$' | tr '\\n' ' '",
-        )?;
+             | grep -v '^[[:space:]]*$' {extra_filter} | tr '\\n' ' '"
+        ))?;
         if packages.is_empty() {
             return Err(crate::error::Error::CommandFailed {
                 code: 1,
                 reason: "packages.build is empty or missing".into(),
             });
         }
-        runner.run(&format!("ROOT=/target {chost}-emerge -b -k {packages}"))?;
+        runner.run(&format!(
+            "ROOT=/target {chost}-emerge -b -k{keep_going} {packages}"
+        ))?;
 
         tracing::info!("Cross-emerging portage…");
         portage.cross_emerge_build(&chost, &["sys-apps/portage"])?;
@@ -141,10 +155,9 @@ impl Target {
         // package.mask/pin-gcc — which intentionally blocks upgrades past the
         // installed version to prevent bootstrap breakage — does not abort the
         // run when gcc is already at the requested version.
-        // Single-quoted: the atom goes through `bash -c` and an unquoted
-        // `=sys-devel/gcc-15*` is subject to shell glob expansion
-        // (sandbox.rs quotes the identical atom in setup_crossdev).
-        let gcc_atom = format!("'=sys-devel/gcc-{gcc_spec}*'");
+        // No manual quoting: cross_emerge_crossdev single-quotes every atom
+        // (shell_quote_atoms), which protects the `*` glob from `bash -c`.
+        let gcc_atom = format!("=sys-devel/gcc-{gcc_spec}*");
         tracing::info!(gcc_atom = %gcc_atom, "Updating crossdev prefix: gcc, binutils-libs, @system…");
         portage.cross_emerge_crossdev(&chost, &["--noreplace", &gcc_atom])?;
         portage.cross_emerge_crossdev(&chost, &["sys-libs/binutils-libs"])?;
@@ -249,13 +262,27 @@ impl Target {
         }
 
         let src_link = src_portage.join("make.profile");
+        let dst_link = portage_dir.join("make.profile");
         if src_link.is_symlink() {
+            // A real (non-symlink) /bin marks a deliberately split-usr
+            // target: keep whatever profile it has (copy verbatim only if
+            // none is set).  Merged-usr and fresh (pre-baselayout) targets
+            // get the translated link, overwritten every time — a stale
+            // symlink in a re-bootstrapped target would silently use the
+            // wrong profile.
+            let split_usr_target = std::fs::symlink_metadata(self.dir.join("bin"))
+                .map(|m| !m.file_type().is_symlink())
+                .unwrap_or(false);
             let link_target = std::fs::read_link(&src_link)?;
-            let dst_link = portage_dir.join("make.profile");
-            if dst_link.exists() || dst_link.is_symlink() {
-                std::fs::remove_file(&dst_link)?;
+            let translated = translate_profile_link(&link_target, split_usr_target);
+            if split_usr_target {
+                if !dst_link.is_symlink() && !dst_link.exists() {
+                    std::os::unix::fs::symlink(&translated, &dst_link)?;
+                }
+            } else {
+                let _ = std::fs::remove_file(&dst_link);
+                std::os::unix::fs::symlink(&translated, &dst_link)?;
             }
-            std::os::unix::fs::symlink(&link_target, &dst_link)?;
         }
 
         Ok(())
@@ -278,6 +305,20 @@ fn guard_provider(dir: &camino::Utf8Path, name: &str, provider: &str) -> Result<
         });
     }
     Ok(())
+}
+
+/// Profile symlink to plant in the target, derived from the crossdev
+/// prefix's link.  Crossdev prefixes use split-usr profiles (the prefix
+/// layout mandates it — /usr/{chost}/lib is a sibling of /usr/{chost}/
+/// usr/lib); a merged-usr target must drop the `split-usr` segment or
+/// baselayout creates /bin as a real dir and every subsequent emerge
+/// collides.  A split-usr target keeps the link verbatim.
+fn translate_profile_link(link: &std::path::Path, split_usr_target: bool) -> std::path::PathBuf {
+    if split_usr_target {
+        link.to_path_buf()
+    } else {
+        link.to_string_lossy().replace("/split-usr/", "/").into()
+    }
 }
 
 /// Remove a target directory (via hakoniwa to handle root-owned files).
@@ -319,4 +360,36 @@ pub struct TargetInfo {
     pub arch: String,
     pub stage1: bool,
     pub updated: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::translate_profile_link;
+    use std::path::Path;
+
+    #[test]
+    fn profile_link_drops_split_usr_for_merged_target() {
+        let link = Path::new(
+            "../../var/db/repos/gentoo/profiles/default/linux/riscv/23.0/split-usr/rv32/ilp32/musl",
+        );
+        assert_eq!(
+            translate_profile_link(link, false),
+            Path::new("../../var/db/repos/gentoo/profiles/default/linux/riscv/23.0/rv32/ilp32/musl")
+        );
+    }
+
+    #[test]
+    fn profile_link_kept_verbatim_for_split_usr_target() {
+        let link = Path::new(
+            "../../var/db/repos/gentoo/profiles/default/linux/riscv/23.0/split-usr/rv32/ilp32/musl",
+        );
+        assert_eq!(translate_profile_link(link, true), link);
+    }
+
+    #[test]
+    fn profile_link_without_split_usr_segment_is_unchanged() {
+        let link =
+            Path::new("../../var/db/repos/gentoo/profiles/default/linux/riscv/23.0/rv64/lp64d");
+        assert_eq!(translate_profile_link(link, false), link);
+    }
 }

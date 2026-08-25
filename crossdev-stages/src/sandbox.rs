@@ -395,11 +395,16 @@ impl Sandbox {
         } else {
             ""
         };
+        // rustc has no upstream target for riscv32-unknown-linux-gnu; skip rust-std on rv32.
+        let rust_std_ex_pkg = if target_arch == "riscv32" {
+            ""
+        } else {
+            " --ex-pkg sys-devel/rust-std"
+        };
         runner.run(&format!(
             "crossdev {chost} \
              --gcc {gcc_ver} \
-             --ex-pkg sys-devel/clang-crossdev-wrappers \
-             --ex-pkg sys-devel/rust-std{grub_ex_pkg}"
+             --ex-pkg sys-devel/clang-crossdev-wrappers{rust_std_ex_pkg}{grub_ex_pkg}"
         ))?;
 
         // Switch cross compiler to the installed slot.
@@ -819,7 +824,7 @@ fn install_overlay(
 
 /// Recursively copy directory `src` into `dst`, overwriting files.
 /// Symlinks and other special entries are rejected.
-fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
+pub(crate) fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
@@ -836,7 +841,7 @@ fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
         } else {
             return Err(Error::CommandFailed {
                 code: 1,
-                reason: format!("unsupported entry in portage overlay (symlink?): {from}"),
+                reason: format!("unsupported entry in copied tree (symlink?): {from}"),
             });
         }
     }
