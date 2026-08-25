@@ -20,6 +20,7 @@ pub mod isa;
 pub mod manifest;
 pub mod package_list;
 pub mod portage;
+pub mod provider;
 pub mod sandbox;
 pub mod source_cache;
 pub mod stage;

@@ -21,7 +21,7 @@ pub fn run(
         image_root
     } else {
         let dir = ws
-            .resolve_target_for_arch(None, &board_cfg.arch)
+            .resolve_target_for_arch(None, &board_cfg.arch, board_cfg.rootfs_provider.name())
             .map_err(|_| Error::CommandFailed {
                 code: 1,
                 reason: format!(

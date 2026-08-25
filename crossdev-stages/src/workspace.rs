@@ -185,15 +185,29 @@ impl Workspace {
         }
     }
 
-    /// Like `resolve_target` but filters targets whose `.arch` marker matches `arch`.
-    /// Prevents picking a foreign-arch target (e.g. aarch64) for a board built for
-    /// a different arch (e.g. riscv64), which silently produces an unbootable image.
-    pub fn resolve_target_for_arch(&self, name: Option<&str>, arch: &str) -> Result<Utf8PathBuf> {
+    /// Like `resolve_target` but filters targets whose `.arch` marker matches `arch`
+    /// and whose provider matches the board's.  Prevents picking a foreign-arch
+    /// target (silently unbootable image) or another provider's target (a stage3
+    /// tree handed to a provider that would debootstrap over it, or an empty
+    /// provider-owned tree handed to the Gentoo pipeline).
+    pub fn resolve_target_for_arch(
+        &self,
+        name: Option<&str>,
+        arch: &str,
+        provider: &str,
+    ) -> Result<Utf8PathBuf> {
         match name {
             Some(n) => {
                 let p = self.target(n);
                 if !p.is_dir() {
                     return Err(Error::TargetNotFound(n.to_string()));
+                }
+                let target_provider = read_provider(&p);
+                if target_provider != provider {
+                    return Err(Error::TargetNotFound(format!(
+                        "target '{n}' belongs to rootfs provider '{target_provider}', \
+                         board wants '{provider}' -- pick another target or destroy it"
+                    )));
                 }
                 match read_arch(&p) {
                     Some(a) if a == arch => Ok(p),
@@ -208,7 +222,11 @@ impl Workspace {
             None => self
                 .list_targets()?
                 .into_iter()
-                .find(|p| read_arch(p).as_deref() == Some(arch) && p.join("sbin/init").exists())
+                .find(|p| {
+                    read_arch(p).as_deref() == Some(arch)
+                        && read_provider(p) == provider
+                        && p.join("sbin/init").exists()
+                })
                 .ok_or_else(|| {
                     Error::TargetNotFound(format!(
                         "no bootable target for arch '{arch}' (need /sbin/init and matching .arch)"
@@ -216,6 +234,14 @@ impl Workspace {
                 }),
         }
     }
+}
+
+/// Rootfs provider recorded in a target dir (`.provider` marker).
+/// Targets predating the marker are Gentoo stage3 targets.
+pub fn read_provider(dir: &Utf8Path) -> String {
+    std::fs::read_to_string(dir.join(".provider"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "gentoo".to_string())
 }
 
 /// Store key for one crossdev prefix: `<chost>/<cflags-hash>-gcc<spec>`.

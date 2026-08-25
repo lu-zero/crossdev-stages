@@ -1,4 +1,4 @@
-use crate::cli::util::ensure_crossdev;
+use crate::cli::util::{ensure_crossdev, ensure_sandbox};
 use crate::cli::ImageCmd;
 use crate::error::{Error, Result};
 use crate::{board, image, stage, target, workspace::Workspace};
@@ -68,25 +68,55 @@ pub async fn run(
                 return Ok(());
             }
 
-            let sb = ensure_crossdev(
-                ws,
-                sandbox.as_deref(),
-                &board_cfg.arch,
-                &board_cfg,
-                defaults_root,
-                mirror,
-                None,
-            )
-            .await?;
+            let provider = board_cfg.rootfs_provider;
+            let needs_toolchain = provider.needs_cross_toolchain(
+                &steps_to_show
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>(),
+            );
+            let sb = if needs_toolchain {
+                ensure_crossdev(
+                    ws,
+                    sandbox.as_deref(),
+                    &board_cfg.arch,
+                    &board_cfg,
+                    defaults_root,
+                    mirror,
+                    None,
+                )
+                .await?
+            } else {
+                ensure_sandbox(ws, sandbox.as_deref(), defaults_root, mirror).await?
+            };
 
-            let tgt = match ws.resolve_target_for_arch(target.as_deref(), &board_cfg.arch) {
+            let tgt = match ws.resolve_target_for_arch(
+                target.as_deref(),
+                &board_cfg.arch,
+                provider.name(),
+            ) {
                 Ok(td) => target::Target::open(td)?,
                 Err(_) => {
-                    let name = target.as_deref().unwrap_or(&board_cfg.arch).to_string();
-                    tracing::info!("Target '{name}' not found, creating from stage3…");
-                    let source_stage =
-                        stage::fetch(&ws.stages_dir(), &board_cfg.arch, mirror).await?;
-                    target::Target::create(ws, &name, &board_cfg.arch, &source_stage)?
+                    // Non-Gentoo providers get a provider-qualified default
+                    // name so they never collide with the plain `<arch>`
+                    // stage3 target of a Gentoo board on the same arch.
+                    let default_name = if provider.provisions_stage3() {
+                        board_cfg.arch.clone()
+                    } else {
+                        format!("{}-{}", board_cfg.arch, provider.name())
+                    };
+                    let name = target.as_deref().unwrap_or(&default_name).to_string();
+                    if provider.provisions_stage3() {
+                        tracing::info!("Target '{name}' not found, creating from stage3…");
+                        let source_stage =
+                            stage::fetch(&ws.stages_dir(), &board_cfg.arch, mirror).await?;
+                        target::Target::create(ws, &name, &board_cfg.arch, &source_stage)?
+                    } else {
+                        tracing::info!(
+                            "Target '{name}' not found, creating empty (rootfs provider fills it)…"
+                        );
+                        target::Target::create_empty(ws, &name, &board_cfg.arch, provider.name())?
+                    }
                 }
             };
 

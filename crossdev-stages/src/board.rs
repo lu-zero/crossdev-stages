@@ -1,6 +1,7 @@
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::error::{Error, Result};
+use crate::provider::RootfsProvider;
 
 /// Board configuration loaded from `boards/<name>/board.conf`.
 #[derive(Debug, Clone)]
@@ -17,6 +18,7 @@ pub struct BoardConfig {
     pub gcc_version: Option<String>, // BOARD_GCC_VERSION; None → highest installed slot
     pub cross_compile: String,     // e.g. "riscv64-unknown-linux-gnu-"
     pub kernel_arch: Option<String>, // e.g. "riscv", "arm64", "x86" — required for image builds
+    pub rootfs_provider: RootfsProvider, // ROOTFS_PROVIDER; absent → Gentoo
 
     // OpenSBI
     pub opensbi_repo: Option<String>,
@@ -290,6 +292,13 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         gcc_version: kv.get("BOARD_GCC_VERSION").cloned(),
         cross_compile: req!("CROSS_COMPILE"),
         kernel_arch: kv.get("KERNEL_ARCH").cloned(),
+        rootfs_provider: match kv.get("ROOTFS_PROVIDER") {
+            Some(v) => RootfsProvider::parse(v).ok_or_else(|| Error::BoardConfigParse {
+                file: path.to_string(),
+                msg: format!("unknown ROOTFS_PROVIDER '{v}' (valid: gentoo, none)"),
+            })?,
+            None => RootfsProvider::default(),
+        },
 
         opensbi_repo: kv.get("OPENSBI_REPO").cloned(),
         opensbi_tag: kv.get("OPENSBI_TAG").cloned(),

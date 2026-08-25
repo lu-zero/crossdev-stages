@@ -22,10 +22,11 @@ impl Target {
     }
 
     /// Create a new target stage by unpacking a stage3 source tarball (catalyst: `source_path`).
-    /// Writes a `.arch` marker and a `.stage3` marker (file name only, for manifest).
+    /// Writes `.arch`, `.stage3` (file name only, for manifest) and `.provider` markers.
     pub fn create(ws: &Workspace, name: &str, arch: &str, source_stage: &Utf8Path) -> Result<Self> {
         let dir = ws.target(name);
         if dir.is_dir() {
+            guard_provider(&dir, name, "gentoo")?;
             tracing::info!("Target {} already exists, skipping unpack.", name);
             return Self::open(dir);
         }
@@ -35,7 +36,31 @@ impl Target {
         if let Some(fname) = source_stage.file_name() {
             std::fs::write(dir.join(".stage3"), fname)?;
         }
+        std::fs::write(dir.join(".provider"), "gentoo")?;
         tracing::info!("Target {} created.", name);
+        Ok(Self {
+            dir,
+            arch: arch.to_string(),
+        })
+    }
+
+    /// Create an empty target: no stage3 seed, only the markers.  For
+    /// rootfs providers that fill /target themselves; `.stage3` is set
+    /// to "none" so the build lock records the absence instead of
+    /// falling back to a cached tarball name, and `.provider` keeps the
+    /// dir from ever being resolved for another provider's board.
+    pub fn create_empty(ws: &Workspace, name: &str, arch: &str, provider: &str) -> Result<Self> {
+        let dir = ws.target(name);
+        if dir.is_dir() {
+            guard_provider(&dir, name, provider)?;
+            tracing::info!("Target {} already exists, skipping.", name);
+            return Self::open(dir);
+        }
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(dir.join(".arch"), arch)?;
+        std::fs::write(dir.join(".stage3"), "none")?;
+        std::fs::write(dir.join(".provider"), provider)?;
+        tracing::info!("Target {} created (empty).", name);
         Ok(Self {
             dir,
             arch: arch.to_string(),
@@ -235,6 +260,24 @@ impl Target {
 
         Ok(())
     }
+}
+
+/// Refuse to adopt an existing target dir that another rootfs provider
+/// created: silently reusing it hands e.g. an empty provider-owned tree
+/// to the Gentoo pipeline (garbage image) or a stage3 tree to a
+/// provider that would provision over it.
+fn guard_provider(dir: &camino::Utf8Path, name: &str, provider: &str) -> Result<()> {
+    let have = crate::workspace::read_provider(dir);
+    if have != provider {
+        return Err(Error::CommandFailed {
+            code: 1,
+            reason: format!(
+                "target '{name}' belongs to rootfs provider '{have}', not '{provider}' \
+                 -- pass --target or `target destroy {name}` first"
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Remove a target directory (via hakoniwa to handle root-owned files).
