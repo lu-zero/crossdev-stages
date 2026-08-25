@@ -250,8 +250,16 @@ impl Target {
         let src_profile_dir = src_portage.join("profile");
         if src_profile_dir.is_dir() {
             let dst = portage_dir.join("profile");
+            // Replace, do not merge: this directory is a copy of the prefix's,
+            // so anything still in it is left over from an older build.  `cp -a
+            // src dst` puts the source *inside* dst once dst exists, which is
+            // how targets on this machine grew an etc/portage/profile/profile.
+            // Copying the contents keeps that from coming back even when the
+            // removal fails.
+            let _ = std::fs::remove_dir_all(&dst);
+            std::fs::create_dir_all(&dst)?;
             let status = std::process::Command::new("cp")
-                .args(["-a", src_profile_dir.as_str(), dst.as_str()])
+                .args(["-a", &format!("{src_profile_dir}/."), dst.as_str()])
                 .status()?;
             if !status.success() {
                 return Err(Error::CommandFailed {
