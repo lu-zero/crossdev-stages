@@ -81,6 +81,38 @@ pub fn atoms(entries: &[Entry]) -> Vec<&str> {
 
 /// Write `package.accept_keywords/` entries under `portage_dir` (an
 /// `etc/portage` directory) for atoms with keyword overrides.
+/// Shell that writes `package.accept_keywords/` entries **from inside the
+/// container**.
+///
+/// The crossdev prefix at `/usr/<chost>` is an overlay mount, so a write made
+/// on the host into `sandbox/usr/<chost>/etc/portage` lands under the mount and
+/// is invisible to everything running in the container.  Measured: a file
+/// written host-side cannot be read back inside, while one written inside
+/// persists into later runs.  The sandbox's own `/etc/portage` is not
+/// overlaid and can still be written either way.
+///
+/// So anything the cross prefix has to see has to be written through the
+/// runner, and a keyword nobody can see is a keyword that was never set.
+pub fn accept_keywords_script(entries: &[Entry], portage_dir: &str) -> Option<String> {
+    let mut cmds: Vec<String> = Vec::new();
+    for e in entries {
+        if let Some(keywords) = &e.keywords {
+            let safe_name = e.atom.replace('/', "_");
+            cmds.push(format!(
+                "printf '%s\\n' '{} {keywords}' > {portage_dir}/package.accept_keywords/{safe_name}",
+                e.atom
+            ));
+        }
+    }
+    if cmds.is_empty() {
+        return None;
+    }
+    Some(format!(
+        "mkdir -p {portage_dir}/package.accept_keywords && {}",
+        cmds.join(" && ")
+    ))
+}
+
 pub fn write_accept_keywords(entries: &[Entry], portage_dir: &Utf8Path) -> Result<()> {
     let dir = portage_dir.join("package.accept_keywords");
     for e in entries {
@@ -195,5 +227,28 @@ mod tests {
         assert_eq!(entries[0].atom, "sys-boot/syslinux");
         assert_eq!(entries[0].keywords.as_deref(), Some("**"));
         assert!(!entries[0].remove);
+    }
+}
+
+#[cfg(test)]
+mod overlay_tests {
+    use super::{accept_keywords_script, parse};
+
+    #[test]
+    fn a_keyword_line_becomes_a_write_inside_the_container() {
+        let entries = parse("sys-boot/syslinux **\ndev-libs/foo\n");
+        let script = accept_keywords_script(&entries, "/usr/riscv64-unknown-linux-gnu/etc/portage")
+            .expect("a keyword line should produce a script");
+        assert!(script.contains("mkdir -p /usr/riscv64-unknown-linux-gnu/etc/portage/package.accept_keywords"));
+        assert!(script.contains("sys-boot/syslinux **"));
+        assert!(script.contains("package.accept_keywords/sys-boot_syslinux"));
+        // A line with no keyword field asks for nothing and writes nothing.
+        assert!(!script.contains("dev-libs"));
+    }
+
+    #[test]
+    fn no_keywords_means_no_script_at_all() {
+        let entries = parse("dev-libs/foo\nsys-apps/bar\n");
+        assert!(accept_keywords_script(&entries, "/x").is_none());
     }
 }

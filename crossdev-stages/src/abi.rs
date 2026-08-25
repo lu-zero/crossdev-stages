@@ -127,6 +127,13 @@ pub fn print(report: &Report) -> bool {
         "ABI check: {} binaries against {} versioned libraries in the image",
         report.scanned, report.libraries
     );
+    if report.scanned == 0 {
+        // Not a pass, for the same reason the ISA check says so: a stripped
+        // musl tree carries no version records at all, and reporting that as
+        // clean would be reporting on nothing.
+        println!("    no binary carried a version requirement; nothing was verified");
+        return false;
+    }
     if report.unsatisfied.is_empty() {
         println!("    every symbol version the image asks for, the image provides");
         return false;
