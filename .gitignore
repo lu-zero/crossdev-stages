@@ -1,4 +1,7 @@
 lib/__pycache__/
 target/
 k230-build*.log
+# Serial boot logs are the evidence a board actually works; they have to
+# be committable.
+!boards/*/evidence/*.log
 *.log

@@ -230,6 +230,7 @@ by `uboot`.
 | `CROSS_COMPILE` | yes | Toolchain prefix (e.g. `riscv64-unknown-linux-gnu-`) |
 | `KERNEL_REPO` | yes | Kernel source repository URL |
 | `KERNEL_DEFCONFIG` | yes | Kernel defconfig name |
+| `KERNEL_CONFIG_FRAGMENTS` | no | Config fragments to apply after the defconfig |
 | `CHOST` | no | Override derived CHOST triple (default: auto from arch) |
 | `BOARD_CFLAGS` | no | Board-specific CFLAGS (default: arch default) |
 | `KERNEL_TAG` | no | Kernel git ref (default: top-level `TAG`) |
@@ -249,6 +250,25 @@ by `uboot`.
 | `COMPRESSION` | no | Image compression: `xz` (default), `gz`, `none` |
 | `TAGS` | no | Free-form labels (bash array, e.g. `TAGS=("testing" "wip")`) -- shown in `board list` and `status` |
 | `DESCRIPTION` | no | Free-form note shown in `board info` |
+
+### Kernel config fragments
+
+`KERNEL_CONFIG_FRAGMENTS` names files, in the order they should apply, looked
+up as `boards/<board>/kernel-config/<name>` and then
+`defaults/kernel-config/<name>`. Each holds literal `.config` lines:
+
+```
+# CONFIG_RISCV_ISA_V is not set
+CONFIG_DRM_ACCEL=y
+CONFIG_DRM_ACCEL_ROCKET=m
+```
+
+They are appended after the defconfig, `olddefconfig` runs, and then every
+line is checked against the result. `olddefconfig` drops a symbol whose
+dependencies are unmet and can return a module where a builtin was asked for,
+both silently, so the build fails rather than shipping a kernel that is
+missing what the board said it needed. A `# CONFIG_X is not set` line is
+checked in the other direction: the build fails if X came back on.
 
 ### Partition identifiers
 

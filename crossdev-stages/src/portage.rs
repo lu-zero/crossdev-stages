@@ -174,14 +174,14 @@ fn remove_make_conf_var(file: &Utf8Path, name: &str) -> Result<()> {
 const SHOW_BUILD_FAILURES: &str = r#"
 logs=$(ls -t /var/log/portage/*/*.log 2>/dev/null | head -n 40)
 [ -n "$logs" ] || exit 0
-hit=$(grep -l " \* ERROR: " $logs 2>/dev/null | head -n 3)
+hit=$(grep -lE " \\* ERROR: |failed \\(.* phase\\)" $logs 2>/dev/null | head -n 3)
 if [ -n "$hit" ]; then
     for f in $hit; do
         printf "\n--- %s ---\n" "$f"
         tail -n 80 "$f"
     done
 else
-    printf "\nNo build log recorded an ERROR.  Most recent logs:\n"
+    printf "\nNo build log recorded a failure.  Most recent logs:\n"
     printf "%s\n" "$logs" | head -n 5
 fi
 "#;

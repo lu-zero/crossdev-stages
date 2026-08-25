@@ -253,6 +253,121 @@ fn fnv1a_64(bytes: &[u8]) -> u64 {
     hash
 }
 
+/// Ebuild repositories the sandbox will search, as host paths.
+fn ebuild_repos(sandbox_dir: &Utf8Path) -> Vec<Utf8PathBuf> {
+    let mut repos: Vec<Utf8PathBuf> = Vec::new();
+    let mut push = |dir: Utf8PathBuf| {
+        if dir.join("profiles").is_dir() && !repos.contains(&dir) {
+            repos.push(dir);
+        }
+    };
+
+    // repos.conf may be a file or a directory of files.
+    let conf = sandbox_dir.join("etc/portage/repos.conf");
+    let mut files = vec![conf.clone()];
+    if let Ok(entries) = std::fs::read_dir(&conf) {
+        files.extend(entries.filter_map(|e| Utf8PathBuf::from_path_buf(e.ok()?.path()).ok()));
+    }
+    for file in files {
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        for line in text.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                if key.trim() == "location" {
+                    push(sandbox_dir.join(value.trim().trim_start_matches('/')));
+                }
+            }
+        }
+    }
+    // `eselect repository` drops an overlay here with no repos.conf entry.
+    if let Ok(entries) = std::fs::read_dir(sandbox_dir.join("var/db/repos")) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            if let Ok(dir) = Utf8PathBuf::from_path_buf(entry.path()) {
+                push(dir);
+            }
+        }
+    }
+    repos
+}
+
+/// The category and package of an emerge atom, with everything a directory
+/// name does not carry stripped: the comparison operator, the slot, and the
+/// version glued onto the package name.
+fn atom_cpn(atom: &str) -> Option<(&str, &str)> {
+    let cpn = atom
+        .trim_start_matches(['=', '<', '>', '~', '!'])
+        .split(':')
+        .next()?;
+    let (category, rest) = cpn.split_once('/')?;
+    // A dash followed by a digit starts the version; anything else is part of
+    // the name, which is why sys-apps and gst-plugins-base survive this.
+    let package = match rest.rsplit_once('-') {
+        Some((name, tail)) if tail.starts_with(|c: char| c.is_ascii_digit()) => name,
+        _ => rest,
+    };
+    Some((category, package))
+}
+
+/// Reject atoms that name nothing in any repo, before anything is built.
+///
+/// Only the category/package part is checked.  Version ranges, slots and USE
+/// deps are emerge's business; this is here to catch a package that was
+/// renamed or never existed, which is the failure that costs a whole build.
+fn check_package_lists(
+    sandbox: &Sandbox,
+    board: &BoardConfig,
+    board_dir: &Utf8Path,
+    defaults_root: &Utf8Path,
+) -> Result<()> {
+    let repos = ebuild_repos(&sandbox.dir);
+    if repos.is_empty() {
+        // No synced tree yet: the sandbox has not been prepared, and emerge
+        // will say so far more clearly than we could.
+        return Ok(());
+    }
+
+    let mut bad: Vec<String> = Vec::new();
+    for list in [
+        defaults_root.join("sandbox-packages.txt"),
+        defaults_root.join("target-packages.txt"),
+        board_dir.join("sandbox-packages.txt"),
+        board_dir.join("target-packages.txt"),
+    ] {
+        let Ok(content) = std::fs::read_to_string(&list) else {
+            continue;
+        };
+        for (number, line) in content.lines().enumerate() {
+            let line = line.trim();
+            // A `-atom` line takes something out of the defaults rather than
+            // naming something to build, so there is nothing to look up.
+            if line.is_empty() || line.starts_with('#') || line.starts_with('-') {
+                continue;
+            }
+            let Some(atom) = line.split_whitespace().next() else {
+                continue;
+            };
+            let Some((category, package)) = atom_cpn(atom) else {
+                continue;
+            };
+            let found = repos
+                .iter()
+                .any(|repo| repo.join(category).join(package).symlink_metadata().is_ok());
+            if !found {
+                bad.push(format!("{list}:{}: {atom}", number + 1));
+            }
+        }
+    }
+
+    if bad.is_empty() {
+        return Ok(());
+    }
+    Err(crate::error::Error::BoardConfigParse {
+        file: board.name.clone(),
+        msg: format!("no such package:\n  {}", bad.join("\n  ")),
+    })
+}
+
 // ── Default implementations ─────────────────────────────────────────────────
 
 /// Per-(chost, cflags-hash) binpkg cache dir for a board's target packages.
@@ -273,11 +388,17 @@ fn default_deps(
     boards_root: &Utf8Path,
     defaults_root: &Utf8Path,
 ) -> Result<()> {
+    // A wrong atom is otherwise only found by emerge, which gets there after
+    // the sandbox list has already been built -- ten minutes of compiling
+    // thrown away over a package that was renamed.  The repos are plain
+    // directories on the host, so the same question costs a stat().
+    let board_dir = boards_root.join(&board.name);
+    check_package_lists(sandbox, board, &board_dir, defaults_root)?;
+
     // Sandbox extras: defaults are already installed during prepare; only the
     // board's own extras (e.g. grub for pentium-mmx) need emerging here.
     // merge() with an empty base means a `-atom` line here can only cancel
     // the board's own extras, never uninstall a prepare-time default.
-    let board_dir = boards_root.join(&board.name);
     let board_sandbox = crate::package_list::merge(
         Vec::new(),
         crate::package_list::read_optional(&board_dir.join("sandbox-packages.txt"))?,
@@ -303,6 +424,16 @@ fn default_deps(
         crate::package_list::read_optional(&board_dir.join("target-packages.txt"))?,
     );
     if !target_pkgs.is_empty() {
+        // The keyword a line asks for has to be written where the cross emerge
+        // will look for it: `{chost}-emerge` reads PORTAGE_CONFIGROOT=
+        // /usr/{chost}, not the sandbox's own /etc/portage.  Without this a
+        // line like `sys-boot/syslinux **` gets its atom emerged and its
+        // keyword silently dropped, and the emerge fails on a masked package.
+        let cross_portage = sandbox
+            .dir
+            .join(format!("usr/{}/etc/portage", board.chost()));
+        crate::package_list::write_accept_keywords(&target_pkgs, &cross_portage)?;
+
         let target_runner = sandbox
             .runner_for_board(ws, &board.arch, board)?
             .with_target(&target.dir)
@@ -370,10 +501,24 @@ fn apply_board_patches(
         }
         for file in files {
             tracing::info!("Applying {source}/{file}…");
-            // --forward keeps a rerun on an already-patched tree from failing.
+            // Three states, not two.  `patch --forward` exits 1 both for a
+            // patch that is already applied and for one that does not apply at
+            // all, so it cannot make a rerun safe -- it only makes a real
+            // conflict look like one.  git tells them apart: --check says it
+            // would apply, --reverse --check says it is already in, and
+            // neither means the tree has moved and the build must stop.
             runner.run(&format!(
-                "cd /build/{source} && patch -p1 --forward --silent \
-                 < /scripts/boards/{board_name}/patches/{source}/{file}",
+                "set -e\n\
+                 cd /build/{source}\n\
+                 p=/scripts/boards/{board_name}/patches/{source}/{file}\n\
+                 if git apply --check \"$p\" 2>/dev/null; then\n\
+                     git apply \"$p\"\n\
+                 elif git apply --reverse --check \"$p\" 2>/dev/null; then\n\
+                     echo \"already applied: {file}\"\n\
+                 else\n\
+                     echo \"does not apply to this tree: {file}\" >&2\n\
+                     exit 1\n\
+                 fi",
                 board_name = board.name,
             ))?;
         }
@@ -394,12 +539,74 @@ fn default_kernel(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
                 file: board.name.clone(),
                 msg: "KERNEL_ARCH required for kernel build".into(),
             })?;
+    // Without these the kernel embeds the wall clock, this machine's hostname
+    // and whoever ran the build, so the same source and config produce a
+    // different image every time.  The date comes from the commit the tree is
+    // checked out at, which is the only timestamp that is a property of the
+    // input rather than of the run.
     runner.run(&format!(
-        "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} {defconfig} && \
+        "set -e\n\
+         cd /build/linux\n\
+         epoch=$(git log -1 --pretty=%ct 2>/dev/null || echo 0)\n\
+         export SOURCE_DATE_EPOCH=$epoch\n\
+         export KBUILD_BUILD_TIMESTAMP=$(date -u -d \"@$epoch\" 2>/dev/null || echo)\n\
+         export KBUILD_BUILD_USER=crossdev-stages\n\
+         export KBUILD_BUILD_HOST={board_name}\n\
+         make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} {defconfig}\n\
+         {fragments}\
          make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} WERROR=0 -j$(nproc)",
         cc = board.cross_compile,
         defconfig = board.kernel_defconfig,
+        board_name = board.name,
+        fragments = kernel_config_fragments(board),
     ))
+}
+
+/// Shell that appends each fragment to .config, reruns olddefconfig, and then
+/// checks that every line the fragments asked for actually survived.
+///
+/// The check is the point.  olddefconfig drops a symbol whose dependencies are
+/// unmet and can hand back a module where a builtin was asked for, both
+/// silently, and a board that says `# CONFIG_X is not set` has no way to find
+/// out that X came back on.  Checking the fragments themselves means the whole
+/// request is covered rather than whichever symbols someone remembered to list.
+fn kernel_config_fragments(board: &BoardConfig) -> String {
+    if board.kernel_config_fragments.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    for name in &board.kernel_config_fragments {
+        out.push_str(&format!(
+            "f=/scripts/boards/{board}/kernel-config/{name}\n\
+             [ -f \"$f\" ] || f=/scripts/defaults/kernel-config/{name}\n\
+             [ -f \"$f\" ] || {{ echo \"no kernel config fragment {name}\" >&2; exit 1; }}\n\
+             cat \"$f\" >> /build/linux/.config\n\
+             frags=\"$frags $f\"\n",
+            board = board.name,
+        ));
+    }
+    format!(
+        "frags=\n\
+         {out}\
+         make -C /build/linux ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig\n\
+         for f in $frags; do\n\
+             while read -r line; do\n\
+                 case \"$line\" in\n\
+                     '#'*' is not set')\n\
+                         sym=${{line#\\# }}; sym=${{sym%% *}}\n\
+                         if grep -q \"^$sym=\" /build/linux/.config; then\n\
+                             echo \"$sym came back on, fragment asked for it off\" >&2\n\
+                             exit 1\n\
+                         fi ;;\n\
+                     CONFIG_*=*)\n\
+                         grep -qx \"$line\" /build/linux/.config || {{\n\
+                             echo \"kernel config lost: $line\" >&2\n\
+                             exit 1\n\
+                         }} ;;\n\
+                 esac\n\
+             done < \"$f\"\n\
+         done\n"
+    )
 }
 
 fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
@@ -829,5 +1036,55 @@ fn format_duration(d: std::time::Duration) -> String {
         format!("{}m {}s", secs / 60, secs % 60)
     } else {
         format!("{}h {}m {}s", secs / 3600, (secs % 3600) / 60, secs % 60)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{atom_cpn, kernel_config_fragments};
+    use crate::board::BoardConfig;
+
+    fn board_with(fragments: &[&str]) -> BoardConfig {
+        let mut board = crate::cli::util::default_board_config("riscv64");
+        board.name = "demo".into();
+        board.kernel_config_fragments = fragments.iter().map(|s| s.to_string()).collect();
+        board
+    }
+
+    #[test]
+    fn no_fragments_generates_nothing() {
+        assert!(kernel_config_fragments(&board_with(&[])).is_empty());
+    }
+
+    #[test]
+    fn a_fragment_is_looked_up_board_first_then_defaults() {
+        let script = kernel_config_fragments(&board_with(&["riscv64-no-vector"]));
+        assert!(script.contains("/scripts/boards/demo/kernel-config/riscv64-no-vector"));
+        assert!(script.contains("/scripts/defaults/kernel-config/riscv64-no-vector"));
+        // Both directions of the check have to be generated: a symbol that was
+        // asked for and lost, and one asked to be off that came back.
+        assert!(script.contains("kernel config lost"));
+        assert!(script.contains("came back on"));
+    }
+
+    #[test]
+    fn an_atom_reduces_to_the_directory_that_would_hold_it() {
+        assert_eq!(atom_cpn("media-libs/mesa"), Some(("media-libs", "mesa")));
+        // The forms boards actually write.
+        assert_eq!(
+            atom_cpn("=sys-apps/busybox-1.38.0"),
+            Some(("sys-apps", "busybox"))
+        );
+        assert_eq!(
+            atom_cpn(">=media-libs/x264-0.164"),
+            Some(("media-libs", "x264"))
+        );
+        assert_eq!(atom_cpn("dev-lang/rust:stable"), Some(("dev-lang", "rust")));
+        // A dash in the name is not a version.
+        assert_eq!(
+            atom_cpn("media-plugins/gst-plugins-v4l2"),
+            Some(("media-plugins", "gst-plugins-v4l2"))
+        );
+        assert_eq!(atom_cpn("no-category-here"), None);
     }
 }
