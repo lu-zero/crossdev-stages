@@ -20,9 +20,19 @@ pub fn clone(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
 
 pub fn build(runner: &SandboxRunner, board: &BoardConfig, _env: &[String]) -> Result<()> {
     if board.fip_repo.is_some() {
+        // build-fip.sh only takes BL33; the remaining blobs come from the
+        // repo's per-board directory.  When the tfa stage built a BL31,
+        // substitute it for the shipped one before packing.
+        let bl31 = match (&board.tfa_repo, &board.tfa_plat) {
+            (Some(_), Some(plat)) => format!(
+                "cp /build/tfa/build/{plat}/release/bl31.bin /build/fip/{name}/bl31.bin && ",
+                name = board.name,
+            ),
+            _ => String::new(),
+        };
         runner.run(&format!(
             "mkdir -p /build/u-boot-sd && \
-             cd /build/fip && \
+             {bl31}cd /build/fip && \
              ./build-fip.sh {board} /build/u-boot/u-boot.bin /build/u-boot-sd/",
             board = board.name,
         ))?;
