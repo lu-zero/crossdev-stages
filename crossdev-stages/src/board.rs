@@ -61,8 +61,8 @@ pub struct BoardConfig {
     // Firmware overlay
     pub firmware_repo: Option<String>,
     pub firmware_tag: Option<String>,     // FIRMWARE_TAG; falls back to TAG
-    pub firmware_overlay: Option<String>, // path inside firmware repo
-    pub host_firmware_paths: Vec<String>, // host paths to copy into image
+    pub firmware_overlay: Option<String>, // path inside firmware repo, contents -> /lib/firmware
+    pub firmware_dirs: Vec<String>,       // dirs inside firmware repo, path preserved
 
     // Kernel
     pub kernel_repo: String,
@@ -86,6 +86,16 @@ pub struct BoardConfig {
     pub ramdisk_name: Option<String>,
     pub loglevel: Option<String>,
 
+    /// BOOT_EXTLINUX: this board boots through an extlinux.conf, so `assemble`
+    /// writes one instead of the board repeating the same file in a hook.
+    pub extlinux: bool,
+    /// BOOT_APPEND: kernel arguments beyond the ones every extlinux board
+    /// states identically (root, rw, rootwait, rootfstype, console).
+    pub append: Option<String>,
+    /// BOOT_DTB_NAME: the device tree to boot, when BOARD_DTB_GLOB names more
+    /// than one file and the board has to say which.
+    pub dtb_name: Option<String>,
+
     pub services: Vec<String>, // e.g. ["sshd:default", "metalog:default"]
     pub build_steps: Vec<String>,
 
@@ -103,7 +113,27 @@ pub struct BoardConfig {
     pub description: Option<String>,
 }
 
+/// The steps `image build` runs for a board that does not list its own.
+/// A board.conf states BUILD_STEPS only to depart from this order.
+pub const DEFAULT_BUILD_STEPS: [&str; 6] = [
+    "deps",
+    "checkout",
+    "bootloader",
+    "kernel",
+    "assemble",
+    "pack",
+];
+
 impl BoardConfig {
+    /// The steps this board builds through: its own list, or the default.
+    pub fn effective_build_steps(&self) -> Vec<&str> {
+        if self.build_steps.is_empty() {
+            DEFAULT_BUILD_STEPS.to_vec()
+        } else {
+            self.build_steps.iter().map(String::as_str).collect()
+        }
+    }
+
     /// Derive the CHOST triple from the arch (e.g. "i586-pc-linux-gnu", "riscv64-unknown-linux-gnu").
     /// Uses explicit CHOST from board.conf if set, otherwise derives from arch.
     pub fn chost(&self) -> String {
@@ -289,10 +319,7 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         firmware_repo: kv.get("FIRMWARE_REPO").cloned(),
         firmware_tag: kv.get("FIRMWARE_TAG").or_else(|| kv.get("TAG")).cloned(),
         firmware_overlay: kv.get("BOARD_FIRMWARE_OVERLAY").cloned(),
-        host_firmware_paths: arrays
-            .get("HOST_FIRMWARE_PATHS")
-            .cloned()
-            .unwrap_or_default(),
+        firmware_dirs: arrays.get("FIRMWARE_DIRS").cloned().unwrap_or_default(),
 
         kernel_repo: req!("KERNEL_REPO"),
         kernel_tag: kv
@@ -324,6 +351,13 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         kernel_name: kv.get("BOOT_KERNEL_NAME").cloned(),
         ramdisk_name: kv.get("BOOT_RAMDISK_NAME").cloned(),
         loglevel: kv.get("BOOT_LOGLEVEL").cloned(),
+
+        extlinux: kv
+            .get("BOOT_EXTLINUX")
+            .map(|v| v == "true" || v == "yes" || v == "1")
+            .unwrap_or(false),
+        append: kv.get("BOOT_APPEND").cloned(),
+        dtb_name: kv.get("BOOT_DTB_NAME").cloned(),
 
         services: arrays.get("BOOT_SERVICES").cloned().unwrap_or_default(),
         build_steps: arrays.get("BUILD_STEPS").cloned().unwrap_or_default(),

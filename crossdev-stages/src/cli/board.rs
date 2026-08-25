@@ -100,9 +100,15 @@ pub fn run(boards_root: &Utf8Path, cmd: BoardCmd) -> Result<()> {
                 pipeline.join(" ")
             };
             println!("Boot pipeline:  {stages}{default_marker}");
-            if !board_cfg.build_steps.is_empty() {
-                println!("Build steps:    {}", board_cfg.build_steps.join(" "));
-            }
+            let steps_marker = if board_cfg.build_steps.is_empty() {
+                "  (default)"
+            } else {
+                ""
+            };
+            println!(
+                "Build steps:    {}{steps_marker}",
+                board_cfg.effective_build_steps().join(" ")
+            );
             if !board_cfg.tags.is_empty() {
                 println!("Tags:           {}", board_cfg.tags.join(", "));
             }

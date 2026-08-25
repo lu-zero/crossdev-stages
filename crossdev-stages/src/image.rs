@@ -4,7 +4,7 @@ use chrono::Utc;
 
 use crate::board::BoardConfig;
 use crate::container::SandboxRunner;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::portage::Portage;
 use crate::sandbox::Sandbox;
 use crate::target::Target;
@@ -617,7 +617,84 @@ fn kernel_config_fragments(board: &BoardConfig) -> String {
     )
 }
 
-fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+/// The device tree an extlinux entry should load.
+///
+/// `BOARD_DTB_GLOB` already names what `assemble` copies into /boot, so a
+/// board that copies exactly one file has already said which DTB it boots and
+/// repeating the name in `BOOT_DTB_NAME` would only give it somewhere to
+/// drift.  A board that copies a whole directory has to name one.
+fn extlinux_fdt(board: &BoardConfig) -> Result<Option<String>> {
+    if let Some(name) = &board.dtb_name {
+        return Ok(Some(name.clone()));
+    }
+    let Some(glob) = &board.kernel_dtb_glob else {
+        return Ok(None);
+    };
+    if glob.contains(['*', '?', '[']) {
+        return Err(Error::BoardConfigParse {
+            file: board.name.clone(),
+            msg: "BOARD_DTB_GLOB matches more than one file, \
+                  so BOOT_EXTLINUX needs BOOT_DTB_NAME to say which one boots"
+                .into(),
+        });
+    }
+    Ok(Some(
+        glob.rsplit('/').next().unwrap_or(glob.as_str()).to_string(),
+    ))
+}
+
+/// Shell that writes the board's extlinux.conf.
+///
+/// Every board that boots this way writes the same file with three values
+/// changed, so the file is built here and the board states only the values.
+/// The heredoc is unquoted and carries the disk identifiers in front of it for
+/// the same reason a board hook does: `BOOT_ROOT_DEV` is written as
+/// `PARTUUID=${BOOT_PART_UUID_2}` and only means anything once expanded.
+fn extlinux_conf(board: &BoardConfig) -> Result<String> {
+    let missing = |key: &str| Error::BoardConfigParse {
+        file: board.name.clone(),
+        msg: format!("BOOT_EXTLINUX needs {key}"),
+    };
+    let kernel = board
+        .kernel_name
+        .as_deref()
+        .ok_or(missing("BOOT_KERNEL_NAME"))?;
+    let root = board.root_dev.as_deref().ok_or(missing("BOOT_ROOT_DEV"))?;
+
+    let mut append = format!("root={root} rw rootwait rootfstype=ext4");
+    if let Some(console) = &board.console {
+        append.push_str(&format!(" console={console}"));
+    }
+    if let Some(extra) = &board.append {
+        append.push(' ');
+        append.push_str(extra);
+    }
+
+    let fdt = match extlinux_fdt(board)? {
+        Some(name) => format!("    FDT /{name}\n"),
+        None => String::new(),
+    };
+
+    Ok(format!(
+        "{exports}mkdir -p /build/gen/boot/extlinux\n\
+         cat > /build/gen/boot/extlinux/extlinux.conf <<EOF\n\
+         DEFAULT gentoo\n\
+         TIMEOUT 30\n\
+         LABEL gentoo\n\
+         \x20   MENU LABEL Gentoo Linux\n\
+         \x20   LINUX /{kernel}\n\
+         {fdt}\x20   APPEND {append}\n\
+         EOF\n",
+        exports = DiskId::of(board).exports(),
+    ))
+}
+
+fn default_assemble(
+    runner: &SandboxRunner,
+    board: &BoardConfig,
+    build: &Build,
+    ws: &Workspace,
+) -> Result<()> {
     let karch =
         board
             .kernel_arch
@@ -627,27 +704,60 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
                 msg: "KERNEL_ARCH required for assemble".into(),
             })?;
 
+    // Start from nothing.  `cp -a /target/.` merges, so anything an earlier
+    // build of this same tree put here outlives being taken back out -- a
+    // service dropped from the board's list, a package.mask deleted from the
+    // target, a firmware directory renamed.  The whole tree is rebuilt from
+    // /target and this step's own work, so there is nothing here worth
+    // keeping, and the copy that follows costs the same either way.
+    crate::container::destroy_dir(&build.dir.join("gen"), ws.base())?;
+
     runner.run("mkdir -p /build/gen/root /build/gen/boot")?;
-    // The copy below merges rather than replaces, so a runlevel entry added by
-    // an earlier build of this same tree would survive being taken out of the
-    // board's service list.  Every runlevel entry is a symlink, and the copy
-    // restores the stage's own, so clearing them first makes the board list
-    // authoritative instead of cumulative.
-    runner.run(
-        "[ -d /build/gen/root/etc/runlevels ] && \
-         find /build/gen/root/etc/runlevels -type l -delete; true",
-    )?;
     runner.run("cp -a /target/. /build/gen/root/")?;
     // unpack_tarball excludes ./dev to avoid permission errors in rootless containers.
     // Recreate the empty mount-point directories so the kernel can mount devtmpfs,
     // procfs, sysfs and tmpfs at boot.
-    runner.run("mkdir -p /build/gen/root/{dev,proc,sys,run,tmp}")?;
+    runner.run(
+        "mkdir -p /build/gen/root/{dev,proc,sys,run,tmp,mnt,media} && \
+         chmod 1777 /build/gen/root/tmp",
+    )?;
 
     runner.run(&format!(
         "make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} \
          INSTALL_MOD_PATH=/build/gen/root modules_install",
         cc = board.cross_compile,
     ))?;
+
+    // Firmware, in the two shapes a board actually has.  Every board carrying
+    // any firmware at all used to write these same few lines into its own
+    // post-assemble hook.
+    //
+    // Both forms fail if the directory is not there.  The version that lived in
+    // the hooks copied host paths with `2>/dev/null || true`, which meant a
+    // board could name firmware it never got: the copy runs inside the sandbox,
+    // whose rootfs has no /lib/firmware at all, so it silently did nothing on
+    // every board that used it.
+    if let Some(overlay) = &board.firmware_overlay {
+        // The overlay path ends in lib/firmware, so its *contents* land in
+        // /lib/firmware -- the vendor tree already lays out rtw89/, rtl_bt/ and
+        // the rest under the names the drivers request.
+        runner.run(&format!(
+            "[ -d /build/firmware/{overlay} ] || {{ \
+                 echo 'BOARD_FIRMWARE_OVERLAY: no {overlay} in the firmware repo' >&2; exit 1; }}; \
+             mkdir -p /build/gen/root/lib/firmware && \
+             cp -a /build/firmware/{overlay}/. /build/gen/root/lib/firmware/"
+        ))?;
+    }
+    for dir in &board.firmware_dirs {
+        // Path preserved: panthor asks for arm/mali/arch<N>.<M>/mali_csffw.bin
+        // and the network drivers are just as particular about their directory.
+        runner.run(&format!(
+            "[ -d /build/firmware/{dir} ] || {{ \
+                 echo 'FIRMWARE_DIRS: no {dir} in the firmware repo' >&2; exit 1; }}; \
+             mkdir -p /build/gen/root/lib/firmware/{dir} && \
+             cp -a /build/firmware/{dir}/. /build/gen/root/lib/firmware/{dir}/"
+        ))?;
+    }
 
     if let Some(dtb_glob) = &board.kernel_dtb_glob {
         runner.run(&format!("cp /build/linux/{dtb_glob} /build/gen/boot/"))?;
@@ -657,6 +767,10 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
         runner.run(&format!(
             "cp /build/linux/arch/{karch}/boot/{kname} /build/gen/boot/"
         ))?;
+    }
+
+    if board.extlinux {
+        runner.run(&extlinux_conf(board)?)?;
     }
 
     runner
@@ -686,20 +800,31 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
         board.hostname
     ))?;
 
+    // baselayout's inittab starts a getty on every port some board somewhere
+    // has: `s0`/`s1` on ttyS0/ttyS1, and under "Architecture specific
+    // features" a live `f0` on ttyAMA0.  On a board without that port agetty
+    // exits at once and init respawns it until it gives up ("INIT: Id \"s0\"
+    // respawning too fast", every five minutes, forever).  On a board that
+    // does have it, the stock getty and the board's own both open it and both
+    // print /etc/issue, so the login banner repeats down the screen.
+    //
+    // Disable every getty that is not a virtual terminal.  The VTs stay: tty1
+    // is the framebuffer console on a board with a display, and it costs
+    // nothing on one without.  The board's own serial line is appended below,
+    // and this pass comments out the copy an earlier run of assemble left, so
+    // repeating the step cannot stack up gettys.
+    runner.run(
+        "sed -i -E '/^[^#].*agetty/{/agetty.* tty[0-9]/! s/^/#/}' \
+         /build/gen/root/etc/inittab",
+    )?;
+
     if let (Some(tty), Some(baud)) = (&board.serial_tty, &board.serial_baud) {
-        // baselayout ships an enabled `s0` getty on ttyS0.  Boards whose serial
-        // port is anything else (ttySAC2, ttyAMA0, hvc0) have no such device,
-        // so agetty exits at once and init respawns it until it gives up:
-        // "INIT: Id \"s0\" respawning too fast", forever, every five minutes.
-        // Disable the stock serial gettys and install the board's own.
-        //
         // -L for the same reason baselayout's own serial lines carry it: a
         // debug header has no modem control lines, so without CLOCAL the tty
         // layer hangs the port up on the missing carrier and agetty dies and
         // respawns once a second, reprinting /etc/issue each time.
         runner.run(&format!(
-            "sed -i -e '/^s[0-9]*:/s/^/#/' /build/gen/root/etc/inittab && \
-             echo 's0:12345:respawn:/sbin/agetty -L {baud} {tty} linux' \
+            "echo 's0:12345:respawn:/sbin/agetty -L {baud} {tty} linux' \
              >> /build/gen/root/etc/inittab"
         ))?;
     }
@@ -852,21 +977,9 @@ pub fn build(
     // make.conf ships into images.
     let binpkgs_dir = board_binpkgs_dir(ws, board)?;
 
-    let default_steps = if board.build_steps.is_empty() {
-        vec![
-            "deps",
-            "checkout",
-            "bootloader",
-            "kernel",
-            "assemble",
-            "pack",
-        ]
-    } else {
-        board.build_steps.iter().map(String::as_str).collect()
-    };
     let steps_to_run: Vec<&str> = match steps {
         Some(s) => s.iter().map(String::as_str).collect(),
-        None => default_steps,
+        None => board.effective_build_steps(),
     };
 
     let total = steps_to_run.len();
@@ -920,7 +1033,7 @@ pub fn build(
                 &runner,
                 boards_root,
                 board,
-                |r| default_assemble(r, board),
+                |r| default_assemble(r, board, &bld, ws),
             ),
             "pack" => run_step("pack", "packed", &bld, &runner, boards_root, board, |r| {
                 default_pack(r, board, &bld, boards_root)
@@ -1049,7 +1162,7 @@ fn format_duration(d: std::time::Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{atom_cpn, kernel_config_fragments};
+    use super::{atom_cpn, extlinux_conf, extlinux_fdt, kernel_config_fragments};
     use crate::board::BoardConfig;
 
     fn board_with(fragments: &[&str]) -> BoardConfig {
@@ -1073,6 +1186,66 @@ mod tests {
         // asked for and lost, and one asked to be off that came back.
         assert!(script.contains("kernel config lost"));
         assert!(script.contains("came back on"));
+    }
+
+    fn extlinux_board() -> BoardConfig {
+        let mut board = board_with(&[]);
+        board.extlinux = true;
+        board.kernel_name = Some("Image".into());
+        board.root_dev = Some("PARTUUID=${BOOT_PART_UUID_2}".into());
+        board.console = Some("ttyS2,1500000".into());
+        board.append = Some("earlycon".into());
+        board.kernel_dtb_glob = Some("arch/arm64/boot/dts/rockchip/rk3568-odroid-m1.dtb".into());
+        board
+    }
+
+    #[test]
+    fn an_exact_dtb_path_names_the_device_tree_by_itself() {
+        let board = extlinux_board();
+        assert_eq!(
+            extlinux_fdt(&board).unwrap().as_deref(),
+            Some("rk3568-odroid-m1.dtb")
+        );
+    }
+
+    #[test]
+    fn a_dtb_glob_has_to_be_narrowed_by_hand() {
+        let mut board = extlinux_board();
+        board.kernel_dtb_glob = Some("arch/arm64/boot/dts/rockchip/*.dtb".into());
+        assert!(extlinux_fdt(&board).is_err());
+        board.dtb_name = Some("rk3588s-odroid-m2.dtb".into());
+        assert_eq!(
+            extlinux_fdt(&board).unwrap().as_deref(),
+            Some("rk3588s-odroid-m2.dtb")
+        );
+    }
+
+    #[test]
+    fn the_written_config_is_an_extlinux_file_with_the_partuuid_expanded() {
+        let script = extlinux_conf(&extlinux_board()).unwrap();
+        // The heredoc has to stay unquoted, with the identifiers exported
+        // ahead of it, or root= reaches the kernel as a literal ${...}.
+        assert!(script.contains("export BOOT_PART_UUID_2="));
+        let body = script.split("<<EOF\n").nth(1).unwrap();
+        assert_eq!(
+            body,
+            "DEFAULT gentoo\n\
+             TIMEOUT 30\n\
+             LABEL gentoo\n    \
+             MENU LABEL Gentoo Linux\n    \
+             LINUX /Image\n    \
+             FDT /rk3568-odroid-m1.dtb\n    \
+             APPEND root=PARTUUID=${BOOT_PART_UUID_2} rw rootwait \
+             rootfstype=ext4 console=ttyS2,1500000 earlycon\n\
+             EOF\n"
+        );
+    }
+
+    #[test]
+    fn extlinux_without_a_kernel_name_is_rejected() {
+        let mut board = extlinux_board();
+        board.kernel_name = None;
+        assert!(extlinux_conf(&board).is_err());
     }
 
     #[test]
