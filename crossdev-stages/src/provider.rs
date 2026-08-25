@@ -21,7 +21,8 @@ pub enum RootfsProvider {
     /// keyring, the mirror (everything but amd64/i386 lives on
     /// ports.ubuntu.com) and in having no rolling suite alias.
     Ubuntu,
-    /// Alpine rootfs unpacked by a static `apk` during the `deps` step.
+    /// Alpine rootfs unpacked by `apk` during the `deps` step, emerged
+    /// from the crossdev-stages overlay's `app-arch/apk-tools`.
     /// The only provider that populates a foreign-arch root without
     /// executing a single target binary: apk runs on the host arch and
     /// `--no-scripts` (upstream's own answer for "extracting a system
@@ -240,23 +241,17 @@ fn parse_alpine_branch(branch: &str) -> Option<(u32, u32)> {
     Some((major.parse().ok()?, minor.parse().ok()?))
 }
 
-/// Static apk-tools used to unpack the foreign-arch root, pinned by URL
-/// and checksum.  GitLab's generic package registry rather than a
-/// dl-cdn `.apk`: a stable branch keeps only the current version of each
-/// package, so a CDN pin rots on the next apk-tools bump, while these
-/// per-release uploads are permanent.
-///
-/// The signing keys are *not* fetched.  They are the trust anchor, and
-/// downloading an anchor over the channel it is about to authenticate
-/// buys nothing, so they are committed under `defaults/alpine-keys/` and
-/// copied into the root before the first `apk add`.  Every key there was
-/// taken from `alpine-keys-2.6-r0.apk` and byte-compared against the
-/// aports `v3.24.1` tag.  `--allow-untrusted` is never passed.
-pub const APK_STATIC_VERSION: &str = "3.0.7";
-pub const APK_STATIC_URL: &str = "https://gitlab.alpinelinux.org/api/v4/projects/5/\
-                                  packages/generic/v3.0.7/x86_64/apk.static";
-pub const APK_STATIC_SHA256: &str =
-    "c07bf5356eacc9dd7a8c56bc537f46702f007170287403299d52a04264e74b3c";
+// apk-tools is not in ::gentoo, so `defaults/overlay/app-arch/apk-tools/`
+// carries the ebuild and the `deps` step emerges it like any other host
+// dependency.  Nothing is pinned here: the release tarball and its
+// checksums live in the ebuild and its Manifest, where portage enforces
+// them and the VDB records what was built.
+//
+// The Alpine signing keys are a separate matter and stay committed under
+// `defaults/alpine-keys/`.  They are the trust anchor, and downloading an
+// anchor over the channel it is about to authenticate buys nothing.  Every
+// key there was taken from `alpine-keys-2.6-r0.apk` and byte-compared
+// against the aports `v3.24.1` tag.  `--allow-untrusted` is never passed.
 
 #[cfg(test)]
 mod tests {
@@ -385,11 +380,5 @@ mod tests {
         assert!(super::alpine_branch_serves("latest-stable", "riscv64"));
         // Every other arch predates every branch this can name.
         assert!(super::alpine_branch_serves("v3.9", "aarch64"));
-    }
-
-    #[test]
-    fn apk_static_url_matches_pinned_version() {
-        assert!(super::APK_STATIC_URL.contains(super::APK_STATIC_VERSION));
-        assert_eq!(super::APK_STATIC_SHA256.len(), 64);
     }
 }

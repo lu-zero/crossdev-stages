@@ -676,7 +676,7 @@ const ALPINE_BRANCH_DEFAULT: &str = "v3.24";
 /// unrun scriptlet is reported to the user instead.
 const ALPINE_SCRIPTS_REPLICATED: [&str; 3] = ["busybox", "alpine-baselayout", "openrc"];
 
-/// Provision and populate an Alpine rootfs in /target with a static apk.
+/// Provision and populate an Alpine rootfs in /target with apk.
 ///
 /// The one provider that fills a foreign-arch root with no emulation at
 /// all: apk is a host-arch binary that only reads and writes files, and
@@ -688,8 +688,7 @@ const ALPINE_SCRIPTS_REPLICATED: [&str; 3] = ["busybox", "alpine-baselayout", "o
 ///
 /// Signatures are checked.  `defaults/alpine-keys/<arch>/` is copied into
 /// the root before the first `apk add`, so apk has the target arch's
-/// signing keys and `--allow-untrusted` is never needed; apk-tools itself
-/// is pinned by URL and sha256.
+/// signing keys and `--allow-untrusted` is never needed.
 ///
 /// What `--no-scripts` costs is paid back below where it is structural
 /// (busybox's applet symlinks are the whole userland, `/sbin/init`
@@ -737,30 +736,20 @@ fn alpine_deps(
     let repos = board.alpine_repos.as_deref().unwrap_or("main community");
     let extra = read_distro_packages(&boards_root.join(&board.name).join("alpine-packages.txt"))?;
 
+    // apk-tools is not in ::gentoo (checked: no apk, no apk-tools, in any
+    // category), so the crossdev-stages overlay carries the ebuild.  An
+    // ebuild rather than a pinned binary: portage checks the release
+    // tarball against the Manifest, records the build in the sandbox VDB
+    // and caches a binpkg, so nothing here is a blob nothing accounts for.
+    let portage = Portage::new(runner);
+    portage.emerge(&["--noreplace", "app-arch/apk-tools"])?;
+
     // A failed run leaves a half-unpacked tree; wipe everything but the
     // workspace markers so a retry starts from nothing.
     runner.run(
         "find /target -mindepth 1 -maxdepth 1 \
          ! -name '.arch' ! -name '.stage3' ! -name '.provider' -exec rm -rf {} +",
     )?;
-
-    // apk-tools is not in ::gentoo (checked: no apk, no apk-tools, in any
-    // category), so it is fetched rather than emerged -- pinned URL, pinned
-    // checksum, cached in the workspace so the second build is offline.
-    runner.run(&format!(
-        "set -e\n\
-         mkdir -p /cache/sources\n\
-         apk=/cache/sources/apk.static-{ver}\n\
-         if ! echo '{sha}  '\"$apk\" | sha256sum -c --status 2>/dev/null; then\n\
-         \x20   wget -O \"$apk.tmp\" '{url}'\n\
-         \x20   echo '{sha}  '\"$apk.tmp\" | sha256sum -c\n\
-         \x20   mv -f \"$apk.tmp\" \"$apk\"\n\
-         fi\n\
-         install -m 0755 \"$apk\" /usr/local/bin/apk.static\n",
-        ver = crate::provider::APK_STATIC_VERSION,
-        sha = crate::provider::APK_STATIC_SHA256,
-        url = crate::provider::APK_STATIC_URL,
-    ))?;
 
     // Keys first: apk reads them from <root>/etc/apk/keys, so they have to
     // be in place before the first package is verified.  Per-arch, because
@@ -781,7 +770,7 @@ fn alpine_deps(
         .collect::<Vec<_>>()
         .join(" ");
     runner.run(&format!(
-        "apk.static --arch {arch} --root /target --initdb --no-scripts add {add}"
+        "apk --arch {arch} --root /target --initdb --no-scripts add {add}"
     ))?;
 
     // busybox ships one binary and a list of the paths its applets answer

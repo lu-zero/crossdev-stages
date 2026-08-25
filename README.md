@@ -527,15 +527,26 @@ slots.  Override by editing the pin files in the respective
 `etc/portage/`, or change `BOARD_GCC_VERSION` — the files are rewritten
 on the next prepare/crossdev/stage run.
 
-### Optional: coprocessor firmware (K1/K3 ESOS)
+### The `crossdev-stages` portage overlay
 
 The `defaults/overlay/` directory ships as the `crossdev-stages` portage
-overlay inside the sandbox.  It contains opt-in (p.masked) ebuilds for
-SpaceMIT coprocessor firmware:
+overlay inside the sandbox, installed on every `sandbox prepare`.
 
-- `sys-firmware/esos` (USE=k1|k3) — RT-Thread firmware from a single
+`app-arch/apk-tools` is emerged automatically: `ROOTFS_PROVIDER="alpine"`
+needs a host-arch apk to unpack a foreign-architecture Alpine root, and
+::gentoo has none.  Category follows ::gentoo's own placement of other
+distributions' package managers, `app-arch/dpkg` and `app-arch/rpm`.
+Built from the upstream release tarball with the checksum in the ebuild's
+Manifest, so portage records it in the VDB like any other package.
+
+### Optional: coprocessor firmware (K1/K3 ESOS)
+
+The overlay also carries opt-in (p.masked) ebuilds for SpaceMIT
+coprocessor firmware:
+
+- `sys-firmware/esos` (USE=k1|k3) - RT-Thread firmware from a single
   upstream tree, chip selected at build time
-- `sys-firmware/esos-lite` — K3 PM mini-blob (build-time dep of esos[k3])
+- `sys-firmware/esos-lite` - K3 PM mini-blob (build-time dep of esos[k3])
 
 To install on a target sysroot (`package.unmask`/`package.accept_keywords`
 are directories; live ebuilds also need an explicit `**` keyword):
