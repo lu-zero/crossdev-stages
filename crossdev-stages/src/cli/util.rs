@@ -107,6 +107,8 @@ pub fn default_board_config(arch: &str) -> board::BoardConfig {
         ),
         kernel_arch: None,
         rootfs_provider: crate::provider::RootfsProvider::default(),
+        debian_suite: None,
+        debian_mirror: None,
         opensbi_repo: None,
         opensbi_tag: None,
         opensbi_platform: None,

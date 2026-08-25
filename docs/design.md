@@ -127,11 +127,17 @@ bootloader, assemble mechanics, and pack stay provider-agnostic.
 gentoo   stage3 seed; deps cross-emerges defaults + board lists;
          assemble writes OpenRC config.  The default; also the only
          provider that unconditionally needs the crossdev toolchain.
+debian   deps runs debootstrap in the sandbox (--foreign stage 1, then
+         the second stage in a chroot — foreign arches need qemu-user
+         binfmt with the F flag on the host); board extras install via
+         --include from debian-packages.txt; assemble writes systemd
+         config (hostname, serial-getty@, empty root password).
 none     nothing seeded, installed, or configured — board hook scripts
-         (override-deps.sh, post-assemble.sh, …) own the rootfs.  The
-         toolchain store is set up only when BUILD_STEPS compiles
-         target code (kernel/bootloader).
+         (override-deps.sh, post-assemble.sh, …) own the rootfs.
 ```
+
+Providers other than gentoo set up the toolchain store only when
+BUILD_STEPS compiles target code (kernel/bootloader).
 
 ---
 

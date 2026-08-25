@@ -459,6 +459,101 @@ fn default_deps(
     Ok(())
 }
 
+/// Provision and populate a Debian rootfs in /target via debootstrap.
+/// Runs inside the sandbox: stage 1 (`--foreign`) downloads and unpacks
+/// without executing target binaries; the second stage runs in a chroot
+/// and needs qemu-user binfmt (F flag) registered on the host for
+/// foreign arches.  Extra packages come from the board's
+/// debian-packages.txt via `--include` — installed during the second
+/// stage, so changing the list means recreating the target.
+fn debian_deps(
+    runner: &SandboxRunner,
+    target: &Target,
+    board: &BoardConfig,
+    boards_root: &Utf8Path,
+) -> Result<()> {
+    let done = target.dir.join(".debootstrap-done");
+    if done.exists() {
+        tracing::info!("Debian rootfs already provisioned, skipping debootstrap.");
+        return Ok(());
+    }
+    let arch = crate::provider::debian_arch(&board.arch).ok_or_else(|| {
+        crate::error::Error::BoardConfigParse {
+            file: board.name.clone(),
+            msg: format!("no Debian port for arch '{}'", board.arch),
+        }
+    })?;
+    let suite = board.debian_suite.as_deref().unwrap_or("stable");
+    if matches!(suite, "stable" | "testing" | "unstable" | "oldstable") {
+        tracing::warn!(
+            "DEBIAN_SUITE '{suite}' is a moving alias; pin a codename \
+             (e.g. trixie) for reproducible builds"
+        );
+    }
+    let mirror = board
+        .debian_mirror
+        .as_deref()
+        .unwrap_or("https://deb.debian.org/debian");
+
+    // One package name per line; the portage-atom parser would silently
+    // drop a second whitespace-separated token, so parse strictly here.
+    let list_path = boards_root.join(&board.name).join("debian-packages.txt");
+    let mut extra: Vec<String> = Vec::new();
+    if list_path.exists() {
+        for line in std::fs::read_to_string(&list_path)?.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            if line.split_whitespace().nth(1).is_some() {
+                return Err(crate::error::Error::BoardConfigParse {
+                    file: list_path.to_string(),
+                    msg: format!("one package per line: '{line}'"),
+                });
+            }
+            extra.push(line.to_string());
+        }
+    }
+    let include = if extra.is_empty() {
+        String::new()
+    } else {
+        format!("--include={} ", extra.join(","))
+    };
+
+    let portage = Portage::new(runner);
+    portage.emerge(&[
+        "--noreplace",
+        "dev-util/debootstrap",
+        "app-crypt/debian-archive-keyring",
+    ])?;
+    // A failed run leaves a partial tree, and debootstrap unpacks with
+    // tar -k which hard-errors (FILEEXIST) on existing files -- wipe
+    // everything but the workspace markers so a retry starts clean.
+    runner.run(
+        "find /target -mindepth 1 -maxdepth 1 \
+         ! -name '.arch' ! -name '.stage3' ! -name '.provider' -exec rm -rf {} +",
+    )?;
+    runner.run(&format!(
+        "debootstrap --foreign --arch={arch} \
+         --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
+         {include}{suite} /target {mirror}"
+    ))?;
+    runner
+        .run("chroot /target /debootstrap/debootstrap --second-stage")
+        .inspect_err(|_| {
+            tracing::error!(
+                "debootstrap second stage failed -- a foreign-arch chroot \
+                 needs qemu-user binfmt (registered with the F flag) on the host"
+            );
+        })?;
+    // debootstrap's device setup cannot mknod in a userns and leaves a
+    // regular file at dev/null; empty /dev entirely -- devtmpfs mounts
+    // over it at boot (the Gentoo path ships an empty /dev the same way).
+    runner.run("find /target/dev -mindepth 1 -delete")?;
+    std::fs::write(done, chrono::Utc::now().to_rfc3339())?;
+    Ok(())
+}
+
 fn default_checkout(
     runner: &SandboxRunner,
     board: &BoardConfig,
@@ -715,6 +810,12 @@ fn default_assemble(
 
     runner.run("mkdir -p /build/gen/root /build/gen/boot")?;
     runner.run("cp -a /target/. /build/gen/root/")?;
+    // Workspace bookkeeping markers must not ship in the image.
+    runner.run(
+        "rm -f /build/gen/root/.arch /build/gen/root/.stage3 \
+         /build/gen/root/.provider /build/gen/root/.stage1 \
+         /build/gen/root/.updated /build/gen/root/.debootstrap-done",
+    )?;
     // unpack_tarball excludes ./dev to avoid permission errors in rootless containers.
     // Recreate the empty mount-point directories so the kernel can mount devtmpfs,
     // procfs, sysfs and tmpfs at boot.
@@ -788,8 +889,10 @@ fn default_assemble(
         runner.run(&extlinux_conf(board)?)?;
     }
 
-    if board.rootfs_provider == RootfsProvider::Gentoo {
-        os_config_openrc(runner, board)?;
+    match board.rootfs_provider {
+        RootfsProvider::Gentoo => os_config_openrc(runner, board)?,
+        RootfsProvider::Debian => os_config_debian(runner, board)?,
+        RootfsProvider::None => {}
     }
 
     if let Some(dracut_modules) = &board.dracut_modules {
@@ -889,6 +992,43 @@ fn os_config_openrc(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
         "mkdir -p /build/gen/root/etc/ssh && \
          printf 'PermitRootLogin yes\nPermitEmptyPasswords yes\nStrictModes yes\n' \
          >> /build/gen/root/etc/ssh/sshd_config",
+    )
+}
+
+/// systemd configuration of an assembled Debian rootfs: hostname, serial
+/// getty, empty root password (same policy as the Gentoo image).  All
+/// plain file edits and symlinks — no target-arch execution.
+fn os_config_debian(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+    runner.run(&format!(
+        "printf '{}\n' > /build/gen/root/etc/hostname",
+        board.hostname
+    ))?;
+
+    if let (Some(tty), Some(_baud)) = (&board.serial_tty, &board.serial_baud) {
+        // Offline enable: serial-getty@ carries its own agetty invocation,
+        // the baud rate comes from the kernel console= parameter.
+        runner.run(&format!(
+            "mkdir -p /build/gen/root/etc/systemd/system/getty.target.wants && \
+             ln -sf /lib/systemd/system/serial-getty@.service \
+               /build/gen/root/etc/systemd/system/getty.target.wants/serial-getty@{tty}.service"
+        ))?;
+    }
+
+    if !board.services.is_empty() {
+        tracing::warn!(
+            "BOOT_SERVICES is OpenRC-only and ignored for the debian \
+             provider; enable units from post-assemble.sh instead"
+        );
+    }
+
+    runner.run("sed -i -e 's/^root:[^:]*:/root::/' /build/gen/root/etc/shadow")?;
+    // Same permissive-ssh policy the Gentoo image ships; Debian's default
+    // (prohibit-password) would lock out the only account.  Harmless when
+    // sshd isn't installed.
+    runner.run(
+        "mkdir -p /build/gen/root/etc/ssh/sshd_config.d && \
+         printf 'PermitRootLogin yes\nPermitEmptyPasswords yes\n' \
+         > /build/gen/root/etc/ssh/sshd_config.d/90-crossdev-stages.conf",
     )
 }
 
@@ -1068,6 +1208,7 @@ pub fn build(
                     RootfsProvider::Gentoo => {
                         default_deps(_r, ws, sandbox, target, board, boards_root, defaults_root)
                     }
+                    RootfsProvider::Debian => debian_deps(_r, target, board, boards_root),
                     // No default package installation; override-deps.sh
                     // (already handled by run_step) is the provider.
                     RootfsProvider::None => Ok(()),
