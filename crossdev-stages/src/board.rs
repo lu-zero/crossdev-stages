@@ -97,7 +97,9 @@ pub struct BoardConfig {
     pub dtb_name: Option<String>,
 
     /// ISA_STRICT: fail the build when a binary uses an ISA extension this
-    /// board does not have, instead of only saying so.
+    /// board does not have.  On by default -- such a binary faults on the
+    /// hardware, so shipping it is never the answer.  `ISA_STRICT="false"`
+    /// while a board is being brought up and its stage3 residue is known.
     pub isa_strict: bool,
 
     pub services: Vec<String>, // e.g. ["sshd:default", "metalog:default"]
@@ -188,7 +190,9 @@ pub fn load(boards_root: &Utf8Path, name: &str) -> Result<BoardConfig> {
         merged.push('\n');
     }
     merged.push_str(&content);
-    parse(name, &path, &merged)
+    let board = parse(name, &path, &merged)?;
+    check_cflags(&board, &path)?;
+    Ok(board)
 }
 
 /// The `INCLUDE` list a board declares, read before parsing because it decides
@@ -364,8 +368,8 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         dtb_name: kv.get("BOOT_DTB_NAME").cloned(),
         isa_strict: kv
             .get("ISA_STRICT")
-            .map(|v| v == "true" || v == "yes" || v == "1")
-            .unwrap_or(false),
+            .map(|v| !(v == "false" || v == "no" || v == "0"))
+            .unwrap_or(true),
 
         services: arrays.get("BOOT_SERVICES").cloned().unwrap_or_default(),
         build_steps: arrays.get("BUILD_STEPS").cloned().unwrap_or_default(),
@@ -384,6 +388,17 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
             })
             .unwrap_or_default(),
         description: kv.get("DESCRIPTION").cloned(),
+    })
+}
+
+/// Refuse a board whose CFLAGS cannot name a binary-package cache, before any
+/// of it is built.  The key is what keeps boards from sharing binaries they
+/// cannot run, so a flag set that would break the key is a configuration
+/// error, not something to discover from a fault on the hardware.
+fn check_cflags(board: &BoardConfig, path: &Utf8Path) -> Result<()> {
+    crate::cflags::check(&board.effective_cflags()).map_err(|msg| Error::BoardConfigParse {
+        file: path.to_string(),
+        msg: format!("BOARD_CFLAGS: {msg}"),
     })
 }
 

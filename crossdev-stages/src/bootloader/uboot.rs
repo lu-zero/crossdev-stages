@@ -7,13 +7,24 @@
 
 use crate::board::BoardConfig;
 use crate::container::SandboxRunner;
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 pub fn clone(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
-    if let (Some(repo), Some(tag)) = (&board.u_boot_repo, &board.u_boot_tag) {
-        crate::source_cache::cached_clone(runner, repo, tag, "/build/u-boot", "u-boot")?;
+    match (&board.u_boot_repo, &board.u_boot_tag) {
+        (Some(repo), Some(tag)) => {
+            crate::source_cache::cached_clone(runner, repo, tag, "/build/u-boot", "u-boot")
+        }
+        // A stage named in BOOT_PIPELINE with nothing configured is a no-op by
+        // design: the default pipeline lists every stage and boards enable the
+        // ones they need.  A repo with no ref is different -- the board meant
+        // to use this stage, and skipping it silently produced an image with no
+        // bootloader in it that still built and still passed CI.
+        (Some(_), None) => Err(Error::BoardConfigParse {
+            file: board.name.clone(),
+            msg: "U_BOOT_REPO is set but U_BOOT_TAG is not, and neither is TAG".into(),
+        }),
+        (None, _) => Ok(()),
     }
-    Ok(())
 }
 
 pub fn build(runner: &SandboxRunner, board: &BoardConfig, env: &[String]) -> Result<()> {

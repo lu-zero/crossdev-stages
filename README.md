@@ -26,10 +26,10 @@ Rootless cross-compilation of Gentoo stages using crossdev and hakoniwa
 | k230 | riscv64 | canaan (hdmi) | OpenSBI (payload) + U-Boot | `-O3 -march=rv64gcv_zvl128b` | stable |
 | ky-x1 | riscv64 | spacemit 6.6 | OpenSBI + U-Boot | `-O3 -march=rv64gcv_zvl256b` | stable |
 | blackhole | riscv64 | tenstorrent | OpenSBI (jump, PCIe BAR) | `-O3 -march=rv64gcv_zvl512b` | stable |
-| odroid-m1 | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a55` | testing |
-| odroid-m1s | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a55` | testing |
-| odroid-m2 | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a76.cortex-a55` | testing |
-| pentium-mmx | i586 | mainline v6.12 | BIOS (no firmware) | `-O2 -march=pentium-mmx` | testing |
+| odroid-m1 | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a55+crc+crypto` | testing |
+| odroid-m1s | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a55+crc+crypto` | testing |
+| odroid-m2 | aarch64 | mainline v7.0 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a76.cortex-a55+crc+crypto` | testing |
+| pentium-mmx | i586 | mainline v6.18 | BIOS (no firmware) | `-O2 -march=pentium-mmx` | testing |
 
 ## CLI
 
@@ -241,7 +241,7 @@ by `uboot`.
 | `BOOT_EXTLINUX` | no | `true` makes `assemble` write `/extlinux/extlinux.conf` |
 | `BOOT_APPEND` | no | Kernel arguments added to that entry |
 | `BOOT_DTB_NAME` | no | DTB to boot, when `BOARD_DTB_GLOB` matches more than one |
-| `ISA_STRICT` | no | `true` fails the build on a binary the board's ISA cannot run |
+| `ISA_STRICT` | no | `false` downgrades an unrunnable binary to a warning (default: fail) |
 | `OPENSBI_FW_TYPE` | no | OpenSBI firmware type: `dynamic` (default), `jump`, `payload` |
 | `OPENSBI_MAKE_FLAGS` | no | Extra opensbi make arguments |
 | `U_BOOT_MAKE_FLAGS` | no | Extra u-boot make arguments |
@@ -255,8 +255,21 @@ by `uboot`.
 | `BOARD_FIRMWARE_OVERLAY` | no | Path in that repo whose *contents* go to `/lib/firmware` |
 | `FIRMWARE_DIRS` | no | Directories in that repo copied to `/lib/firmware/<dir>`, path preserved |
 | `COMPRESSION` | no | Image compression: `xz` (default), `gz`, `none` |
-| `TAGS` | no | Free-form labels (bash array, e.g. `TAGS=("testing" "wip")`) -- shown in `board list` and `status` |
-| `DESCRIPTION` | no | Free-form note shown in `board info` |
+| `TAGS` | no | Labels: arch, SoC, vendor, and `testing`. What CI selects on |
+| `DESCRIPTION` | no | One-line note shown by `board info` |
+
+### Board tags
+
+`TAGS` labels a board by what it is -- architecture, SoC, vendor -- so a
+selection can be written once instead of listing board names:
+
+```
+TAGS=("aarch64" "rockchip" "rk3588" "odroid" "testing")
+```
+
+`board list` prints them, and CI filters on them. A tag is not inherited
+through `INCLUDE`: a board states its own list in full, because a tag is an
+identity and identity is the one thing a family should not hand down.
 
 ### Shared board config
 
@@ -341,7 +354,8 @@ and compares it against what the board's own toolchain emits -- obtained by
 compiling an empty file with the board's CFLAGS, so `-march=rv64gcv_zvl256b`
 and `-march=rva23u64` expand exactly the way that compiler expands them, with
 no table to keep in step. A binary using an extension the board lacks is
-reported; `ISA_STRICT="true"` makes it fail the build. A binary merely built
+an error: it faults on the hardware, so the build stops. `ISA_STRICT="false"`
+downgrades it to a warning while a board is being brought up. A binary merely built
 without some of the board's extensions is reported as slower, not broken.
 
 The same scan runs on demand against an existing build or target stage:

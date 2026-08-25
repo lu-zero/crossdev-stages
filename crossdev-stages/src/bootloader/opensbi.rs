@@ -5,13 +5,24 @@
 
 use crate::board::BoardConfig;
 use crate::container::SandboxRunner;
-use crate::error::Result;
+use crate::error::{Error, Result};
 
 pub fn clone(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
-    if let (Some(repo), Some(tag)) = (&board.opensbi_repo, &board.opensbi_tag) {
-        crate::source_cache::cached_clone(runner, repo, tag, "/build/opensbi", "opensbi")?;
+    match (&board.opensbi_repo, &board.opensbi_tag) {
+        (Some(repo), Some(tag)) => {
+            crate::source_cache::cached_clone(runner, repo, tag, "/build/opensbi", "opensbi")
+        }
+        // A stage named in BOOT_PIPELINE with nothing configured is a no-op by
+        // design: the default pipeline lists every stage and boards enable the
+        // ones they need.  A repo with no ref is different -- the board meant
+        // to use this stage, and skipping it silently produced an image with no
+        // bootloader in it that still built and still passed CI.
+        (Some(_), None) => Err(Error::BoardConfigParse {
+            file: board.name.clone(),
+            msg: "OPENSBI_REPO is set but OPENSBI_TAG is not, and neither is TAG".into(),
+        }),
+        (None, _) => Ok(()),
     }
-    Ok(())
 }
 
 pub fn build(runner: &SandboxRunner, board: &BoardConfig, env: &[String]) -> Result<()> {
