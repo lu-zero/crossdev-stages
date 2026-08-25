@@ -849,6 +849,272 @@ fn report_unrun_alpine_scripts(runner: &SandboxRunner) {
     }
 }
 
+/// Where the Fedora composes are published.  One host, two trees: see
+/// `FedoraImage::url`.
+const FEDORA_MIRROR_DEFAULT: &str = "https://dl.fedoraproject.org/pub";
+
+/// Provision a Fedora rootfs in /target from a published container base
+/// image.
+///
+/// Seeding needs no emulation.  Fedora composes one OCI archive per
+/// architecture per release, so this part is a checksummed download and
+/// two `tar` calls: nothing target-arch is executed, nothing is
+/// resolved, and no scriptlet is skipped, because none ever runs.
+///
+/// The archive is an OCI image layout, not a flat rootfs tarball.  The
+/// outer `.tar.xz` unpacks to `index.json` plus `blobs/sha256/*`, and
+/// the tree is the single layer blob inside.  Fedora's base images have
+/// exactly one layer, which is why there is no whiteout handling below;
+/// a second layer is refused rather than merged wrong.
+///
+/// Board extras come from `fedora-packages.txt` and are installed by
+/// `fedora_install` below, on top of the image's own rpmdb, the same
+/// shape as stage3 + cross-emerge on the gentoo side.
+fn fedora_deps(
+    runner: &SandboxRunner,
+    target: &Target,
+    board: &BoardConfig,
+    boards_root: &Utf8Path,
+) -> Result<()> {
+    let done = target.dir.join(".fedora-done");
+    if done.exists() {
+        tracing::info!("Fedora rootfs already provisioned, skipping unpack.");
+        return Ok(());
+    }
+    let arch = crate::provider::fedora_arch(&board.arch).ok_or_else(|| {
+        crate::error::Error::BoardConfigParse {
+            file: board.name.clone(),
+            msg: format!(
+                "no Fedora port for arch '{}': fedora serves aarch64, riscv64 \
+                 and x86_64.  ARMv7 was retired in Fedora 37 and 32-bit x86 \
+                 has had no installable tree since 30",
+                board.arch
+            ),
+        }
+    })?;
+    let release = board
+        .fedora_release
+        .as_deref()
+        .unwrap_or(crate::provider::FEDORA_RELEASE_DEFAULT);
+    let image = crate::provider::fedora_image(release, arch).ok_or_else(|| {
+        crate::error::Error::BoardConfigParse {
+            file: board.name.clone(),
+            msg: format!(
+                "no pinned Fedora image for release {release} on {arch}; \
+                 pinned: {}",
+                crate::provider::fedora_pinned()
+            ),
+        }
+    })?;
+    let extra =
+        read_distro_packages(&boards_root.join(&board.name).join("fedora-packages.txt"))?;
+    let mirror = board
+        .fedora_mirror
+        .as_deref()
+        .unwrap_or(FEDORA_MIRROR_DEFAULT);
+
+    // A failed run leaves a half-unpacked tree; wipe everything but the
+    // workspace markers so a retry starts from nothing.
+    runner.run(
+        "find /target -mindepth 1 -maxdepth 1 \
+         ! -name '.arch' ! -name '.stage3' ! -name '.provider' -exec rm -rf {} +",
+    )?;
+
+    // Pinned URL, pinned sha256, cached in the workspace so the second
+    // build is offline.  For riscv64 that checksum is the whole trust
+    // anchor, because Fedora signs the SIG composes with nothing; for
+    // aarch64 and x86_64 the same value is also in a clearsigned
+    // CHECKSUM file next to the image.
+    runner.run(&format!(
+        "set -e\n\
+         mkdir -p /cache/sources\n\
+         img=/cache/sources/{name}\n\
+         if ! echo '{sha}  '\"$img\" | sha256sum -c --status 2>/dev/null; then\n\
+         \x20   wget -O \"$img.tmp\" '{url}'\n\
+         \x20   echo '{sha}  '\"$img.tmp\" | sha256sum -c\n\
+         \x20   mv -f \"$img.tmp\" \"$img\"\n\
+         fi\n\
+         rm -rf /build/fedora-oci\n\
+         mkdir -p /build/fedora-oci\n\
+         tar -xJf \"$img\" -C /build/fedora-oci",
+        name = image.file_name(),
+        sha = image.sha256,
+        url = image.url(mirror),
+    ))?;
+
+    // index.json -> manifest -> config, so the architecture is read out
+    // of the image rather than trusted from the file name, and ->
+    // layers, whose one blob is the rootfs.
+    runner.run(&format!(
+        "python3 - > /build/fedora-layer <<'PY'\n\
+         import json, os, sys\n\
+         d = '/build/fedora-oci'\n\
+         def blob(digest):\n\
+         \x20   return os.path.join(d, 'blobs', *digest.split(':'))\n\
+         idx = json.load(open(os.path.join(d, 'index.json')))\n\
+         man = json.load(open(blob(idx['manifests'][0]['digest'])))\n\
+         cfg = json.load(open(blob(man['config']['digest'])))\n\
+         if cfg.get('architecture') != '{arch}':\n\
+         \x20   sys.exit('image is ' + str(cfg.get('architecture')) + ', not {arch}')\n\
+         if len(man['layers']) != 1:\n\
+         \x20   sys.exit('expected a single-layer image, got ' + str(len(man['layers'])) +\n\
+         \x20            '; merging whiteouts is not implemented')\n\
+         print(blob(man['layers'][0]['digest']))\n\
+         PY"
+    ))?;
+
+    // Same flags as the stage3 unpack: ownership and capability xattrs
+    // are part of the rootfs, since Fedora ships ping and friends with
+    // security.capability instead of a suid bit.
+    // The unpacked OCI layout is 70-odd MB of scratch and the image
+    // itself is already cached under /cache/sources; drop it once the
+    // tree is out rather than leaving it in the build dir.
+    runner.run(
+        "set -e\n\
+         layer=$(cat /build/fedora-layer)\n\
+         tar --overwrite -xpf \"$layer\" \
+           --xattrs-include='*.*' --numeric-owner -C /target\n\
+         rm -rf /build/fedora-oci /build/fedora-layer",
+    )?;
+
+    if !extra.is_empty() {
+        fedora_install(runner, arch, release, &extra)?;
+    }
+
+    report_fedora_missing_init(runner);
+
+    // No /dev cleanup: the layer ships /dev as an empty directory,
+    // which is exactly the mountpoint devtmpfs needs at boot.
+    std::fs::write(done, chrono::Utc::now().to_rfc3339())?;
+    Ok(())
+}
+
+/// Install a board's `fedora-packages.txt` into the unpacked root.
+///
+/// dnf5 is not in ::gentoo, and neither are two of its libraries, so
+/// `defaults/overlay/` carries `sys-apps/dnf5`, `dev-libs/libsolv` and
+/// `dev-libs/librepo`.  Those three are the whole gap: everything else
+/// dnf5 wants (app-arch/rpm, dev-cpp/sdbus-c++, sys-libs/libmodulemd,
+/// app-arch/zchunk, dev-cpp/toml11, dev-libs/libfmt, json-c, glib) is
+/// already in the tree.
+///
+/// No repository configuration is written here, and none is needed.
+/// The container base image ships Fedora's own /etc/yum.repos.d, dnf5
+/// reads its configuration from the installroot rather than the host,
+/// and what is there is already per-arch correct: the riscv64 image
+/// enables `[fedora-riscv]`, the SIG's koji dist-repo, and disables the
+/// primary metalink; the primary images do the opposite.
+///
+/// `--nogpgcheck` is not passed either.  Fedora's own config decides,
+/// the release key is already in the image's rpmdb as a `gpg-pubkey`,
+/// and on aarch64 and x86_64 signatures are therefore checked.
+///
+/// riscv64 is the exception, and it is Fedora's exception rather than
+/// one invented here.  The SIG's packages carry no OpenPGP signature at
+/// all, its repo file says `gpgcheck=0`, and Fedora's own rpm ships
+/// `%_pkgverify_level digest` in /usr/lib/rpm/macros.  ::gentoo's rpm
+/// keeps upstream's stricter `all`, so without matching Fedora's value
+/// the transaction aborts with "does not verify: no signature" for
+/// every package.  So for riscv64, and only riscv64, that same value is
+/// set for the length of the transaction, with the warning above naming
+/// what it costs.  `digest` still checks the header and payload SHA256,
+/// so corruption is still caught; what cannot be checked is authorship,
+/// because Fedora published none.
+///
+/// This is also the step that needs qemu-user binfmt with the F flag,
+/// for the same reason the debian provider does: rpm runs each
+/// package's scriptlets inside the installroot, and glibc's own file
+/// trigger execs ldconfig there.  Unpacking the image needs none of it.
+fn fedora_install(
+    runner: &SandboxRunner,
+    arch: &str,
+    release: &str,
+    packages: &[String],
+) -> Result<()> {
+    if arch == "riscv64" {
+        tracing::warn!(
+            "Fedora's riscv64 repository is unsigned: its own \
+             fedora-riscv.repo sets gpgcheck=0, no \
+             RPM-GPG-KEY-fedora-{release}-riscv64 exists, and the RPMs carry \
+             no OpenPGP signature.  Packages installed here are trusted on \
+             TLS alone.  Its `latest` is also a moving koji symlink, so this \
+             step is not reproducible the way the pinned base image is"
+        );
+    }
+
+    let portage = Portage::new(runner);
+    portage.emerge(&["--noreplace", "sys-apps/dnf5"])?;
+
+    let forcearch = if arch == std::env::consts::ARCH {
+        String::new()
+    } else {
+        format!("--forcearch={arch} ")
+    };
+    // Only for the architecture Fedora publishes unsigned, only while the
+    // transaction runs, and removed on the way out either way: the
+    // sandbox outlives this step and must not keep a relaxed rpm.
+    let pkgverify = if arch == "riscv64" {
+        "echo '%_pkgverify_level digest' > /etc/rpm/macros.crossdev-stages-fedora\n\
+         trap 'rm -f /etc/rpm/macros.crossdev-stages-fedora' EXIT\n"
+    } else {
+        ""
+    };
+
+    // rpm chroots into the installroot to run the scriptlets and they
+    // read /proc, so the kernel filesystems have to be visible where the
+    // chroot looks for them.  Mounts and transaction go in one run: each
+    // runner.run is its own container with its own mount namespace, so
+    // they vanish when it exits and `assemble` never sees a live bind
+    // under /target.
+    runner
+        .run(&format!(
+            "set -e\n\
+             mkdir -p /etc/rpm\n\
+             {pkgverify}\
+             for d in proc sys dev; do mkdir -p /target/$d; \
+                 mount --bind /$d /target/$d; done\n\
+             dnf5 --installroot=/target --releasever={release} {forcearch}\
+                 --assumeyes install {packages}\n",
+            packages = packages.join(" "),
+        ))
+        .inspect_err(|_| {
+            tracing::error!(
+                "dnf5 install failed.  Installing a foreign-arch root runs \
+                 the packages' rpm scriptlets under the target architecture, \
+                 so the host needs qemu-user binfmt registered with the F \
+                 flag, the same requirement the debian provider has.  On \
+                 Debian: apt install qemu-user-binfmt"
+            );
+        })?;
+    Ok(())
+}
+
+/// The container base image is a userland, not an operating system.
+///
+/// Fedora builds it from a KIWI profile that ignores `kernel` and takes
+/// `systemd-standalone-sysusers` instead of `systemd`, so the tree has
+/// systemd's shared libraries and no PID 1; the OCI config's `Cmd` is
+/// `/bin/bash`.  There is a systemd-carrying profile in the same file
+/// (`Container-Base-Generic-Init`) but Fedora does not publish it, and
+/// the artifacts that do boot are Cloud qcow2 and Server raw disk
+/// images, neither of which is a tarball.  So say it here, where it is
+/// cheap to fix, instead of letting the board find out at the panic.
+fn report_fedora_missing_init(runner: &SandboxRunner) {
+    let has_init = runner
+        .run_output("[ -e /target/usr/lib/systemd/systemd ] && echo yes || echo no")
+        .map(|s| s.trim() == "yes")
+        .unwrap_or(false);
+    if has_init {
+        return;
+    }
+    tracing::warn!(
+        "the Fedora container base image carries no init: no \
+         /usr/lib/systemd/systemd, no /sbin/init.  The rootfs is otherwise \
+         complete (bash, coreutils, glibc, rpm, dnf5) but will not boot \
+         until a board hook puts an init in place"
+    );
+}
+
 fn default_checkout(
     runner: &SandboxRunner,
     board: &BoardConfig,
@@ -1110,7 +1376,7 @@ fn default_assemble(
         "rm -f /build/gen/root/.arch /build/gen/root/.stage3 \
          /build/gen/root/.provider /build/gen/root/.stage1 \
          /build/gen/root/.updated /build/gen/root/.debootstrap-done \
-         /build/gen/root/.apk-done",
+         /build/gen/root/.apk-done /build/gen/root/.fedora-done",
     )?;
     // unpack_tarball excludes ./dev to avoid permission errors in rootless containers.
     // Recreate the empty mount-point directories so the kernel can mount devtmpfs,
@@ -1187,7 +1453,9 @@ fn default_assemble(
 
     match board.rootfs_provider {
         RootfsProvider::Gentoo => os_config_openrc(runner, board)?,
-        RootfsProvider::Debian | RootfsProvider::Ubuntu => os_config_deb(runner, board)?,
+        RootfsProvider::Debian | RootfsProvider::Ubuntu | RootfsProvider::Fedora => {
+            os_config_systemd(runner, board)?
+        }
         RootfsProvider::Alpine => os_config_alpine(runner, board)?,
         RootfsProvider::None => {}
     }
@@ -1343,18 +1611,24 @@ fn os_config_alpine(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     )
 }
 
-/// systemd configuration of an assembled Debian or Ubuntu rootfs: the
-/// files the image cannot boot without (fstab, hostname, hosts, a serial
-/// getty, a root password) plus the permissive sshd drop-in the Gentoo
-/// image also ships.  All plain file edits and symlinks, no target-arch
-/// execution.
+/// systemd configuration of an assembled rootfs: the files the image
+/// cannot boot without (fstab, hostname, hosts, a serial getty, a root
+/// password) plus the permissive sshd drop-in the Gentoo image also
+/// ships.  All plain file edits and symlinks, no target-arch execution.
 ///
-/// The init these produce is systemd, which is not a guess: debootstrap's
-/// default variant installs Priority:required plus Priority:important,
-/// and `systemd-sysv` (which owns /sbin/init) is Priority:important on
-/// both Debian trixie and Ubuntu noble, as is the `init` metapackage
-/// whose Pre-Depends puts systemd-sysv first.
-fn os_config_deb(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+/// Shared by the debian, ubuntu and fedora providers, which differ in how
+/// their root is filled and not at all in how systemd is configured: all
+/// keep units under /lib/systemd/system (a symlink into /usr everywhere,
+/// so the path in the enable symlink resolves either way), all read
+/// /etc/hostname, and all ship an sshd_config with an Include of
+/// sshd_config.d.
+///
+/// The init the debootstrap providers produce is systemd, which is not a
+/// guess: debootstrap's default variant installs Priority:required plus
+/// Priority:important, and `systemd-sysv` (which owns /sbin/init) is
+/// Priority:important on both Debian trixie and Ubuntu noble, as is the
+/// `init` metapackage whose Pre-Depends puts systemd-sysv first.
+fn os_config_systemd(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     let deferred = board.second_stage == crate::provider::SecondStage::FirstBoot;
     let root = "/build/gen/root";
 
@@ -1410,6 +1684,7 @@ fn os_config_deb(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
         );
     }
 
+
     if deferred {
         // Stage 1 unpacks only Priority:required, which contains no init on
         // either distribution, so /sbin/init is free and the kernel finds
@@ -1428,9 +1703,9 @@ fn os_config_deb(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
         ))?;
     }
 
-    // Same permissive-ssh policy the Gentoo image ships; Debian's default
-    // (prohibit-password) would lock out the only account.  Harmless when
-    // sshd isn't installed.
+    // Same permissive-ssh policy the Gentoo image ships; the stock config
+    // on all three distros (prohibit-password) would lock out the only
+    // account.  Harmless when sshd isn't installed.
     runner.run(&format!(
         "mkdir -p {root}/etc/ssh/sshd_config.d && \
          printf 'PermitRootLogin yes\nPermitEmptyPasswords yes\n' \
@@ -1617,6 +1892,9 @@ pub fn build(
                     }
                     None if provider == RootfsProvider::Alpine => {
                         alpine_deps(_r, target, board, boards_root)
+                    }
+                    None if provider == RootfsProvider::Fedora => {
+                        fedora_deps(_r, target, board, boards_root)
                     }
                     // No default package installation; override-deps.sh
                     // (already handled by run_step) is the provider.

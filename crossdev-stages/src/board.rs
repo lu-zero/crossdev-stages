@@ -29,6 +29,8 @@ pub struct BoardConfig {
     pub alpine_branch: Option<String>, // ALPINE_BRANCH; alpine provider, None → "v3.24"
     pub alpine_mirror: Option<String>, // ALPINE_MIRROR; alpine provider, None → dl-cdn
     pub alpine_repos: Option<String>,  // ALPINE_REPOS; alpine provider, None → "main community"
+    pub fedora_release: Option<String>, // FEDORA_RELEASE; fedora provider, None → "44"
+    pub fedora_mirror: Option<String>, // FEDORA_MIRROR; fedora provider, None → dl.fedoraproject.org/pub
 
     // OpenSBI
     pub opensbi_repo: Option<String>,
@@ -296,7 +298,8 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         Some(v) => RootfsProvider::parse(v).ok_or_else(|| Error::BoardConfigParse {
             file: path.to_string(),
             msg: format!(
-                "unknown ROOTFS_PROVIDER '{v}' (valid: gentoo, debian, ubuntu, alpine, none)"
+                "unknown ROOTFS_PROVIDER '{v}' \
+                 (valid: gentoo, debian, ubuntu, alpine, fedora, none)"
             ),
         })?,
         None => RootfsProvider::default(),
@@ -338,6 +341,8 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         alpine_branch: kv.get("ALPINE_BRANCH").cloned(),
         alpine_mirror: kv.get("ALPINE_MIRROR").cloned(),
         alpine_repos: kv.get("ALPINE_REPOS").cloned(),
+        fedora_release: kv.get("FEDORA_RELEASE").cloned(),
+        fedora_mirror: kv.get("FEDORA_MIRROR").cloned(),
 
         opensbi_repo: kv.get("OPENSBI_REPO").cloned(),
         opensbi_tag: kv.get("OPENSBI_TAG").cloned(),

@@ -30,6 +30,20 @@ pub enum RootfsProvider {
     /// packages' shell scriptlets from ever being exec'd.  No qemu, no
     /// binfmt.  `assemble` writes OpenRC config.
     Alpine,
+    /// Fedora rootfs unpacked from a published container base image
+    /// during the `deps` step, with `fedora-packages.txt` installed on
+    /// top by dnf5; `assemble` writes systemd config.
+    ///
+    /// The only provider whose emulation cost is conditional.  Unpacking
+    /// the image executes nothing, so a board that asks for no packages
+    /// builds on a host with no binfmt at all.  Installing does need
+    /// qemu-user binfmt, like the debian provider: rpm runs scriptlets
+    /// inside the installroot.
+    ///
+    /// dnf5 is not in ::gentoo; `defaults/overlay/` carries it along
+    /// with dev-libs/libsolv and dev-libs/librepo, the rest of the
+    /// closure being in the tree already.
+    Fedora,
     /// Nothing is seeded, installed, or configured; board hooks
     /// (`override-deps.sh`, `post-assemble.sh`, ...) fill the rootfs.
     None,
@@ -43,6 +57,7 @@ impl RootfsProvider {
             "debian" => Some(Self::Debian),
             "ubuntu" => Some(Self::Ubuntu),
             "alpine" => Some(Self::Alpine),
+            "fedora" => Some(Self::Fedora),
             "none" => Some(Self::None),
             _ => Option::None,
         }
@@ -54,7 +69,7 @@ impl RootfsProvider {
     pub fn needs_cross_toolchain(&self, steps: &[&str]) -> bool {
         match self {
             Self::Gentoo => true,
-            Self::Debian | Self::Ubuntu | Self::Alpine | Self::None => steps
+            Self::Debian | Self::Ubuntu | Self::Alpine | Self::Fedora | Self::None => steps
                 .iter()
                 .any(|s| matches!(*s, "kernel" | "bootloader")),
         }
@@ -75,6 +90,7 @@ impl RootfsProvider {
             Self::Debian => "debian",
             Self::Ubuntu => "ubuntu",
             Self::Alpine => "alpine",
+            Self::Fedora => "fedora",
             Self::None => "none",
         }
     }
@@ -84,7 +100,7 @@ impl RootfsProvider {
         match self {
             Self::Debian => Some(Debootstrap::DEBIAN),
             Self::Ubuntu => Some(Debootstrap::UBUNTU),
-            Self::Gentoo | Self::Alpine | Self::None => None,
+            Self::Gentoo | Self::Alpine | Self::Fedora | Self::None => None,
         }
     }
 }
@@ -253,6 +269,125 @@ fn parse_alpine_branch(branch: &str) -> Option<(u32, u32)> {
 // key there was taken from `alpine-keys-2.6-r0.apk` and byte-compared
 // against the aports `v3.24.1` tag.  `--allow-untrusted` is never passed.
 
+/// Fedora's name for a Gentoo-style arch string.
+///
+/// Three architectures, and only three.  Fedora retired ARMv7 in 37
+/// (36 is the last release with an `armhfp` tree, EOL since 2023) and
+/// has published no 32-bit x86 tree since 25; what is still built i686
+/// is multilib *libraries* only, with no i686 `bash`, `coreutils`,
+/// `rpm` or `filesystem`, so there is nothing to unpack even before
+/// i586's missing SSE2 comes up.
+///
+/// riscv64 maps, but it is not a Fedora release architecture: see
+/// `FedoraImage::url`.
+pub fn fedora_arch(arch: &str) -> Option<&'static str> {
+    match arch {
+        "riscv64" => Some("riscv64"),
+        "aarch64" => Some("aarch64"),
+        "x86_64" => Some("x86_64"),
+        _ => None,
+    }
+}
+
+/// One pinned Fedora container base image.
+///
+/// The compose id is part of the file name and moves independently of
+/// the release, so both are pinned, and the sha256 with them.  Adding a
+/// release means adding rows here, deliberately: a board cannot ask for
+/// an image nobody checked.
+pub struct FedoraImage {
+    pub release: &'static str,
+    pub arch: &'static str,
+    /// Compose id in the file name.  `1.7` on the primary release
+    /// composes, a date stamp on the RISC-V SIG's.
+    pub compose: &'static str,
+    pub sha256: &'static str,
+}
+
+/// Release pinned when a board does not say.
+pub const FEDORA_RELEASE_DEFAULT: &str = "44";
+
+/// The images this tree has checksums for.
+///
+/// aarch64 and x86_64 come from the primary release compose and their
+/// sha256 is also published in a clearsigned `Fedora-Container-<rel>-
+/// <compose>-<arch>-CHECKSUM`, signed by the Fedora <rel> release key.
+/// riscv64's comes from a plain `.sha256` sidecar, because the RISC-V
+/// SIG's composes are not signed by anything; that is the whole reason
+/// these values are committed here rather than read from the mirror.
+pub const FEDORA_IMAGES: &[FedoraImage] = &[
+    FedoraImage {
+        release: "44",
+        arch: "aarch64",
+        compose: "1.7",
+        sha256: "eca19542a48a8e39b84e869713a1fa2408cbcc578de26c25ae72e3334ef968c1",
+    },
+    FedoraImage {
+        release: "44",
+        arch: "riscv64",
+        compose: "20260604.0",
+        sha256: "198c75fe6f58fea77e539fd29a3103407c0923833c7192c5e962a008c0595f31",
+    },
+    FedoraImage {
+        release: "44",
+        arch: "x86_64",
+        compose: "1.7",
+        sha256: "75200f5752a74a21a616ca9a75e25beb594e2e117a0195c54f87c0b3e3974d1b",
+    },
+];
+
+/// The pinned image for a release and Fedora arch, if there is one.
+pub fn fedora_image(release: &str, arch: &str) -> Option<&'static FedoraImage> {
+    FEDORA_IMAGES
+        .iter()
+        .find(|i| i.release == release && i.arch == arch)
+}
+
+/// `"44 (aarch64 riscv64 x86_64)"`, for the error when a board asks for
+/// something not in the table.
+pub fn fedora_pinned() -> String {
+    let mut releases: Vec<&str> = FEDORA_IMAGES.iter().map(|i| i.release).collect();
+    releases.dedup();
+    releases
+        .iter()
+        .map(|r| {
+            let arches: Vec<&str> = FEDORA_IMAGES
+                .iter()
+                .filter(|i| i.release == *r)
+                .map(|i| i.arch)
+                .collect();
+            format!("{r} ({})", arches.join(" "))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+impl FedoraImage {
+    pub fn file_name(&self) -> String {
+        format!(
+            "Fedora-Container-Base-Generic-{}-{}.{}.oci.tar.xz",
+            self.release, self.compose, self.arch
+        )
+    }
+
+    /// Two trees, because riscv64 is not a Fedora architecture.  It has
+    /// no `releases/<rel>/Container/riscv64/` and nothing under
+    /// `fedora-secondary` either (that is ppc64le and s390x); the
+    /// RISC-V SIG composes separately and publishes under `/alt`.
+    pub fn url(&self, mirror: &str) -> String {
+        let mirror = mirror.trim_end_matches('/');
+        let dir = if self.arch == "riscv64" {
+            format!("alt/risc-v/release/{}/Container/riscv64/images", self.release)
+        } else {
+            format!(
+                "fedora/linux/releases/{}/Container/{}/images",
+                self.release, self.arch
+            )
+        };
+        format!("{mirror}/{dir}/{}", self.file_name())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Debootstrap, RootfsProvider, SecondStage};
@@ -263,10 +398,9 @@ mod tests {
         assert_eq!(RootfsProvider::parse("debian"), Some(RootfsProvider::Debian));
         assert_eq!(RootfsProvider::parse("ubuntu"), Some(RootfsProvider::Ubuntu));
         assert_eq!(RootfsProvider::parse("alpine"), Some(RootfsProvider::Alpine));
+        assert_eq!(RootfsProvider::parse("fedora"), Some(RootfsProvider::Fedora));
         assert_eq!(RootfsProvider::parse("none"), Some(RootfsProvider::None));
-        // No fedora provider: ::gentoo carries no dnf, and dnf's scriptlets
-        // would need emulation anyway.  See docs/design.md.
-        assert_eq!(RootfsProvider::parse("fedora"), Option::None);
+        assert_eq!(RootfsProvider::parse("suse"), Option::None);
     }
 
     #[test]
@@ -281,6 +415,7 @@ mod tests {
             RootfsProvider::Debian,
             RootfsProvider::Ubuntu,
             RootfsProvider::Alpine,
+            RootfsProvider::Fedora,
             RootfsProvider::None,
         ] {
             assert_eq!(RootfsProvider::parse(p.name()), Some(p));
@@ -380,5 +515,50 @@ mod tests {
         assert!(super::alpine_branch_serves("latest-stable", "riscv64"));
         // Every other arch predates every branch this can name.
         assert!(super::alpine_branch_serves("v3.9", "aarch64"));
+    }
+
+    #[test]
+    fn fedora_arch_mapping() {
+        assert_eq!(super::fedora_arch("riscv64"), Some("riscv64"));
+        assert_eq!(super::fedora_arch("aarch64"), Some("aarch64"));
+        assert_eq!(super::fedora_arch("x86_64"), Some("x86_64"));
+        // Retired in Fedora 37; 36 is the last release with an armhfp tree.
+        assert_eq!(super::fedora_arch("armv7a"), Option::None);
+        // i686 is multilib libraries only: no bash, no coreutils, no rpm.
+        assert_eq!(super::fedora_arch("i686"), Option::None);
+        assert_eq!(super::fedora_arch("i586"), Option::None);
+    }
+
+    #[test]
+    fn every_pinned_image_has_a_sha256() {
+        for i in super::FEDORA_IMAGES {
+            assert_eq!(i.sha256.len(), 64, "{} {}", i.release, i.arch);
+            assert!(super::fedora_arch(i.arch).is_some());
+        }
+    }
+
+    #[test]
+    fn default_release_is_pinned_for_every_arch() {
+        for arch in ["aarch64", "riscv64", "x86_64"] {
+            assert!(
+                super::fedora_image(super::FEDORA_RELEASE_DEFAULT, arch).is_some(),
+                "{arch}"
+            );
+        }
+        assert!(super::fedora_image("40", "aarch64").is_none());
+    }
+
+    #[test]
+    fn riscv64_comes_from_the_alt_tree() {
+        let mirror = "https://dl.fedoraproject.org/pub";
+        let rv = super::fedora_image("44", "riscv64").unwrap();
+        let aa = super::fedora_image("44", "aarch64").unwrap();
+        // riscv64 is not a Fedora release architecture, so it is not
+        // under releases/ and not under fedora-secondary/ either.
+        assert!(rv.url(mirror).contains("/alt/risc-v/release/44/"));
+        assert!(aa.url(mirror).contains("/fedora/linux/releases/44/"));
+        assert!(rv.url(mirror).ends_with(&rv.file_name()));
+        // A trailing slash on FEDORA_MIRROR must not double up.
+        assert_eq!(rv.url(mirror), rv.url("https://dl.fedoraproject.org/pub/"));
     }
 }

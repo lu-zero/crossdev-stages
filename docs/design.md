@@ -136,6 +136,10 @@ ubuntu   the same, with ubuntu-packages.txt, app-crypt/ubuntu-keyring,
 alpine   deps runs a static apk in the sandbox; board extras come from
          alpine-packages.txt; assemble writes OpenRC config.  Needs no
          emulation at all (see below).
+fedora   deps unpacks a pinned container base image, then installs
+         fedora-packages.txt with dnf5 from the crossdev-stages overlay;
+         assemble writes the same systemd config as debian.  Seeding
+         needs no emulation; installing does.
 none     nothing seeded, installed, or configured; board hook scripts
          (override-deps.sh, post-assemble.sh, ...) own the rootfs.
 ```
@@ -189,6 +193,12 @@ ubuntu   target binaries in a chroot, and there is no equivalent of
          --no-scripts, because that stage *is* the configuration.
          ROOTFS_SECOND_STAGE="first-boot" moves that stage onto the
          board rather than removing it; see `SecondStage` above.
+fedora   split.  Unpacking the base image executes nothing, so a board
+         with an empty fedora-packages.txt builds on a host with no
+         binfmt at all.  Installing packages does need it: rpm runs each
+         scriptlet inside the installroot and glibc's own file trigger
+         execs ldconfig there.  Turning that off (tsflags=noscripts)
+         also kills the file triggers, so it is not offered.
 ```
 
 `--no-scripts` is not free.  Three packages in the alpine-base closure
@@ -216,30 +226,94 @@ built and against which USE flags, and the result is cached as a binpkg
 like every other host package instead of being a blob nothing accounts
 for.
 
-### Why there is no fedora provider
+### The fedora provider, and what Fedora actually publishes
 
-`dnf --installroot=/target --forcearch=<arch> --releasever=<n> install
-@core` is the right shape and the flag is long since merged, but two
-things stop it here, and the first is decisive:
+Seed and install are separate problems here, and Fedora answers them
+very differently.
 
-- ::gentoo carries no dnf.  Checked across every category of the tree:
-  no `dnf`, no `dnf5`, no `yum`, no `libdnf`, no `libsolv`.  What is
-  there is `app-arch/rpm` and `app-arch/createrepo_c`, which give you an
-  unpacker and an indexer, not a dependency resolver.  The sandbox is a
-  Gentoo stage3, so there is nothing to emerge and nothing to run.
-- Even with dnf, rpm scriptlets execute during the transaction, and
-  `--forcearch`'s own documented prerequisite is qemu-user-static plus a
-  binfmt registration.  Fedora would land in the debian bucket above,
-  not the alpine one, so it would not be the emulation-free provider
-  that motivated adding a third.
+**Seed.**  Fedora composes one OCI container base image per
+architecture per release, with a published checksum, so `deps` is a
+download, a sha256 and two `tar` calls.  The archive is an OCI image
+layout rather than a flat rootfs tarball: `index.json` plus
+`blobs/sha256/*`, with the tree in the single layer blob.  URL, compose
+id and sha256 for each (release, arch) are pinned in `provider.rs`;
+a release that is not in that table is refused rather than guessed at.
 
-A provider that needs a package manager the sandbox cannot install is a
-stub, so the enum does not carry the variant.  Reviving it needs a dnf
-the sandbox can build, whether from ::gentoo or from an overlay ebuild
-the way `app-arch/apk-tools` is, and it would still be documented as
-needing binfmt.  That is a far larger job than apk-tools was: apk-tools
-is one meson project over openssl and zlib, while dnf5 needs libsolv,
-libdnf5 and librepo written first, none of which ::gentoo has.
+**What the seed is not** is an operating system.  Fedora builds the
+container base from a KIWI profile that ignores `kernel` and installs
+`systemd-standalone-sysusers` instead of `systemd`, so the tree has
+bash, coreutils, glibc, rpm and dnf5 (147 packages) and no PID 1.  The
+profile that does carry systemd, `Container-Base-Generic-Init`, is not
+published; the artifacts that boot are Cloud qcow2 and Server raw disk
+images, neither of which is a tarball, and extracting one would mean a
+1.3 GB download and ~10 GB of scratch to reach a root partition 2.6 GB
+in.  So `deps` says plainly when the root has no init, and a board that
+wants one lists `systemd` in fedora-packages.txt.
+
+**Install.**  ::gentoo has no dnf.  Verified against the tree in the
+sandbox, not the web index: no libsolv, no librepo, no libcomps, no
+libdnf, no dnf, in any category.  It is three packages short, not a
+dozen: `dev-libs/libsolv`, `dev-libs/librepo` and `sys-apps/dnf5`,
+vendored into `defaults/overlay/` from ::guru at b23748630f89, which
+carries and maintains all three.  Their Manifests were regenerated
+locally and match ::guru's byte for byte, so the tarball hashes have two
+independent sources.  dnf5 dropped libcomps, and everything else it
+needs (app-arch/rpm, dev-cpp/sdbus-c++, sys-libs/libmodulemd,
+app-arch/zchunk, dev-cpp/toml11, dev-libs/libfmt, json-c, glib) is
+already in ::gentoo.  42 packages get pulled in the first time, once
+per sandbox.
+
+No repository configuration is written, because the image already
+carries Fedora's own and it is per-arch correct: the riscv64 image
+enables `[fedora-riscv]` and disables the primary metalink, the primary
+images do the opposite.  `--nogpgcheck` is never passed; the release
+key is in the image's rpmdb as a `gpg-pubkey`, so aarch64 and x86_64
+signatures are checked by Fedora's own rules.
+
+### riscv64 on Fedora, honestly
+
+riscv64 is not a Fedora architecture.  It is not in
+`releases/<rel>/Everything/`, which is aarch64 and x86_64, and not in
+`fedora-secondary/`, which is ppc64le and s390x.  The RISC-V SIG
+composes separately and publishes images under `/pub/alt/risc-v/`
+(the provider knows the different path) and packages from its own koji
+at `riscv-koji.fedoraproject.org`.  Release numbering keeps up (44
+today, same as primary) and coverage is effectively complete.
+
+Two things about it are worse than primary, and both are Fedora's, not
+this code's:
+
+- **Unsigned.**  Fedora's own `fedora-riscv.repo` ships `gpgcheck=0`.
+  No `RPM-GPG-KEY-fedora-<rel>-riscv64` exists (`fedora-repos`'s
+  archmap lists x86_64, aarch64, ppc64le and s390x for the primary
+  key, and the per-arch names are symlinks to it).  Reading the
+  signature header of a riscv64 RPM shows no RSA tag, no DSA tag and no
+  PGP tag, against an aarch64 package of the same NVR that has them.
+  The dist-repo's own `repo.json` records
+  `allow_missing_signatures: true`.  `deps` says this out loud when it
+  installs.
+- **Unpinnable.**  The repo is
+  `repos-dist/f<rel>/latest/<arch>`, and `latest` is a symlink koji
+  moves; the numbered repos behind it are garbage-collected.  The base
+  image is a fixed URL with a fixed checksum, so the *seed* is
+  reproducible; anything installed on top of it is not.
+
+The images have a matching gap: primary composes publish a clearsigned
+`Fedora-Container-<rel>-<compose>-<arch>-CHECKSUM`, the SIG's publish a
+bare `.sha256` sidecar.  Which is why the checksums are committed in
+`provider.rs` rather than fetched: for riscv64 that value is the entire
+trust anchor.
+
+### The other two architectures
+
+armv7 and i586 have no Fedora at all, and `fedora_arch()` refuses them
+rather than 404ing partway through.  ARMv7 was retired in Fedora 37;
+36 is the last release with an `armhfp` tree and it went EOL in 2023.
+32-bit x86 last had a full tree in 30 (secondary) and 25 (primary).
+What is still built i686 today is multilib libraries: `glibc`,
+`systemd`, `util-linux` and `rpm-libs` have i686 builds, `bash`,
+`coreutils`, `rpm` and `filesystem` do not, so there is no first
+transaction to run, never mind i586's missing SSE2.
 
 ---
 
