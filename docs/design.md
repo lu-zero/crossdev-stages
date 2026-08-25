@@ -51,8 +51,8 @@ Everything lives under `~/.cache/crossdev-stages/`:
   builds/      Image build working directories, nested builds/<board>/<timestamp>/.
   sources/     Bare-repo git source cache (kernel, u-boot, opensbi, …).
   logs/        Portage and build logs, bind-mounted from sandbox containers.
-  store/       Content-addressed crossdev prefix store (chost + CFLAGS hash).
-  binpkgs/     Shared binary-package cache (PKGDIR), keyed the same way.
+  store/       Content-addressed crossdev prefix store (chost + CFLAGS hash + gcc).
+  binpkgs/     Shared binary-package cache (PKGDIR), keyed by chost + CFLAGS hash.
 ```
 
 The project directory (where `boards/` lives) is separate and passed via
