@@ -89,6 +89,20 @@ pub enum RootfsProvider {
     Buildroot,
     /// Nothing is seeded, installed, or configured; board hooks
     /// (`override-deps.sh`, `post-assemble.sh`, ...) fill the rootfs.
+    /// OpenWrt rootfs assembled by the official ImageBuilder during the
+    /// `deps` step; `assemble` writes procd config.  musl + busybox +
+    /// procd, so neither the OpenRC nor the systemd path applies.
+    ///
+    /// ImageBuilder, not a source build from git.openwrt.org.  The source
+    /// route builds its own gcc and musl before it builds anything else,
+    /// which is the crossdev store this project exists to produce, and
+    /// spends hours arriving at binaries OpenWrt already publishes.
+    /// ImageBuilder wants no toolchain from us at all: it is one pinned,
+    /// checksummed tarball of prebuilt packages that `make image` puts
+    /// together, and fetching and unpacking a pinned artefact is what the
+    /// rest of this pipeline already does.  It is also OpenWrt's own
+    /// answer to "give me an image with these packages".
+    OpenWrt,
     None,
 }
 
@@ -102,6 +116,7 @@ impl RootfsProvider {
             "alpine" => Some(Self::Alpine),
             "fedora" => Some(Self::Fedora),
             "buildroot" => Some(Self::Buildroot),
+            "openwrt" => Some(Self::OpenWrt),
             "none" => Some(Self::None),
             _ => Option::None,
         }
@@ -118,9 +133,8 @@ impl RootfsProvider {
             | Self::Alpine
             | Self::Fedora
             | Self::Buildroot
-            | Self::None => steps
-                .iter()
-                .any(|s| matches!(*s, "kernel" | "bootloader")),
+            | Self::OpenWrt
+            | Self::None => steps.iter().any(|s| matches!(*s, "kernel" | "bootloader")),
         }
     }
 
@@ -141,6 +155,7 @@ impl RootfsProvider {
             Self::Alpine => "alpine",
             Self::Fedora => "fedora",
             Self::Buildroot => "buildroot",
+            Self::OpenWrt => "openwrt",
             Self::None => "none",
         }
     }
@@ -150,7 +165,12 @@ impl RootfsProvider {
         match self {
             Self::Debian => Some(Debootstrap::DEBIAN),
             Self::Ubuntu => Some(Debootstrap::UBUNTU),
-            Self::Gentoo | Self::Alpine | Self::Fedora | Self::Buildroot | Self::None => None,
+            Self::Gentoo
+            | Self::Alpine
+            | Self::Fedora
+            | Self::Buildroot
+            | Self::OpenWrt
+            | Self::None => None,
         }
     }
 }
@@ -427,7 +447,10 @@ impl FedoraImage {
     pub fn url(&self, mirror: &str) -> String {
         let mirror = mirror.trim_end_matches('/');
         let dir = if self.arch == "riscv64" {
-            format!("alt/risc-v/release/{}/Container/riscv64/images", self.release)
+            format!(
+                "alt/risc-v/release/{}/Container/riscv64/images",
+                self.release
+            )
         } else {
             format!(
                 "fedora/linux/releases/{}/Container/{}/images",
@@ -444,14 +467,33 @@ mod tests {
 
     #[test]
     fn parse_known_values() {
-        assert_eq!(RootfsProvider::parse("gentoo"), Some(RootfsProvider::Gentoo));
-        assert_eq!(RootfsProvider::parse("debian"), Some(RootfsProvider::Debian));
-        assert_eq!(RootfsProvider::parse("ubuntu"), Some(RootfsProvider::Ubuntu));
-        assert_eq!(RootfsProvider::parse("alpine"), Some(RootfsProvider::Alpine));
-        assert_eq!(RootfsProvider::parse("fedora"), Some(RootfsProvider::Fedora));
+        assert_eq!(
+            RootfsProvider::parse("gentoo"),
+            Some(RootfsProvider::Gentoo)
+        );
+        assert_eq!(
+            RootfsProvider::parse("debian"),
+            Some(RootfsProvider::Debian)
+        );
+        assert_eq!(
+            RootfsProvider::parse("ubuntu"),
+            Some(RootfsProvider::Ubuntu)
+        );
+        assert_eq!(
+            RootfsProvider::parse("alpine"),
+            Some(RootfsProvider::Alpine)
+        );
+        assert_eq!(
+            RootfsProvider::parse("fedora"),
+            Some(RootfsProvider::Fedora)
+        );
         assert_eq!(
             RootfsProvider::parse("buildroot"),
             Some(RootfsProvider::Buildroot)
+        );
+        assert_eq!(
+            RootfsProvider::parse("openwrt"),
+            Some(RootfsProvider::OpenWrt)
         );
         assert_eq!(RootfsProvider::parse("none"), Some(RootfsProvider::None));
         assert_eq!(RootfsProvider::parse("suse"), Option::None);
@@ -471,6 +513,7 @@ mod tests {
             RootfsProvider::Alpine,
             RootfsProvider::Fedora,
             RootfsProvider::Buildroot,
+            RootfsProvider::OpenWrt,
             RootfsProvider::None,
         ] {
             assert_eq!(RootfsProvider::parse(p.name()), Some(p));
@@ -528,7 +571,10 @@ mod tests {
     #[test]
     fn ubuntu_ports_everything_but_x86() {
         let u = Debootstrap::UBUNTU;
-        assert_eq!(u.default_mirror("amd64"), "http://archive.ubuntu.com/ubuntu");
+        assert_eq!(
+            u.default_mirror("amd64"),
+            "http://archive.ubuntu.com/ubuntu"
+        );
         assert_eq!(u.default_mirror("i386"), "http://archive.ubuntu.com/ubuntu");
         assert_eq!(
             u.default_mirror("arm64"),
@@ -632,5 +678,12 @@ mod tests {
         assert!(rv.url(mirror).ends_with(&rv.file_name()));
         // A trailing slash on FEDORA_MIRROR must not double up.
         assert_eq!(rv.url(mirror), rv.url("https://dl.fedoraproject.org/pub/"));
+    }
+
+    #[test]
+    fn openwrt_needs_toolchain_only_for_compiled_steps() {
+        let p = RootfsProvider::OpenWrt;
+        assert!(!p.needs_cross_toolchain(&["deps", "assemble", "pack"]));
+        assert!(p.needs_cross_toolchain(&["deps", "kernel", "assemble", "pack"]));
     }
 }

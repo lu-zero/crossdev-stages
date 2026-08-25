@@ -1,0 +1,9 @@
+# Extra packages for `make image PACKAGES=`, one per line.  A leading `-`
+# drops one the profile would otherwise install.  Everything here comes
+# from the pinned release's feeds, signature-checked by apk.
+#
+# No kmod-* here on purpose: OpenWrt's kernel modules are built for
+# OpenWrt's own kernel version, and this board runs the kernel the
+# `kernel` step builds.
+luci-ssl
+htop

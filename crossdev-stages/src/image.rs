@@ -229,8 +229,22 @@ impl DiskId {
         format!(
             "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-\
              {:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7], b[8], b[9], b[10], b[11], b[12], b[13],
-            b[14], b[15],
+            b[0],
+            b[1],
+            b[2],
+            b[3],
+            b[4],
+            b[5],
+            b[6],
+            b[7],
+            b[8],
+            b[9],
+            b[10],
+            b[11],
+            b[12],
+            b[13],
+            b[14],
+            b[15],
         )
     }
 
@@ -573,9 +587,7 @@ fn debootstrap_deps(
             tracing::info!("{provider} rootfs already provisioned, skipping debootstrap.");
             return Ok(());
         }
-        tracing::info!(
-            "Target was bootstrapped for a different ROOTFS_SECOND_STAGE, redoing it."
-        );
+        tracing::info!("Target was bootstrapped for a different ROOTFS_SECOND_STAGE, redoing it.");
     }
 
     let arch = crate::provider::dpkg_arch(&board.arch)
@@ -906,8 +918,7 @@ fn fedora_deps(
             ),
         }
     })?;
-    let extra =
-        read_distro_packages(&boards_root.join(&board.name).join("fedora-packages.txt"))?;
+    let extra = read_distro_packages(&boards_root.join(&board.name).join("fedora-packages.txt"))?;
     let mirror = board
         .fedora_mirror
         .as_deref()
@@ -1535,7 +1546,7 @@ fn default_assemble(
          /build/gen/root/.provider /build/gen/root/.stage1 \
          /build/gen/root/.updated /build/gen/root/.debootstrap-done \
          /build/gen/root/.apk-done /build/gen/root/.fedora-done \
-         /build/gen/root/.buildroot-done",
+         /build/gen/root/.buildroot-done /build/gen/root/.openwrt-done",
     )?;
     // unpack_tarball excludes ./dev to avoid permission errors in rootless containers.
     // Recreate the empty mount-point directories so the kernel can mount devtmpfs,
@@ -1619,6 +1630,7 @@ fn default_assemble(
         }
         RootfsProvider::Alpine => os_config_alpine(runner, board)?,
         RootfsProvider::Buildroot => os_config_buildroot(board),
+        RootfsProvider::OpenWrt => os_config_openwrt(runner, board)?,
         RootfsProvider::None => {}
     }
 
@@ -1894,7 +1906,6 @@ fn os_config_systemd(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> 
         );
     }
 
-
     if deferred {
         // Stage 1 unpacks only Priority:required, which contains no init on
         // either distribution, so /sbin/init is free and the kernel finds
@@ -1921,6 +1932,65 @@ fn os_config_systemd(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> 
          printf 'PermitRootLogin yes\nPermitEmptyPasswords yes\n' \
          > {root}/etc/ssh/sshd_config.d/90-crossdev-stages.conf",
     ))
+}
+
+/// procd configuration of an assembled OpenWrt rootfs: hostname and the
+/// console login.  Deliberately short, because OpenWrt ships the rest.
+///
+/// Not written here, and why:
+///   * root password.  OpenWrt's own /etc/shadow already has `root:::`,
+///     the same empty password the other two providers arrange for.
+///   * network.  /etc/board.d/99-default_network puts `lan` on eth0 when
+///     no board.d script claims the machine, and /bin/config_generate
+///     turns that into /etc/config/network on first boot.  A board that
+///     needs anything else says so from post-assemble.sh.
+///   * sshd.  OpenWrt's ssh is dropbear, configured through UCI, and its
+///     shipped /etc/config/dropbear already permits root.
+fn os_config_openwrt(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+    // /bin/config_generate writes /etc/config/system on first boot, but
+    // only while the file is missing -- shipping one from here would take
+    // OpenWrt's timezone and ntp defaults down with it.  A uci-defaults
+    // script runs afterwards (preinit generates, /etc/init.d/boot applies),
+    // sets the one value and deletes itself.
+    runner.run(&format!(
+        "mkdir -p /build/gen/root/etc/uci-defaults && \
+         printf 'uci -q set \"system.@system[0].hostname={}\"\nexit 0\n' \
+           > /build/gen/root/etc/uci-defaults/99-crossdev-hostname",
+        board.hostname
+    ))?;
+
+    // Every login line in the shipped inittab belongs to the OpenWrt
+    // target we borrowed the userspace from, not to this board: the
+    // sifiveu images say ttySIF0, and base-files on its own says
+    // `::askconsole:`.  Drop them all and state the board's own port.
+    // Virtual terminals stay, for the same reason the OpenRC path keeps
+    // them: tty1 is the display console where there is a display and
+    // costs nothing where there is not.  Deleting first is what keeps a
+    // second assemble from stacking a second login on one port.
+    //
+    // BOOT_SERIAL_BAUD has nothing here to read it.  OpenWrt builds
+    // busybox without getty and login.sh never touches the line speed;
+    // console=<tty>,<baud> on the kernel command line sets it, which is
+    // what BOOT_CONSOLE already writes.
+    let login = match &board.serial_tty {
+        Some(tty) => format!("{tty}::askfirst:/usr/libexec/login.sh"),
+        // No named port: let busybox init follow the kernel's console.
+        None => "::askconsole:/usr/libexec/login.sh".to_string(),
+    };
+    runner.run(&format!(
+        "sed -i -E '/askfirst|askconsole/{{/^tty[0-9]+::/!d}}' \
+           /build/gen/root/etc/inittab && \
+         echo '{login}' >> /build/gen/root/etc/inittab"
+    ))?;
+
+    if !board.services.is_empty() {
+        tracing::warn!(
+            "BOOT_SERVICES is OpenRC-only and ignored for the openwrt \
+             provider; procd services are enabled with \
+             '/etc/init.d/<name> enable' from post-assemble.sh"
+        );
+    }
+    Ok(())
 }
 
 fn default_pack(
@@ -2038,8 +2108,11 @@ pub fn build(
         // load, the ABI check at the end of assemble says so against the image.
         let _ = crate::binpkg_meta::report(
             &board_binpkgs_dir(ws, board)?,
-            &ws.store_dir()
-                .join(crate::workspace::store_key(&board.chost(), &hash, &gcc_spec)),
+            &ws.store_dir().join(crate::workspace::store_key(
+                &board.chost(),
+                &hash,
+                &gcc_spec,
+            )),
         );
     }
 
@@ -2109,6 +2182,9 @@ pub fn build(
                     None if provider == RootfsProvider::Buildroot => {
                         buildroot_deps(_r, target, board)
                     }
+                    None if provider == RootfsProvider::OpenWrt => {
+                        openwrt_deps(_r, target, board, boards_root)
+                    }
                     // No default package installation; override-deps.sh
                     // (already handled by run_step) is the provider.
                     None => Ok(()),
@@ -2143,8 +2219,8 @@ pub fn build(
                 boards_root,
                 board,
                 |r| {
-                    let kernel_built = steps_to_run.contains(&"kernel")
-                        || bld.dir.join("linux").is_dir();
+                    let kernel_built =
+                        steps_to_run.contains(&"kernel") || bld.dir.join("linux").is_dir();
                     default_assemble(r, board, &bld, ws, kernel_built)
                 },
             ),
@@ -2348,11 +2424,201 @@ fn format_duration(d: std::time::Duration) -> String {
     }
 }
 
+/// The ImageBuilder run, as one shell script.  Placeholders instead of
+/// `format!` so the shell's own braces stay readable (same trick as
+/// `abi::SCAN`).
+const OPENWRT_IMAGEBUILDER: &str = r#"
+set -e
+mkdir -p /cache/openwrt /build/openwrt
+cd /cache/openwrt
+
+# The release directory never changes, but only the sums file says which
+# compression this release used (.tar.zst since 25.12, .tar.xz before),
+# so read the file name out of it rather than guessing one.
+wget -nv -O sums.%KEY% %URL%/sha256sums
+line=$(grep -E '^[0-9a-f]{64} [*]openwrt-imagebuilder-.*[.]Linux-x86_64[.]tar[.]' sums.%KEY% | head -n 1)
+[ -n "$line" ] || { echo "no ImageBuilder listed in %URL%/sha256sums" >&2; exit 1; }
+ib=$(echo "$line" | sed 's/^[0-9a-f]* [*]//')
+%PIN%
+if [ ! -f "$ib" ]; then
+    wget -nv -O "$ib.part" "%URL%/$ib"
+    mv -f "$ib.part" "$ib"
+fi
+printf '%s\n' "$line" > "$ib.sha256"
+sha256sum -c "$ib.sha256" || {
+    rm -f "$ib"
+    echo "ImageBuilder checksum mismatch; the cached copy was dropped" >&2
+    exit 1
+}
+
+rm -rf /build/openwrt/ib
+mkdir -p /build/openwrt/ib
+tar -xf "$ib" -C /build/openwrt/ib --strip-components=1
+cd /build/openwrt/ib
+mkdir -p tmp
+
+# Feed URLs are baked in absolute.  apk (25.12 and later) and opkg (24.10
+# and earlier) each keep them in a file of their own.
+for f in repositories repositories.conf; do
+    if [ -f "$f" ]; then sed -i 's|https://downloads.openwrt.org|%MIRROR%|g' "$f"; fi
+done
+
+# ImageBuilder builds the filesystems its target declares, and on most
+# targets those are all device images.  The plain rootfs tarball is the
+# one artifact this pipeline wants, so ask for it by name.
+sed -i '/CONFIG_TARGET_ROOTFS_TARGZ/d' .config
+echo 'CONFIG_TARGET_ROOTFS_TARGZ=y' >> .config
+
+make image PROFILE='%PROFILE%' PACKAGES='%PACKAGES%'
+
+rootfs=$(find bin/targets -name '*rootfs.tar.gz' | sort | head -n 1)
+[ -n "$rootfs" ] || { echo 'ImageBuilder produced no rootfs tarball' >&2; exit 1; }
+echo "OpenWrt rootfs: $rootfs"
+
+find /target -mindepth 1 -maxdepth 1 \
+    ! -name '.arch' ! -name '.stage3' ! -name '.provider' -exec rm -rf {} +
+# Keep the mount point, drop whatever is inside it: a device node cannot
+# be made in a rootless userns (the stage3 unpack excludes ./dev for the
+# same reason), and devtmpfs mounts over it at boot.
+tar -xf "$rootfs" -C /target --exclude='./dev/*'
+"#;
+
+/// Provision an OpenWrt rootfs in /target with the official ImageBuilder.
+///
+/// Fetches the pinned per-release, per-target ImageBuilder, checks it
+/// against that release directory's published `sha256sums`, and runs
+/// `make image` with the board's profile and package list.  Nothing is
+/// compiled here: ImageBuilder only assembles prebuilt binary packages,
+/// and the apk inside it verifies every package it pulls from the feeds
+/// against the signing keys shipped in the tarball we just checksummed.
+///
+/// The rootfs lands in /target rather than straight in gen/root because
+/// `assemble` deletes gen/ before it copies /target in: anything an
+/// earlier step left there would not survive the next assemble.
+///
+/// OpenWrt's own kernel is not taken.  This project builds the kernel
+/// (KERNEL_REPO, the `kernel` step) and `assemble` installs its modules
+/// over whatever the provider put in /target, exactly as it does for
+/// Gentoo and Debian.  Taking OpenWrt's kernel would mean taking its
+/// image recipe, its DTB and its bootloader as well, which is the whole
+/// of the pipeline this project is.
+fn openwrt_deps(
+    runner: &SandboxRunner,
+    target: &Target,
+    board: &BoardConfig,
+    boards_root: &Utf8Path,
+) -> Result<()> {
+    let done = target.dir.join(".openwrt-done");
+    if done.exists() {
+        tracing::info!("OpenWrt rootfs already provisioned, skipping ImageBuilder.");
+        return Ok(());
+    }
+
+    // All four name one immutable directory and one device inside it.
+    // None has a defensible default: a missing release would have to mean
+    // "whatever is newest today", and that is the opposite of a pin.
+    let need = |key: &str, value: &Option<String>| -> Result<String> {
+        value.clone().ok_or_else(|| Error::BoardConfigParse {
+            file: board.name.clone(),
+            msg: format!("{key} is required for ROOTFS_PROVIDER=\"openwrt\""),
+        })
+    };
+    let release = need("OPENWRT_RELEASE", &board.openwrt_release)?;
+    let owrt_target = need("OPENWRT_TARGET", &board.openwrt_target)?;
+    let subtarget = need("OPENWRT_SUBTARGET", &board.openwrt_subtarget)?;
+    let profile = need("OPENWRT_PROFILE", &board.openwrt_profile)?;
+    let mirror = board
+        .openwrt_mirror
+        .as_deref()
+        .unwrap_or("https://downloads.openwrt.org");
+
+    // `-pkg` removes a package the profile would otherwise pull in;
+    // ImageBuilder reads that syntax natively, so the lists here look
+    // like the target-package lists elsewhere in the tree.
+    let packages =
+        read_distro_packages(&boards_root.join(&board.name).join("openwrt-packages.txt"))?
+            .join(" ");
+
+    // The stage3 already carries make, perl, python and tar; these three
+    // are what OpenWrt's prereq check asks for on top of it.  Anything
+    // else a board needs goes in its sandbox-packages.txt.
+    let portage = Portage::new(runner);
+    portage.emerge(&[
+        "--noreplace",
+        "net-misc/wget",
+        "app-arch/unzip",
+        "sys-apps/which",
+    ])?;
+
+    // A published sums file is fetched over the same connection as the
+    // tarball, so on its own it proves only that the download arrived
+    // intact.  OPENWRT_SHA256 is the value a mirror cannot talk its way
+    // out of, and it is what makes the board.conf a real pin.
+    let pin = match &board.openwrt_sha256 {
+        Some(want) => format!(
+            "sum=$(echo \"$line\" | sed 's/ .*//')\n\
+             [ \"$sum\" = '{want}' ] || {{ \
+                 echo \"OPENWRT_SHA256 is {want}, the release publishes $sum\" >&2; exit 1; }}"
+        ),
+        None => String::new(),
+    };
+
+    runner.run(
+        &OPENWRT_IMAGEBUILDER
+            .replace("%KEY%", &format!("{release}-{owrt_target}-{subtarget}"))
+            .replace(
+                "%URL%",
+                &format!("{mirror}/releases/{release}/targets/{owrt_target}/{subtarget}"),
+            )
+            .replace("%MIRROR%", mirror)
+            .replace("%PROFILE%", &profile)
+            .replace("%PACKAGES%", &packages)
+            .replace("%PIN%", &pin),
+    )?;
+
+    std::fs::write(done, chrono::Utc::now().to_rfc3339())?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{atom_cpn, buildroot_build_script, extlinux_conf, extlinux_fdt,
-                kernel_config_fragments};
+    use super::{
+        atom_cpn, buildroot_build_script, extlinux_conf, extlinux_fdt, kernel_config_fragments,
+        read_distro_packages,
+    };
     use crate::board::BoardConfig;
+    use camino::Utf8PathBuf;
+
+    fn list_file(name: &str, body: &str) -> Utf8PathBuf {
+        let path = Utf8PathBuf::from_path_buf(std::env::temp_dir())
+            .expect("temp dir is utf-8")
+            .join(format!("crossdev-stages-{name}.txt"));
+        std::fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_missing_package_list_is_an_empty_one() {
+        assert!(
+            read_distro_packages("/nonexistent/openwrt-packages.txt".into())
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_package_list_keeps_removals_and_drops_comments() {
+        // `-pkg` is OpenWrt's own "leave this out" syntax and has to
+        // survive; two names on one line is the case that used to be
+        // half-read, so it stays an error.
+        let path = list_file("packages", "# note\n\nluci-ssl\n  -dnsmasq  \n");
+        assert_eq!(
+            read_distro_packages(&path).unwrap(),
+            vec!["luci-ssl".to_string(), "-dnsmasq".to_string()]
+        );
+        let bad = list_file("packages-bad", "luci-ssl htop\n");
+        assert!(read_distro_packages(&bad).is_err());
+    }
 
     fn board_with(fragments: &[&str]) -> BoardConfig {
         let mut board = crate::cli::util::default_board_config("riscv64");
