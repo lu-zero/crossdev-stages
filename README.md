@@ -342,6 +342,55 @@ crossdev-stages enter --board k230 -- emerge --info
 The target stage and the build directory are attached when they exist, so a
 board that has never been built still opens.
 
+### What is in a binary package cache
+
+Portage decides a binary package fits by matching CHOST, KEYWORDS, USE and
+CPU_FLAGS_X86, never CFLAGS, and it records neither the compiler nor the libc
+that produced the package. Three layers close that, and each is allowed to be
+wrong in one direction only:
+
+| Layer | Answers | May be wrong how | Fails a build? |
+|---|---|---|---|
+| Key | May these two builds share a cache at all? | Too strict only | No |
+| Stamp | What is in this cache, and is it still one set? | Stale only | No |
+| Measurement | Does the image we are about to ship work? | Not at all | Yes |
+
+The key is `binpkgs/<chost>/<key>`, where `<key>` hashes the board's CFLAGS
+*and its per-package workarounds*: `WORKAROUND_PKGS` builds named packages with
+different flags, and two boards agreeing on CFLAGS but differing in workarounds
+would otherwise swap binaries neither asked for. The toolchain store keys on
+the CFLAGS alone, because a workaround changes what some packages are compiled
+with and not what compiles them.
+
+The stamp is portage's own `Packages` header -- the same fields Gentoo's
+binhost publishes, PROFILE, ELIBC, CHOST, REPO_REVISIONS -- plus a `.build-env`
+beside it naming the toolchain, which portage does not record. `store list`
+shows both, and a build prints one line when the toolchain has moved since the
+cache was last written to. Nothing here invalidates a cache: a stamp that
+triggers rebuilds is a cache key with worse ergonomics.
+
+The measurement is the ABI and ISA checks below, against the finished image.
+They are the only thing that can fail a build, because they are the only thing
+that reads the artifact.
+
+### ABI verification
+### ABI verification
+
+Nothing in a binary package records the libc or the compiler that produced it.
+Portage stores CFLAGS, CHOST, USE and the sonames a file needs, but not one
+symbol version and not the toolchain, so a package cached from a different
+prefix installs without complaint.
+
+That matters because glibc and libstdc++ are backward compatible and not
+forward compatible: a binary built against glibc 2.43 asks the loader for
+`GLIBC_2.43`, and on an image carrying 2.41 it does not start.
+
+So rather than key the cache on a proxy for the toolchain, `assemble` reads
+what every binary in the image actually asks for (`.gnu.version_r`) and checks
+the libraries the image ships actually define it (`.gnu.version_d`). Exact,
+covers glibc, libstdc++, libgcc and anything else versioned at once, and it
+works on every architecture.
+
 ### ISA verification
 
 Portage decides a binary package fits by matching CHOST, KEYWORDS, USE and

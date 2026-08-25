@@ -417,7 +417,7 @@ impl Sandbox {
         target_arch: &str,
         board: &BoardConfig,
     ) -> Result<SandboxRunner> {
-        let (_canonical, hash) = crate::cflags::canonicalize(&board.effective_cflags());
+        let hash = crate::cflags::toolchain_key(board);
         let gcc_spec = self.gcc_spec_for(board, None)?;
         self.runner_for_chost(ws, target_arch, &hash, &gcc_spec)
     }

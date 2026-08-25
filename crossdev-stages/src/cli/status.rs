@@ -61,7 +61,7 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
                 } else {
                     format!(" [{}]", b.tags.join(","))
                 };
-                let (_, hash) = crate::cflags::canonicalize(&b.effective_cflags());
+                let hash = crate::cflags::toolchain_key(&b);
                 let keys = crate::cli::store::board_store_keys(&b, &default_specs);
                 let store_state = board_store_state(&keys, &stores);
                 println!(
@@ -111,7 +111,7 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, tsv: bool) -> Result<()> {
         }
         for name in &boards {
             if let Ok(b) = board::load(boards_root, name) {
-                let (_, hash) = crate::cflags::canonicalize(&b.effective_cflags());
+                let hash = crate::cflags::toolchain_key(&b);
                 let keys = crate::cli::store::board_store_keys(&b, &default_specs);
                 let store_state = board_store_state(&keys, &stores);
                 let tags = b.tags.join(",");

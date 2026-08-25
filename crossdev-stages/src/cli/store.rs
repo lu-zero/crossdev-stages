@@ -16,16 +16,57 @@ pub fn run(ws: &Workspace, boards_root: &Utf8Path, cmd: StoreCmd) -> Result<()> 
 
 fn list(ws: &Workspace) -> Result<()> {
     let entries = walk_store(ws);
-    if entries.is_empty() {
+    let binpkgs = walk_binpkgs(ws);
+    if entries.is_empty() && binpkgs.is_empty() {
         println!("Store is empty.");
         return Ok(());
     }
-    println!("{:<32} {:<34} state", "chost", "key");
-    for e in &entries {
-        let state = if e.complete { "complete" } else { "partial" };
-        println!("{:<32} {:<34} {state}", e.chost, e.key);
+
+    if !entries.is_empty() {
+        println!("Toolchains");
+        println!("  {:<32} {:<34} state", "chost", "key");
+        for e in &entries {
+            let state = if e.complete { "complete" } else { "partial" };
+            println!("  {:<32} {:<34} {state}", e.chost, e.key);
+        }
     }
-    println!("\n{} entries.", entries.len());
+
+    // What produced a binary package cache, from the two places that know:
+    // portage's own Packages header, and the toolchain stamp beside it.
+    if !binpkgs.is_empty() {
+        println!("\nBinary packages");
+        for e in &binpkgs {
+            let dir = ws.binpkgs_dir().join(&e.chost).join(&e.key);
+            let index = crate::binpkg_meta::read_index(&dir).unwrap_or_default();
+            println!(
+                "  {:<32} {:<34} {} packages",
+                e.chost,
+                e.key,
+                index.packages.as_deref().unwrap_or("0")
+            );
+            if let Some(profile) = &index.profile {
+                let elibc = index.elibc.as_deref().unwrap_or("?");
+                println!("      profile {profile}  elibc {elibc}");
+            }
+            if let Some(revisions) = &index.repo_revisions {
+                println!("      tree    {revisions}");
+            }
+            let stamp = crate::binpkg_meta::read_stamp(&dir);
+            if !stamp.is_empty() {
+                let mut shown: Vec<String> = stamp
+                    .iter()
+                    .filter(|(pkg, _)| {
+                        matches!(pkg.as_str(), "gcc" | "glibc" | "binutils")
+                    })
+                    .map(|(pkg, version)| format!("{pkg} {version}"))
+                    .collect();
+                shown.sort();
+                println!("      built by {}", shown.join(", "));
+            }
+        }
+    }
+
+    println!("\n{} entries.", entries.len() + binpkgs.len());
     Ok(())
 }
 
@@ -181,7 +222,7 @@ pub fn sandbox_default_specs(ws: &Workspace) -> Vec<String> {
 /// when the board needs a default spec and no sandbox can provide one.
 pub fn board_store_keys(board: &BoardConfig, default_specs: &[String]) -> Vec<Utf8PathBuf> {
     let chost = board.chost();
-    let (_, hash) = crate::cflags::canonicalize(&board.effective_cflags());
+    let hash = crate::cflags::toolchain_key(board);
     let specs: Vec<&str> = match &board.gcc_version {
         Some(s) => vec![s.as_str()],
         None => default_specs.iter().map(String::as_str).collect(),
@@ -245,7 +286,10 @@ fn live_set(ws: &Workspace, boards_root: &Utf8Path) -> Result<LiveSet> {
             continue;
         };
         live.store.extend(board_store_keys(&b, &default_specs));
-        let (_, hash) = crate::cflags::canonicalize(&b.effective_cflags());
+        // The binpkg cache keys on the workarounds too, so this is not the
+        // same hash as the store's; using one for both would have `gc` delete
+        // a directory the builder is still writing to.
+        let hash = crate::cflags::binpkg_key(&b);
         live.binpkgs.insert(Utf8PathBuf::from(b.chost()).join(hash));
         arches.insert(b.arch.clone());
     }
@@ -383,7 +427,7 @@ mod tests {
     fn board_keys_use_gcc_version_verbatim() {
         let mut b = crate::cli::util::default_board_config("riscv64");
         b.gcc_version = Some("15.2.1_p20260214".into());
-        let (_, hash) = crate::cflags::canonicalize(&b.effective_cflags());
+        let hash = crate::cflags::toolchain_key(&b);
         assert_eq!(
             board_store_keys(&b, &["14".into()]),
             vec![store_key(&b.chost(), &hash, "15.2.1_p20260214")]
@@ -393,7 +437,7 @@ mod tests {
     #[test]
     fn board_keys_fall_back_to_sandbox_default_specs() {
         let b = crate::cli::util::default_board_config("riscv64");
-        let (_, hash) = crate::cflags::canonicalize(&b.effective_cflags());
+        let hash = crate::cflags::toolchain_key(&b);
         assert_eq!(
             board_store_keys(&b, &["14".into(), "15".into()]),
             vec![

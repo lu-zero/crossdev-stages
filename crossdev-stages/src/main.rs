@@ -1,3 +1,5 @@
+mod abi;
+mod binpkg_meta;
 mod board;
 mod bootloader;
 mod cflags;
