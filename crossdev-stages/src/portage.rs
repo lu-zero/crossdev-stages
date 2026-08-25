@@ -4,6 +4,62 @@ use crate::container::SandboxRunner;
 use crate::error::Result;
 use crate::stage::{all_llvm_targets, default_cflags, gentoo_arch, llvm_target};
 
+/// Single supported llvm slot; dev-lang/rust-1.95.0 has `LLVM_COMPAT=( 22 )`.
+pub const LLVM_SLOT: &str = "22";
+
+/// Write package.mask/pin-gcc + package.unmask/pin-gcc + same-for-llvm into
+/// a portage root (host sandbox, cross-prefix, or target sysroot).
+///
+/// `gcc_version` Some(v) → pin gcc to `=sys-devel/gcc-${v}*` (mask all others).
+/// `gcc_version` None    → leave gcc alone (host sandbox: stage3 default).
+///
+/// llvm-core/* is always pinned to [`LLVM_SLOT`] (`=...-${slot}*`) —
+/// keeping a fixed slot prevents multi-slot llvm installs that would
+/// bloat the rootfs and confuse llvm-config / clang-driver discovery.
+pub fn write_version_pins(portage_root: &Utf8Path, gcc_version: Option<&str>) -> Result<()> {
+    let llvm_slot = LLVM_SLOT;
+    let mask_dir = portage_root.join("package.mask");
+    let unmask_dir = portage_root.join("package.unmask");
+    std::fs::create_dir_all(&mask_dir)?;
+    std::fs::create_dir_all(&unmask_dir)?;
+
+    // Remove legacy single-file format we used before this helper existed.
+    let _ = std::fs::remove_file(mask_dir.join("llvm-unused-slot"));
+
+    if let Some(v) = gcc_version {
+        std::fs::write(mask_dir.join("pin-gcc"), "sys-devel/gcc\n")?;
+        std::fs::write(unmask_dir.join("pin-gcc"), format!("=sys-devel/gcc-{v}*\n"))?;
+    } else {
+        let _ = std::fs::remove_file(mask_dir.join("pin-gcc"));
+        let _ = std::fs::remove_file(unmask_dir.join("pin-gcc"));
+    }
+
+    const LLVM_PKGS: &[&str] = &[
+        "clang",
+        "clang-common",
+        "clang-toolchain-symlinks",
+        "clang-linker-config",
+        "lld",
+        "lld-toolchain-symlinks",
+        "llvm",
+        "llvm-common",
+        "llvmgold",
+        "llvm-toolchain-symlinks",
+    ];
+    let mask: String = LLVM_PKGS
+        .iter()
+        .map(|p| format!("llvm-core/{p}\n"))
+        .collect();
+    let unmask: String = LLVM_PKGS
+        .iter()
+        .map(|p| format!("=llvm-core/{p}-{llvm_slot}*\n"))
+        .collect();
+    std::fs::write(mask_dir.join("pin-llvm"), mask)?;
+    std::fs::write(unmask_dir.join("pin-llvm"), unmask)?;
+
+    Ok(())
+}
+
 /// Parameters for a Portage `make.conf` file.
 pub struct MakeConf<'a> {
     pub arch: &'a str,
@@ -59,11 +115,15 @@ impl<'a> MakeConf<'a> {
             // a binary package is only safe to reuse under the flags that
             // made it, and that is what PKGDIR names.
             let features = if self.pkgdir.is_some() {
-                "parallel-install -merge-wait buildpkg"
+                "parallel-install parallel-fetch -merge-wait pkgdir-index-trusted buildpkg"
             } else {
-                "parallel-install -merge-wait"
+                "parallel-install parallel-fetch -merge-wait pkgdir-index-trusted"
             };
             set_make_conf_var(&make_conf, "FEATURES", features)?;
+            // The container already tmpfs-mounts /dev/shm, and portage's build
+            // dir is the one thing in a cross build that is pure write-then-
+            // discard: gcc, llvm and rust each move gigabytes through it.
+            set_make_conf_var(&make_conf, "PORTAGE_TMPDIR", "/dev/shm")?;
             set_make_conf_var(
                 &make_conf,
                 "PORT_LOGDIR",
@@ -121,11 +181,9 @@ impl<'a> MakeConf<'a> {
     }
 }
 
-fn parallelism() -> (usize, usize) {
+pub fn parallelism() -> (usize, usize) {
     let n = num_cpus::get();
-    let jobs = n / 2 + 1;
-    let load = n;
-    (jobs, load)
+    (n, n * 2)
 }
 
 /// Set or replace a variable in a make.conf file.

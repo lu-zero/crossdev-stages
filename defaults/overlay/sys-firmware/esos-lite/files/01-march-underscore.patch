@@ -1,0 +1,13 @@
+diff --git a/rt-thread/bsp/spacemit/rtconfig.py b/rt-thread/bsp/spacemit/rtconfig.py
+index a996096..860ecd5 100644
+--- a/rt-thread/bsp/spacemit/rtconfig.py
++++ b/rt-thread/bsp/spacemit/rtconfig.py
+@@ -40,7 +40,7 @@ if CPU == 'rt24':
+     STRIP   = PREFIX + 'strip'
+     TARGET_EXT = 'elf'
+ 
+-    DEVICE = ' -march=rv64imafdczifencei -mabi=lp64d -mcmodel=medany '
++    DEVICE = ' -march=rv64imafdc_zifencei -mabi=lp64d -mcmodel=medany '
+ 
+     CFLAGS  = DEVICE + '-ffreestanding -flax-vector-conversions -Wno-cpp -fno-common -ffunction-sections -fdata-sections -fstrict-volatile-bitfields -fdiagnostics-color=always'
+     AFLAGS  = ' -c' + DEVICE + ' -x assembler-with-cpp -D__ASSEMBLY__ '

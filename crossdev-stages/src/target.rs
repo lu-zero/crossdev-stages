@@ -109,15 +109,30 @@ impl Target {
         let portage = Portage::new(&runner);
 
         // Update the cross-toolchain in the crossdev prefix first (no ROOT=/target).
-        tracing::info!("Updating crossdev prefix: gcc, binutils-libs, @system…");
-        portage.cross_emerge_crossdev(&chost, &["sys-devel/gcc"])?;
+        // Pin gcc to the spec the store key already names, so portage does not
+        // pick whatever is currently default (a different major would break the
+        // ABI of binpkgs already in the cache).  Pass --noreplace so the cross
+        // prefix's
+        // package.mask/pin-gcc — which intentionally blocks upgrades past the
+        // installed version to prevent bootstrap breakage — does not abort the
+        // run when gcc is already at the requested version.
+        // Single-quoted: the atom goes through `bash -c` and an unquoted
+        // `=sys-devel/gcc-15*` is subject to shell glob expansion
+        // (sandbox.rs quotes the identical atom in setup_crossdev).
+        let gcc_atom = format!("'=sys-devel/gcc-{gcc_spec}*'");
+        tracing::info!(gcc_atom = %gcc_atom, "Updating crossdev prefix: gcc, binutils-libs, @system…");
+        portage.cross_emerge_crossdev(&chost, &["--noreplace", &gcc_atom])?;
         portage.cross_emerge_crossdev(&chost, &["sys-libs/binutils-libs"])?;
         portage.cross_emerge_crossdev(&chost, &["-u", "system"])?;
 
         // Rebuild @world in the target.
+        // Explicit --jobs / --load-average so EMERGE_DEFAULT_OPTS from make.conf
+        // can't be silently lost (e.g. when a wrapper drops PORTAGE_CONFIGROOT).
+        let (jobs, load) = crate::portage::parallelism();
         tracing::info!("Rebuilding @world in target…");
         runner.run(&format!(
-            "KERNEL_DIR=/usr/src/linux ROOT=/target {chost}-emerge -b -k -e @world"
+            "KERNEL_DIR=/usr/src/linux ROOT=/target {chost}-emerge \
+             -b -k --jobs={jobs} --load-average {load} -e @world"
         ))?;
 
         self.update_ldconfig(ws, sandbox)?;
@@ -180,6 +195,9 @@ impl Target {
             for_build_host: false,
         }
         .write(&portage_dir)?;
+
+        // The store key already resolved which gcc this target is built by.
+        crate::portage::write_version_pins(&portage_dir, Some(gcc_spec))?;
 
         // Copy the profile directory and make.profile symlink from the
         // store-resident crossdev prefix so the target stage uses the

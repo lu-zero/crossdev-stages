@@ -49,8 +49,16 @@ impl Sandbox {
     /// Configure portage and install host build dependencies.
     /// Idempotent: skips if `.prepared` marker exists (or `.prepared-bare` when `bare`).
     ///
-    /// With `bare`, writes `make.conf` and syncs the portage tree but does not emerge packages.
+    /// With `bare`, writes `make.conf` and syncs the portage tree but does not
+    /// emerge packages.  When `<defaults_root>/overlay/` exists, installs it
+    /// as the `crossdev-stages` portage overlay (for opt-in extras like the
+    /// ESOS firmware ebuilds).
     pub fn prepare(&self, mirror: Option<&str>, defaults_root: &Utf8Path, bare: bool) -> Result<()> {
+        // The overlay refreshes on every prepare, even on an already-prepared
+        // sandbox: defaults/overlay/ is the source of truth and the copy is
+        // cheap and idempotent.
+        install_overlay(&self.dir, defaults_root)?;
+
         if self.dir.join(".prepared").exists() {
             tracing::info!("Sandbox already prepared, skipping.");
             return Ok(());
@@ -70,6 +78,9 @@ impl Sandbox {
             for_build_host: true,
         }
         .write(&self.dir.join("etc/portage"))?;
+
+        // No gcc pin in the host sandbox — stage3's default gcc runs portage itself.
+        crate::portage::write_version_pins(&self.dir.join("etc/portage"), None)?;
 
         if bare {
             sync_portage_tree(&self.runner())?;
@@ -357,6 +368,12 @@ impl Sandbox {
             board,
             &gcc_keyword_line,
         )?;
+
+        // Pin gcc + llvm in the cross prefix so future emerges (e.g.
+        // `target update`'s cross_emerge_crossdev sys-devel/gcc) don't
+        // silently jump to a different major.
+        let gcc_pin = ver_prefix.as_deref().or(board.gcc_version.as_deref());
+        crate::portage::write_version_pins(&crossdev_portage, gcc_pin)?;
 
         // Fix the split-usr layout created by crossdev.
         runner.run(&format!("mkdir -p /usr/{chost}/bin"))?;
@@ -764,4 +781,53 @@ pub struct SandboxInfo {
     pub arch: String,
     pub prepared: bool,
     pub bare_prepared: bool,
+}
+
+/// Copy `<defaults_root>/overlay/` into the sandbox as the
+/// `crossdev-stages` portage overlay and write a repos.conf entry.
+/// No-op if the source overlay directory doesn't exist.
+fn install_overlay(sandbox: &Utf8Path, defaults_root: &Utf8Path) -> Result<()> {
+    let src = defaults_root.join("overlay");
+    if !src.is_dir() {
+        return Ok(());
+    }
+    let dst = sandbox.join("var/db/repos/crossdev-stages");
+    tracing::info!("Installing crossdev-stages overlay at {dst}…");
+    copy_tree(&src, &dst)?;
+
+    let repos_conf = sandbox.join("etc/portage/repos.conf");
+    fs::create_dir_all(&repos_conf)?;
+    fs::write(
+        repos_conf.join("crossdev-stages.conf"),
+        "[crossdev-stages]\n\
+         location = /var/db/repos/crossdev-stages\n\
+         auto-sync = no\n",
+    )?;
+    Ok(())
+}
+
+/// Recursively copy directory `src` into `dst`, overwriting files.
+/// Symlinks and other special entries are rejected.
+fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
+    std::fs::create_dir_all(dst)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let kind = entry.file_type()?;
+        let from = Utf8PathBuf::try_from(entry.path()).map_err(|e| Error::CommandFailed {
+            code: 1,
+            reason: e.to_string(),
+        })?;
+        let to = dst.join(from.file_name().unwrap_or_default());
+        if kind.is_dir() {
+            copy_tree(&from, &to)?;
+        } else if kind.is_file() {
+            std::fs::copy(&from, &to)?;
+        } else {
+            return Err(Error::CommandFailed {
+                code: 1,
+                reason: format!("unsupported entry in portage overlay (symlink?): {from}"),
+            });
+        }
+    }
+    Ok(())
 }
