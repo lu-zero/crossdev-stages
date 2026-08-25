@@ -40,7 +40,7 @@ pub enum RootfsProvider {
     /// qemu-user binfmt, like the debian provider: rpm runs scriptlets
     /// inside the installroot.
     ///
-    /// dnf5 is not in ::gentoo; `defaults/overlay/` carries it along
+    /// dnf5 is not in ::gentoo; the crossdev-stages overlay carries it along
     /// with dev-libs/libsolv and dev-libs/librepo, the rest of the
     /// closure being in the tree already.
     Fedora,
@@ -307,7 +307,7 @@ fn parse_alpine_branch(branch: &str) -> Option<(u32, u32)> {
     Some((major.parse().ok()?, minor.parse().ok()?))
 }
 
-// apk-tools is not in ::gentoo, so `defaults/overlay/app-arch/apk-tools/`
+// apk-tools is not in ::gentoo, so the crossdev-stages overlay
 // carries the ebuild and the `deps` step emerges it like any other host
 // dependency.  Nothing is pinned here: the release tarball and its
 // checksums live in the ebuild and its Manifest, where portage enforces

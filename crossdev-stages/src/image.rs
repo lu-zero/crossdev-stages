@@ -992,7 +992,7 @@ fn fedora_deps(
 /// Install a board's `fedora-packages.txt` into the unpacked root.
 ///
 /// dnf5 is not in ::gentoo, and neither are two of its libraries, so
-/// `defaults/overlay/` carries `sys-apps/dnf5`, `dev-libs/libsolv` and
+/// the crossdev-stages overlay carries `sys-apps/dnf5`, `dev-libs/libsolv` and
 /// `dev-libs/librepo`.  Those three are the whole gap: everything else
 /// dnf5 wants (app-arch/rpm, dev-cpp/sdbus-c++, sys-libs/libmodulemd,
 /// app-arch/zchunk, dev-cpp/toml11, dev-libs/libfmt, json-c, glib) is

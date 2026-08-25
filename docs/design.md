@@ -262,10 +262,12 @@ wants one lists `systemd` in fedora-packages.txt.
 sandbox, not the web index: no libsolv, no librepo, no libcomps, no
 libdnf, no dnf, in any category.  It is three packages short, not a
 dozen: `dev-libs/libsolv`, `dev-libs/librepo` and `sys-apps/dnf5`,
-vendored into `defaults/overlay/` from ::guru at b23748630f89, which
-carries and maintains all three.  Their Manifests were regenerated
-locally and match ::guru's byte for byte, so the tarball hashes have two
-independent sources.  dnf5 dropped libcomps, and everything else it
+taken from ::guru at b23748630f89, which carries and maintains all
+three, and served from the crossdev-stages overlay repository pinned in
+`defaults/overlay.conf`.  Their Manifests were regenerated locally and
+match ::guru's byte for byte, so the tarball hashes have two independent
+sources.  The overlay is a separate repository because these ebuilds are
+GPL-2 and this one is Apache-2.0.  dnf5 dropped libcomps, and everything else it
 needs (app-arch/rpm, dev-cpp/sdbus-c++, sys-libs/libmodulemd,
 app-arch/zchunk, dev-cpp/toml11, dev-libs/libfmt, json-c, glib) is
 already in ::gentoo.  42 packages get pulled in the first time, once

@@ -58,8 +58,8 @@ crossdev-stages image build --board qemu-riscv64-fedora
 The crossdev toolchain is set up only because `BUILD_STEPS` contains
 `kernel`.  The first build in a fresh sandbox also emerges dnf5 and its
 42-package closure, three of which (`dev-libs/libsolv`,
-`dev-libs/librepo`, `sys-apps/dnf5`) come from `defaults/overlay/`
-because ::gentoo does not carry them.
+`dev-libs/librepo`, `sys-apps/dnf5`) come from the crossdev-stages
+overlay repository because ::gentoo does not carry them.
 
 ## Run
 

@@ -50,14 +50,14 @@ impl Sandbox {
     /// Idempotent: skips if `.prepared` marker exists (or `.prepared-bare` when `bare`).
     ///
     /// With `bare`, writes `make.conf` and syncs the portage tree but does not
-    /// emerge packages.  When `<defaults_root>/overlay/` exists, installs it
-    /// as the `crossdev-stages` portage overlay (for opt-in extras like the
-    /// ESOS firmware ebuilds).
+    /// emerge packages.  When `<defaults_root>/overlay.conf` names one,
+    /// installs the `crossdev-stages` portage overlay (apk-tools, dnf5, the
+    /// opt-in ESOS firmware ebuilds).
     pub fn prepare(&self, mirror: Option<&str>, defaults_root: &Utf8Path, bare: bool) -> Result<()> {
         // The overlay refreshes on every prepare, even on an already-prepared
-        // sandbox: defaults/overlay/ is the source of truth and the copy is
-        // cheap and idempotent.
-        install_overlay(&self.runner(), &self.dir, defaults_root)?;
+        // sandbox: the pinned overlay repo is the source of truth and the
+        // checkout is cheap and idempotent.
+        install_overlay(self.runner(), &self.dir, defaults_root)?;
 
         if self.dir.join(".prepared").exists() {
             tracing::info!("Sandbox already prepared, skipping.");
@@ -788,38 +788,105 @@ pub struct SandboxInfo {
     pub bare_prepared: bool,
 }
 
-/// Copy `<defaults_root>/overlay/` into the sandbox as the
-/// `crossdev-stages` portage overlay and write a repos.conf entry.
-/// No-op if the source overlay directory doesn't exist.
+/// Where a local overlay clone is bind-mounted read-only.
+const OVERLAY_SRC_IN_CONTAINER: &str = "/.overlay-src";
+
+/// Overlay checkout inside the sandbox.
+const OVERLAY_DIR: &str = "/var/db/repos/crossdev-stages";
+
+/// Install the `crossdev-stages` portage overlay at the revision pinned in
+/// `<defaults_root>/overlay.conf` and write a repos.conf entry.
+/// No-op when that file is absent or sets no `OVERLAY_REPO`.
+///
+/// The ebuilds live in their own repository, so this one carries no ebuilds
+/// and no licenses but its own.  `OVERLAY_REPO` may also name a local
+/// clone, which is bind-mounted read-only and copied in; that is the route
+/// for an overlay that is not published yet.
 fn install_overlay(
-    runner: &SandboxRunner,
+    runner: SandboxRunner,
     sandbox: &Utf8Path,
     defaults_root: &Utf8Path,
 ) -> Result<()> {
-    let src = defaults_root.join("overlay");
-    if !src.is_dir() {
+    let conf = defaults_root.join("overlay.conf");
+    let Some((repo, tag)) = read_overlay_conf(&conf)? else {
         return Ok(());
-    }
-    let dst = sandbox.join("var/db/repos/crossdev-stages");
-    tracing::info!("Installing crossdev-stages overlay at {dst}…");
+    };
+    tracing::info!("Installing crossdev-stages overlay from {repo} ({tag})…");
+
     // /var/db/repos is created by portage inside the container, so it ends up
-    // owned by a subordinate uid the host user cannot write to.  Container
-    // root maps back to the caller, so let it create the directory; the copy
-    // itself then lands in something the host owns.
-    if !dst.is_dir() {
-        runner.run("mkdir -p /var/db/repos/crossdev-stages")?;
+    // owned by a subordinate uid the host user cannot write to: every write
+    // below goes through the container.
+    runner.run(&format!(
+        "mkdir -p {OVERLAY_DIR} && find {OVERLAY_DIR} -mindepth 1 -delete"
+    ))?;
+
+    let local = Utf8Path::new(&repo);
+    if local.is_dir() {
+        runner
+            .with_extra_ro(local, OVERLAY_SRC_IN_CONTAINER)
+            .run(&format!(
+                "cp -a {OVERLAY_SRC_IN_CONTAINER}/. {OVERLAY_DIR}/"
+            ))?;
+    } else {
+        crate::source_cache::cached_clone(
+            &runner,
+            &repo,
+            &tag,
+            OVERLAY_DIR,
+            "crossdev-stages-overlay",
+        )?;
     }
-    copy_tree(&src, &dst)?;
 
     let repos_conf = sandbox.join("etc/portage/repos.conf");
     fs::create_dir_all(&repos_conf)?;
     fs::write(
         repos_conf.join("crossdev-stages.conf"),
-        "[crossdev-stages]\n\
-         location = /var/db/repos/crossdev-stages\n\
-         auto-sync = no\n",
+        format!(
+            "[crossdev-stages]\n\
+             location = {OVERLAY_DIR}\n\
+             auto-sync = no\n"
+        ),
     )?;
     Ok(())
+}
+
+/// Read `OVERLAY_REPO` and `OVERLAY_TAG` from `path`.
+/// `Ok(None)` when the file is missing or `OVERLAY_REPO` is empty.
+fn read_overlay_conf(path: &Utf8Path) -> Result<Option<(String, String)>> {
+    let Ok(content) = fs::read_to_string(path) else {
+        return Ok(None);
+    };
+    parse_overlay_conf(&content, path)
+}
+
+fn parse_overlay_conf(content: &str, path: &Utf8Path) -> Result<Option<(String, String)>> {
+    let mut repo = String::new();
+    let mut tag = String::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('#') {
+            continue;
+        }
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        let value = value.trim().trim_matches('"').to_string();
+        match key.trim() {
+            "OVERLAY_REPO" => repo = value,
+            "OVERLAY_TAG" => tag = value,
+            _ => {}
+        }
+    }
+    if repo.is_empty() {
+        return Ok(None);
+    }
+    if tag.is_empty() && !Utf8Path::new(&repo).is_dir() {
+        return Err(Error::Config {
+            file: path.to_string(),
+            msg: "OVERLAY_REPO is a git URL but OVERLAY_TAG is unset".into(),
+        });
+    }
+    Ok(Some((repo, tag)))
 }
 
 /// Recursively copy directory `src` into `dst`, overwriting files.
@@ -846,4 +913,31 @@ pub(crate) fn copy_tree(src: &Utf8Path, dst: &Utf8Path) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(content: &str) -> Result<Option<(String, String)>> {
+        parse_overlay_conf(content, Utf8Path::new("overlay.conf"))
+    }
+
+    #[test]
+    fn overlay_conf_reads_repo_and_tag() {
+        let got = parse("# comment\nOVERLAY_REPO=https://example.invalid/o\nOVERLAY_TAG=\"v1\"\n")
+            .unwrap();
+        assert_eq!(got, Some(("https://example.invalid/o".into(), "v1".into())));
+    }
+
+    #[test]
+    fn overlay_conf_without_repo_is_no_overlay() {
+        assert_eq!(parse("OVERLAY_REPO=\nOVERLAY_TAG=v1\n").unwrap(), None);
+        assert_eq!(parse("").unwrap(), None);
+    }
+
+    #[test]
+    fn overlay_conf_url_without_tag_is_an_error() {
+        assert!(parse("OVERLAY_REPO=https://example.invalid/o\n").is_err());
+    }
 }
