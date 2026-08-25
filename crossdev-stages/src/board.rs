@@ -1,4 +1,4 @@
-use camino::Utf8Path;
+use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::error::{Error, Result};
 
@@ -10,6 +10,8 @@ pub struct BoardConfig {
     pub arch: String,                   // e.g. "riscv64"
     pub chost_override: Option<String>, // CHOST; overrides derived chost_for_arch()
     pub cflags: Option<String>,         // BOARD_CFLAGS; None → use default_cflags(arch)
+    /// INCLUDE, kept so hooks can source the same files the loader merged.
+    pub includes: Vec<String>,
     pub ldflags: Option<String>, // BOARD_LDFLAGS; probably never needed (profile default is fine)
     pub rustflags: Option<String>, // BOARD_RUSTFLAGS; cross-compile target-cpu is handled by rust-std
     pub gcc_version: Option<String>, // BOARD_GCC_VERSION; None → highest installed slot
@@ -134,7 +136,44 @@ pub fn load(boards_root: &Utf8Path, name: &str) -> Result<BoardConfig> {
     let path = boards_root.join(name).join("board.conf");
     let content =
         std::fs::read_to_string(&path).map_err(|e| Error::BoardNotFound(format!("{path}: {e}")))?;
-    parse(name, &path, &content)
+
+    // An include carries what several boards repeat -- an SoC's toolchain and
+    // boot pipeline, or a role like "capture box".  Their lines go in front of
+    // the board's, in the order listed, and the parser takes the last
+    // assignment: the board wins any key it mentions, without a guard around
+    // every shared default.
+    //
+    // An include cannot itself include.  One level keeps "where did this value
+    // come from" answerable, and nothing here needs more.
+    let mut merged = String::new();
+    for name in includes_of(&content) {
+        let include = boards_root.join("include").join(format!("{name}.conf"));
+        let text = std::fs::read_to_string(&include)
+            .map_err(|e| Error::BoardNotFound(format!("{include}: {e}")))?;
+        merged.push_str(&text);
+        merged.push('\n');
+    }
+    merged.push_str(&content);
+    parse(name, &path, &merged)
+}
+
+/// The `INCLUDE` list a board declares, read before parsing because it decides
+/// what the parse input is.  Space separated, in priority order.
+fn includes_of(content: &str) -> Vec<String> {
+    content
+        .lines()
+        .find_map(|line| {
+            let value = line.trim().strip_prefix("INCLUDE=")?;
+            Some(
+                value
+                    .trim()
+                    .trim_matches(['"', '\''])
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .unwrap_or_default()
 }
 
 /// List all board names found under `<boards_root>/*/board.conf`.
@@ -261,6 +300,10 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
             .or_else(|| kv.get("TAG"))
             .cloned()
             .unwrap_or(tag.clone()),
+        includes: kv
+            .get("INCLUDE")
+            .map(|v| v.split_whitespace().map(str::to_string).collect())
+            .unwrap_or_default(),
         kernel_defconfig: req!("KERNEL_DEFCONFIG"),
         kernel_config_fragments: kv
             .get("KERNEL_CONFIG_FRAGMENTS")

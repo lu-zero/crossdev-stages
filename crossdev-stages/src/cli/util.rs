@@ -124,6 +124,7 @@ pub fn default_board_config(arch: &str) -> board::BoardConfig {
         kernel_repo: String::new(),
         kernel_tag: String::new(),
         kernel_defconfig: String::new(),
+        includes: Vec::new(),
         kernel_dtb_glob: None,
         kernel_config_fragments: Vec::new(),
         dracut_modules: None,
