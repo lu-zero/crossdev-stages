@@ -138,6 +138,7 @@ pub fn default_board_config(arch: &str) -> board::BoardConfig {
         extlinux: false,
         append: None,
         dtb_name: None,
+        isa_strict: false,
         loglevel: None,
         services: vec![],
         build_steps: vec![],

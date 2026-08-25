@@ -96,6 +96,10 @@ pub struct BoardConfig {
     /// than one file and the board has to say which.
     pub dtb_name: Option<String>,
 
+    /// ISA_STRICT: fail the build when a binary uses an ISA extension this
+    /// board does not have, instead of only saying so.
+    pub isa_strict: bool,
+
     pub services: Vec<String>, // e.g. ["sshd:default", "metalog:default"]
     pub build_steps: Vec<String>,
 
@@ -358,6 +362,10 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
             .unwrap_or(false),
         append: kv.get("BOOT_APPEND").cloned(),
         dtb_name: kv.get("BOOT_DTB_NAME").cloned(),
+        isa_strict: kv
+            .get("ISA_STRICT")
+            .map(|v| v == "true" || v == "yes" || v == "1")
+            .unwrap_or(false),
 
         services: arrays.get("BOOT_SERVICES").cloned().unwrap_or_default(),
         build_steps: arrays.get("BUILD_STEPS").cloned().unwrap_or_default(),

@@ -5,6 +5,7 @@ mod cli;
 mod container;
 mod error;
 mod image;
+mod isa;
 mod manifest;
 mod package_list;
 mod portage;
@@ -63,6 +64,18 @@ async fn main() -> anyhow::Result<()> {
         Commands::Maint(cmd) => {
             cli::maint::run(&ws, cmd, &boards_root, dry_run)?;
         }
+        Commands::Enter {
+            board,
+            sandbox,
+            cmd,
+        } => cli::enter::run(&ws, &boards_root, &board, sandbox.as_deref(), &cmd)?,
+
+        Commands::Verify {
+            board,
+            sandbox,
+            strict,
+        } => cli::verify::run(&ws, &boards_root, &board, sandbox.as_deref(), strict)?,
+
         Commands::Status { tsv } => {
             cli::status::run(&ws, &boards_root, tsv)?;
         }
