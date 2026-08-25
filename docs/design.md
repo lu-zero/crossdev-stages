@@ -393,6 +393,11 @@ Hook scripts run inside the sandbox container with `/scripts` bind-mounted
 to the project directory (read-only) so they can source `board.conf` and
 sibling helpers.
 
+`BUILD_STEPS` may also name custom steps with no Rust default.  A custom
+step must provide `override-{step}.sh` (it runs with the same `.{step}`
+marker and hook conventions); a custom step with no override hook is a hard
+error, not a silent skip.
+
 ---
 
 ## Package lists

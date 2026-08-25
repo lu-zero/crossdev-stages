@@ -2151,10 +2151,16 @@ pub fn build(
             "pack" => run_step("pack", "packed", &bld, &runner, boards_root, board, |r| {
                 default_pack(r, board, &bld, boards_root)
             }),
-            other => {
-                tracing::warn!("Unknown step '{}', skipping.", other);
-                Ok(())
-            }
+            // Custom step: no Rust default. run_step still honours an
+            // override-<step>.sh hook (with resume-marker support); if the
+            // hook is missing, the default_fn below turns it into a hard error.
+            other => run_step(other, other, &bld, &runner, boards_root, board, |_r| {
+                let hook = format!("boards/{}/override-{}.sh", board.name, other);
+                Err(crate::error::Error::BoardConfigParse {
+                    file: hook.clone(),
+                    msg: format!("no default for build step '{other}'; add {hook}"),
+                })
+            }),
         };
 
         let elapsed = step_start.elapsed();
