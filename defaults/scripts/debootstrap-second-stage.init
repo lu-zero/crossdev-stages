@@ -1,0 +1,97 @@
+#!/bin/sh
+# First-boot PID 1 for an image built with ROOTFS_SECOND_STAGE="first-boot".
+#
+# `debootstrap --foreign` downloads every .deb but unpacks only the
+# Priority:required set, and no init is in that set on either Debian or
+# Ubuntu (systemd-sysv is Priority:important).  So this script can be
+# /sbin/init: on a stage-1-only rootfs nothing else is there, and the
+# kernel finds it.  It finishes the bootstrap from the .debs the image
+# carries, needing no network and no qemu-user, then puts the real init
+# in its place and hands over.
+#
+# It disables itself twice over: debootstrap deletes /debootstrap on
+# success, and the handover below replaces /sbin/init with the real one.
+#
+# This route is the opt-in one.  Completing the second stage at build
+# time under qemu-user is the default and ships a finished system; here
+# the first boot spends minutes configuring hundreds of packages on the
+# board, and a failure leaves a half-configured system.  When that
+# happens this script says so on the console, records it in $STATUS, and
+# gives you a shell rather than pretending the boot succeeded.
+#
+# No `set -e`: this runs as PID 1, where exiting is a kernel panic.
+# Every step is checked by hand and every exit is an exec.
+
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
+
+STATUS=/etc/.debootstrap-second-stage
+LOG=/var/log/crossdev-first-boot.log
+RC=/var/log/crossdev-first-boot.rc
+
+say() {
+    echo "first-boot: $*"
+}
+
+# Never leave PID 1.  A shell here is a diagnosable system; a return is not.
+rescue() {
+    say "$1"
+    say "you are root on a system that is NOT fully configured"
+    exec /bin/sh
+}
+
+# dpkg maintainer scripts need a real /dev, ldconfig and dpkg need /proc,
+# and everything needs a writable root.  A kernel with CONFIG_DEVTMPFS_MOUNT
+# has already mounted /dev; testing is cheaper than caring.
+[ -e /proc/self ] || mount -t proc proc /proc || say "could not mount /proc"
+[ -e /sys/kernel ] || mount -t sysfs sysfs /sys || say "could not mount /sys"
+[ -e /dev/null ] || mount -t devtmpfs devtmpfs /dev || say "could not mount /dev"
+mount -o remount,rw / || say "could not remount / read-write"
+
+if [ ! -x /debootstrap/debootstrap ]; then
+    rescue "no /debootstrap/debootstrap: this rootfs is not stage-1-only"
+fi
+
+say "finishing the debootstrap second stage; this takes several minutes"
+say "output is also written to $LOG"
+
+# tee, not a redirect: on a board reached only over serial a silent
+# ten-minute boot is indistinguishable from a hang.  The exit status goes
+# through a file because a pipeline reports tee's status, and pipefail is
+# not POSIX.
+{ /debootstrap/debootstrap --second-stage 2>&1; echo $? > "$RC"; } | tee "$LOG"
+rc=$(cat "$RC" 2>/dev/null || echo 1)
+rm -f "$RC"
+
+if [ "$rc" != 0 ]; then
+    echo "failed rc=$rc $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATUS"
+    say "SECOND STAGE FAILED (exit $rc)"
+    say "state in $STATUS, output in $LOG and /var/log/bootstrap.log"
+    rescue "repair with: dpkg --configure -a   then reboot"
+fi
+
+# Same policy as the chroot route.  It can only be applied here: /etc/shadow
+# is created by base-passwd's postinst, which is part of the second stage.
+if [ -f /etc/shadow ]; then
+    sed -i -e 's/^root:[^:]*:/root::/' /etc/shadow
+fi
+
+# The image carried every .deb so this stage needed no network.  It does not
+# need them again, and on a small card the space matters.
+apt-get clean || say "apt-get clean failed; /var/cache/apt/archives still full"
+
+echo "ok $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATUS"
+say "second stage complete, handing over to the real init"
+
+# debootstrap umounts /proc on the way out and systemd wants it back.
+[ -e /proc/self ] || mount -t proc proc /proc || say "could not mount /proc"
+sync
+
+for real in /usr/lib/systemd/systemd /lib/systemd/systemd /usr/sbin/init.sysvinit; do
+    [ -x "$real" ] || continue
+    rm -f /sbin/init
+    ln -s "$real" /sbin/init
+    exec "$real"
+done
+
+rescue "the second stage installed no init"

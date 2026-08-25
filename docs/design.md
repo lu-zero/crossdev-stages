@@ -127,17 +127,46 @@ bootloader, assemble mechanics, and pack stay provider-agnostic.
 gentoo   stage3 seed; deps cross-emerges defaults + board lists;
          assemble writes OpenRC config.  The default; also the only
          provider that unconditionally needs the crossdev toolchain.
-debian   deps runs debootstrap in the sandbox (--foreign stage 1, then
-         the second stage in a chroot — foreign arches need qemu-user
-         binfmt with the F flag on the host); board extras install via
+debian   deps runs debootstrap in the sandbox; board extras install via
          --include from debian-packages.txt; assemble writes systemd
-         config (hostname, serial-getty@, empty root password).
-none     nothing seeded, installed, or configured — board hook scripts
-         (override-deps.sh, post-assemble.sh, …) own the rootfs.
+         config (fstab, hostname, hosts, serial-getty@, root password).
+ubuntu   the same, with ubuntu-packages.txt, app-crypt/ubuntu-keyring,
+         the ports.ubuntu.com mirror off amd64/i386, and no rolling
+         suite alias to default to.
+none     nothing seeded, installed, or configured; board hook scripts
+         (override-deps.sh, post-assemble.sh, ...) own the rootfs.
 ```
 
 Providers other than gentoo set up the toolchain store only when
 BUILD_STEPS compiles target code (kernel/bootloader).
+
+### `SecondStage`
+
+`debootstrap --foreign` downloads every .deb but unpacks only the
+Priority:required set, and neither Debian nor Ubuntu puts an init in
+that set (systemd-sysv is Priority:important).  Who finishes the job is
+`ROOTFS_SECOND_STAGE`:
+
+```
+chroot      the default: `chroot /target /debootstrap/debootstrap
+            --second-stage` at deps time.  Executes target binaries, so
+            a foreign arch needs qemu-user binfmt with the F flag on the
+            host.  What every other image builder does, and the reason
+            the shipped image is a finished system.
+first-boot  opt-in for a host that cannot register binfmt.  deps stops
+            after stage 1 and assemble installs
+            defaults/scripts/debootstrap-second-stage.init at /sbin/init
+            -- free, because stage 1 leaves no init there.  The shim
+            runs the second stage from the .debs in the image, blanks
+            root's password (its /etc/shadow does not exist until then),
+            runs apt-get clean, then replaces itself with the real init
+            and execs it.  Costs a roughly doubled image and a slow
+            first boot; a failure is recorded rather than hidden.
+```
+
+The `.debootstrap-done` marker in the target records which mode built
+it, so flipping the key re-bootstraps instead of shipping a rootfs the
+board.conf no longer describes.
 
 ---
 

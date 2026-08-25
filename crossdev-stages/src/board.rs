@@ -1,7 +1,7 @@
 use camino::{Utf8Path, Utf8PathBuf};
 
 use crate::error::{Error, Result};
-use crate::provider::RootfsProvider;
+use crate::provider::{RootfsProvider, SecondStage};
 
 /// Board configuration loaded from `boards/<name>/board.conf`.
 #[derive(Debug, Clone)]
@@ -19,8 +19,13 @@ pub struct BoardConfig {
     pub cross_compile: String,     // e.g. "riscv64-unknown-linux-gnu-"
     pub kernel_arch: Option<String>, // e.g. "riscv", "arm64", "x86" — required for image builds
     pub rootfs_provider: RootfsProvider, // ROOTFS_PROVIDER; absent → Gentoo
-    pub debian_suite: Option<String>,    // DEBIAN_SUITE; debian provider, None → "stable"
-    pub debian_mirror: Option<String>,   // DEBIAN_MIRROR; debian provider, None → deb.debian.org
+    /// Suite the debootstrap providers bootstrap, from the provider's own
+    /// board.conf key (`DEBIAN_SUITE` / `UBUNTU_SUITE`).
+    pub suite: Option<String>,
+    /// Mirror they bootstrap from (`DEBIAN_MIRROR` / `UBUNTU_MIRROR`).
+    pub mirror: Option<String>,
+    /// ROOTFS_SECOND_STAGE; absent → chroot (build-time, needs qemu-user).
+    pub second_stage: SecondStage,
 
     // OpenSBI
     pub opensbi_repo: Option<String>,
@@ -284,6 +289,31 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         }
     }
 
+    let rootfs_provider = match kv.get("ROOTFS_PROVIDER") {
+        Some(v) => RootfsProvider::parse(v).ok_or_else(|| Error::BoardConfigParse {
+            file: path.to_string(),
+            msg: format!("unknown ROOTFS_PROVIDER '{v}' (valid: gentoo, debian, ubuntu, none)"),
+        })?,
+        None => RootfsProvider::default(),
+    };
+    let deb = rootfs_provider.debootstrap();
+    let second_stage = match kv.get("ROOTFS_SECOND_STAGE") {
+        Some(v) if deb.is_none() => {
+            return Err(Error::BoardConfigParse {
+                file: path.to_string(),
+                msg: format!(
+                    "ROOTFS_SECOND_STAGE '{v}' only applies to a debootstrap provider \
+                     (debian, ubuntu)"
+                ),
+            })
+        }
+        Some(v) => SecondStage::parse(v).ok_or_else(|| Error::BoardConfigParse {
+            file: path.to_string(),
+            msg: format!("unknown ROOTFS_SECOND_STAGE '{v}' (valid: chroot, first-boot)"),
+        })?,
+        None => SecondStage::default(),
+    };
+
     Ok(BoardConfig {
         name: name.to_string(),
         arch: req!("BOARD_ARCH"),
@@ -294,15 +324,12 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         gcc_version: kv.get("BOARD_GCC_VERSION").cloned(),
         cross_compile: req!("CROSS_COMPILE"),
         kernel_arch: kv.get("KERNEL_ARCH").cloned(),
-        rootfs_provider: match kv.get("ROOTFS_PROVIDER") {
-            Some(v) => RootfsProvider::parse(v).ok_or_else(|| Error::BoardConfigParse {
-                file: path.to_string(),
-                msg: format!("unknown ROOTFS_PROVIDER '{v}' (valid: gentoo, debian, none)"),
-            })?,
-            None => RootfsProvider::default(),
-        },
-        debian_suite: kv.get("DEBIAN_SUITE").cloned(),
-        debian_mirror: kv.get("DEBIAN_MIRROR").cloned(),
+        rootfs_provider,
+        // Each debootstrap provider reads its own key names, so a board
+        // says UBUNTU_SUITE or DEBIAN_SUITE and never both.
+        suite: deb.and_then(|d| kv.get(d.suite_key).cloned()),
+        mirror: deb.and_then(|d| kv.get(d.mirror_key).cloned()),
+        second_stage,
 
         opensbi_repo: kv.get("OPENSBI_REPO").cloned(),
         opensbi_tag: kv.get("OPENSBI_TAG").cloned(),

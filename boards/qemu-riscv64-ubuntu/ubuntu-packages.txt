@@ -1,0 +1,2 @@
+# Downloaded by debootstrap stage 1, installed by the second stage.
+openssh-server

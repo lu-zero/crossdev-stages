@@ -509,45 +509,87 @@ fn default_deps(
     Ok(())
 }
 
-/// Provision and populate a Debian rootfs in /target via debootstrap.
-/// Runs inside the sandbox: stage 1 (`--foreign`) downloads and unpacks
-/// without executing target binaries; the second stage runs in a chroot
-/// and needs qemu-user binfmt (F flag) registered on the host for
-/// foreign arches.  Extra packages come from the board's
-/// debian-packages.txt via `--include` — installed during the second
-/// stage, so changing the list means recreating the target.
-fn debian_deps(
+/// Provision and populate a Debian or Ubuntu rootfs in /target via
+/// debootstrap.  Runs inside the sandbox: stage 1 (`--foreign`)
+/// downloads every .deb and unpacks the Priority:required set without
+/// executing target binaries.
+///
+/// The second stage runs in a chroot by default, which is what every
+/// other image builder does and what makes the shipped image a finished
+/// system; a foreign arch needs qemu-user binfmt (F flag) on the host.
+/// `ROOTFS_SECOND_STAGE="first-boot"` stops after stage 1 instead and
+/// leaves the work to the board (see `SecondStage::FirstBoot` for what
+/// that costs).
+///
+/// Extra packages come from the board's `<provider>-packages.txt` via
+/// `--include`; they are installed during the second stage, so changing
+/// the list means recreating the target.
+fn debootstrap_deps(
     runner: &SandboxRunner,
     target: &Target,
     board: &BoardConfig,
     boards_root: &Utf8Path,
+    deb: crate::provider::Debootstrap,
 ) -> Result<()> {
+    let provider = board.rootfs_provider.name();
+    let mode = board.second_stage;
+    let bad_board = |msg: String| crate::error::Error::BoardConfigParse {
+        file: board.name.clone(),
+        msg,
+    };
+
+    // The marker records which second-stage mode produced the tree: a
+    // stage-1-only target still carries /debootstrap and no init, so
+    // reusing it for a chroot build (or the reverse) would ship a rootfs
+    // the board.conf no longer describes.
     let done = target.dir.join(".debootstrap-done");
-    if done.exists() {
-        tracing::info!("Debian rootfs already provisioned, skipping debootstrap.");
-        return Ok(());
-    }
-    let arch = crate::provider::debian_arch(&board.arch).ok_or_else(|| {
-        crate::error::Error::BoardConfigParse {
-            file: board.name.clone(),
-            msg: format!("no Debian port for arch '{}'", board.arch),
+    if let Ok(prev) = std::fs::read_to_string(&done) {
+        if prev.split_whitespace().next() == Some(mode.name()) {
+            tracing::info!("{provider} rootfs already provisioned, skipping debootstrap.");
+            return Ok(());
         }
-    })?;
-    let suite = board.debian_suite.as_deref().unwrap_or("stable");
-    if matches!(suite, "stable" | "testing" | "unstable" | "oldstable") {
+        tracing::info!(
+            "Target was bootstrapped for a different ROOTFS_SECOND_STAGE, redoing it."
+        );
+    }
+
+    let arch = crate::provider::dpkg_arch(&board.arch)
+        .ok_or_else(|| bad_board(format!("no {provider} port for arch '{}'", board.arch)))?;
+    // Ubuntu dropped i386 as a release architecture after 19.10.
+    if board.rootfs_provider == crate::provider::RootfsProvider::Ubuntu && arch == "i386" {
+        return Err(bad_board(
+            "Ubuntu has had no i386 port since 19.10; use the debian provider".into(),
+        ));
+    }
+
+    let suite = match (board.suite.as_deref(), deb.default_suite) {
+        (Some(s), _) => s,
+        (None, Some(d)) => d,
+        (None, None) => {
+            return Err(bad_board(format!(
+                "{} has no rolling suite alias, so {} must name a codename \
+                 (e.g. noble)",
+                provider, deb.suite_key
+            )))
+        }
+    };
+    if deb.is_moving_alias(suite) {
         tracing::warn!(
-            "DEBIAN_SUITE '{suite}' is a moving alias; pin a codename \
-             (e.g. trixie) for reproducible builds"
+            "{} '{suite}' is a moving alias; pin a codename \
+             (e.g. trixie) for reproducible builds",
+            deb.suite_key
         );
     }
     let mirror = board
-        .debian_mirror
+        .mirror
         .as_deref()
-        .unwrap_or("https://deb.debian.org/debian");
+        .unwrap_or_else(|| deb.default_mirror(arch));
 
     // One package name per line; the portage-atom parser would silently
     // drop a second whitespace-separated token, so parse strictly here.
-    let list_path = boards_root.join(&board.name).join("debian-packages.txt");
+    let list_path = boards_root
+        .join(&board.name)
+        .join(format!("{provider}-packages.txt"));
     let mut extra: Vec<String> = Vec::new();
     if list_path.exists() {
         for line in std::fs::read_to_string(&list_path)?.lines() {
@@ -571,11 +613,7 @@ fn debian_deps(
     };
 
     let portage = Portage::new(runner);
-    portage.emerge(&[
-        "--noreplace",
-        "dev-util/debootstrap",
-        "app-crypt/debian-archive-keyring",
-    ])?;
+    portage.emerge(&["--noreplace", "dev-util/debootstrap", deb.keyring_pkg])?;
     // A failed run leaves a partial tree, and debootstrap unpacks with
     // tar -k which hard-errors (FILEEXIST) on existing files -- wipe
     // everything but the workspace markers so a retry starts clean.
@@ -583,24 +621,40 @@ fn debian_deps(
         "find /target -mindepth 1 -maxdepth 1 \
          ! -name '.arch' ! -name '.stage3' ! -name '.provider' -exec rm -rf {} +",
     )?;
+    // --keyring is always passed, never left to the suite script: Ubuntu's
+    // picks its keyring only after an online end-of-life lookup, and falls
+    // back to the removed-keys keyring when that lookup fails.  Naming the
+    // mirror explicitly sidesteps the same lookup's mirror fallback.
     runner.run(&format!(
-        "debootstrap --foreign --arch={arch} \
-         --keyring=/usr/share/keyrings/debian-archive-keyring.gpg \
-         {include}{suite} /target {mirror}"
+        "debootstrap --foreign --arch={arch} --keyring={keyring} \
+         {include}{suite} /target {mirror}",
+        keyring = deb.keyring,
     ))?;
-    runner
-        .run("chroot /target /debootstrap/debootstrap --second-stage")
-        .inspect_err(|_| {
-            tracing::error!(
-                "debootstrap second stage failed -- a foreign-arch chroot \
-                 needs qemu-user binfmt (registered with the F flag) on the host"
-            );
-        })?;
+    if mode == crate::provider::SecondStage::Chroot {
+        runner
+            .run("chroot /target /debootstrap/debootstrap --second-stage")
+            .inspect_err(|_| {
+                tracing::error!(
+                    "debootstrap second stage failed -- a foreign-arch chroot \
+                     needs qemu-user binfmt (registered with the F flag) on the \
+                     host, or ROOTFS_SECOND_STAGE=\"first-boot\" to defer it"
+                );
+            })?;
+    } else {
+        tracing::warn!(
+            "Second stage deferred to first boot: /debootstrap and every \
+             downloaded .deb ship in the image, and the board finishes the \
+             bootstrap itself."
+        );
+    }
     // debootstrap's device setup cannot mknod in a userns and leaves a
     // regular file at dev/null; empty /dev entirely -- devtmpfs mounts
     // over it at boot (the Gentoo path ships an empty /dev the same way).
     runner.run("find /target/dev -mindepth 1 -delete")?;
-    std::fs::write(done, chrono::Utc::now().to_rfc3339())?;
+    std::fs::write(
+        done,
+        format!("{} {}\n", mode.name(), chrono::Utc::now().to_rfc3339()),
+    )?;
     Ok(())
 }
 
@@ -941,7 +995,7 @@ fn default_assemble(
 
     match board.rootfs_provider {
         RootfsProvider::Gentoo => os_config_openrc(runner, board)?,
-        RootfsProvider::Debian => os_config_debian(runner, board)?,
+        RootfsProvider::Debian | RootfsProvider::Ubuntu => os_config_deb(runner, board)?,
         RootfsProvider::None => {}
     }
 
@@ -1045,41 +1099,99 @@ fn os_config_openrc(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
     )
 }
 
-/// systemd configuration of an assembled Debian rootfs: hostname, serial
-/// getty, empty root password (same policy as the Gentoo image).  All
-/// plain file edits and symlinks — no target-arch execution.
-fn os_config_debian(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+/// systemd configuration of an assembled Debian or Ubuntu rootfs: the
+/// files the image cannot boot without (fstab, hostname, hosts, a serial
+/// getty, a root password) plus the permissive sshd drop-in the Gentoo
+/// image also ships.  All plain file edits and symlinks, no target-arch
+/// execution.
+///
+/// The init these produce is systemd, which is not a guess: debootstrap's
+/// default variant installs Priority:required plus Priority:important,
+/// and `systemd-sysv` (which owns /sbin/init) is Priority:important on
+/// both Debian trixie and Ubuntu noble, as is the `init` metapackage
+/// whose Pre-Depends puts systemd-sysv first.
+fn os_config_deb(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+    let deferred = board.second_stage == crate::provider::SecondStage::FirstBoot;
+    let root = "/build/gen/root";
+
+    // debootstrap leaves an "UNCONFIGURED FSTAB FOR BASE SYSTEM" stub with
+    // no entries.  systemd mounts the API filesystems itself and the kernel
+    // has already mounted the root, so the one line that earns its place is
+    // the root entry: it is what fsck-at-boot and `mount -o remount` read.
+    // Written through a shell heredoc for the same reason extlinux.conf is:
+    // BOOT_ROOT_DEV is spelled PARTUUID=${BOOT_PART_UUID_2} and only means
+    // something once expanded.
+    if let Some(root_dev) = &board.root_dev {
+        runner.run(&format!(
+            "{exports}cat > {root}/etc/fstab <<EOF\n\
+             # <file system> <mount point> <type> <options> <dump> <pass>\n\
+             {root_dev}  /  ext4  defaults,noatime  0  1\n\
+             EOF\n",
+            exports = DiskId::of(board).exports(),
+        ))?;
+    }
+
     runner.run(&format!(
-        "printf '{}\n' > /build/gen/root/etc/hostname",
+        "printf '{}\n' > {root}/etc/hostname",
         board.hostname
+    ))?;
+    // Without the second line `sudo`, `hostname -f` and anything else that
+    // resolves the machine's own name wait for a DNS timeout that never
+    // comes on a board with no network.
+    runner.run(&format!(
+        "printf '127.0.0.1\tlocalhost\n127.0.1.1\t{host}\n\n\
+         ::1\tlocalhost ip6-localhost ip6-loopback\nff02::1\tip6-allnodes\n\
+         ff02::2\tip6-allrouters\n' > {root}/etc/hosts",
+        host = board.hostname,
     ))?;
 
     if let (Some(tty), Some(_baud)) = (&board.serial_tty, &board.serial_baud) {
         // Offline enable: serial-getty@ carries its own agetty invocation,
-        // the baud rate comes from the kernel console= parameter.
+        // the baud rate comes from the kernel console= parameter.  The link
+        // target is only unpacked by the second stage, so with a deferred
+        // one this dangles until first boot finishes, which is exactly when
+        // systemd first reads it.
         runner.run(&format!(
-            "mkdir -p /build/gen/root/etc/systemd/system/getty.target.wants && \
+            "mkdir -p {root}/etc/systemd/system/getty.target.wants && \
              ln -sf /lib/systemd/system/serial-getty@.service \
-               /build/gen/root/etc/systemd/system/getty.target.wants/serial-getty@{tty}.service"
+               {root}/etc/systemd/system/getty.target.wants/serial-getty@{tty}.service"
         ))?;
     }
 
     if !board.services.is_empty() {
         tracing::warn!(
-            "BOOT_SERVICES is OpenRC-only and ignored for the debian \
-             provider; enable units from post-assemble.sh instead"
+            "BOOT_SERVICES is OpenRC-only and ignored for the {} \
+             provider; enable units from post-assemble.sh instead",
+            board.rootfs_provider.name()
         );
     }
 
-    runner.run("sed -i -e 's/^root:[^:]*:/root::/' /build/gen/root/etc/shadow")?;
+    if deferred {
+        // Stage 1 unpacks only Priority:required, which contains no init on
+        // either distribution, so /sbin/init is free and the kernel finds
+        // this shim there and nothing else.  It runs the second stage from
+        // the .debs already in the image, then hands over to the real init.
+        runner.run(&format!(
+            "install -m 0755 /scripts/defaults/scripts/debootstrap-second-stage.init \
+               {root}/sbin/init"
+        ))?;
+    } else {
+        // /etc/shadow is written by base-passwd's postinst, i.e. by the
+        // second stage; with a deferred one it does not exist yet and the
+        // shim applies this same policy on the board instead.
+        runner.run(&format!(
+            "sed -i -e 's/^root:[^:]*:/root::/' {root}/etc/shadow"
+        ))?;
+    }
+
     // Same permissive-ssh policy the Gentoo image ships; Debian's default
     // (prohibit-password) would lock out the only account.  Harmless when
     // sshd isn't installed.
-    runner.run(
-        "mkdir -p /build/gen/root/etc/ssh/sshd_config.d && \
+    runner.run(&format!(
+        "mkdir -p {root}/etc/ssh/sshd_config.d && \
          printf 'PermitRootLogin yes\nPermitEmptyPasswords yes\n' \
-         > /build/gen/root/etc/ssh/sshd_config.d/90-crossdev-stages.conf",
-    )
+         > {root}/etc/ssh/sshd_config.d/90-crossdev-stages.conf",
+    ))
 }
 
 fn default_pack(
@@ -1254,14 +1366,14 @@ pub fn build(
                     defaults_root,
                 )?;
                 install_sandbox_extras(sandbox, board, boards_root)?;
-                match provider {
-                    RootfsProvider::Gentoo => {
+                match provider.debootstrap() {
+                    Some(deb) => debootstrap_deps(_r, target, board, boards_root, deb),
+                    None if provider == RootfsProvider::Gentoo => {
                         default_deps(_r, ws, sandbox, target, board, boards_root, defaults_root)
                     }
-                    RootfsProvider::Debian => debian_deps(_r, target, board, boards_root),
                     // No default package installation; override-deps.sh
                     // (already handled by run_step) is the provider.
-                    RootfsProvider::None => Ok(()),
+                    None => Ok(()),
                 }
             }),
             "checkout" => run_step(
