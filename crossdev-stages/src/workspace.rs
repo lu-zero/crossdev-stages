@@ -19,10 +19,18 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    /// Open the workspace at the default XDG cache location.
+    /// Open the workspace at the default XDG cache location
+    /// (`$XDG_CACHE_HOME/crossdev-stages`, falling back to `~/.cache`).
     pub fn open() -> Result<Self> {
-        let base = dirs_next().join(CACHE_SUBDIR);
-        Ok(Self { base })
+        Ok(Self::at(dirs_next().join(CACHE_SUBDIR)))
+    }
+
+    /// Open the workspace rooted at an explicit `base` directory.
+    ///
+    /// Lets library and CI consumers use a non-XDG cache root (e.g. a
+    /// per-job scratch dir) instead of the default `~/.cache` location.
+    pub fn at(base: Utf8PathBuf) -> Self {
+        Self { base }
     }
 
     pub fn base(&self) -> &Utf8Path {
