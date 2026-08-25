@@ -6,7 +6,7 @@
 crossdev-stages
   sandbox   setup|list|prepare|crossdev|enter|run|destroy
   target    setup|list|stage1|update|install|ldconfig|destroy|export
-  image     build|prune|export
+  image     build|export
   stages    list|fetch
   board     list|info
   maint     cleanup|logs|doctor
