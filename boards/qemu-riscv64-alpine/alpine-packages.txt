@@ -1,0 +1,10 @@
+# Installed alongside alpine-base by `apk add` during the deps step.
+openssh
+# grow-rootfs calls findmnt, sfdisk, partx and resize2fs.  alpine-base has
+# none of them (busybox carries no findmnt), and Alpine splits util-linux
+# one binary per package; without these the first-boot resize warns and
+# does nothing.
+findmnt
+sfdisk
+partx
+e2fsprogs-extra

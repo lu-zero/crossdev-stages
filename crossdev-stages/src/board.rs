@@ -26,6 +26,9 @@ pub struct BoardConfig {
     pub mirror: Option<String>,
     /// ROOTFS_SECOND_STAGE; absent → chroot (build-time, needs qemu-user).
     pub second_stage: SecondStage,
+    pub alpine_branch: Option<String>, // ALPINE_BRANCH; alpine provider, None → "v3.24"
+    pub alpine_mirror: Option<String>, // ALPINE_MIRROR; alpine provider, None → dl-cdn
+    pub alpine_repos: Option<String>,  // ALPINE_REPOS; alpine provider, None → "main community"
 
     // OpenSBI
     pub opensbi_repo: Option<String>,
@@ -292,7 +295,9 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
     let rootfs_provider = match kv.get("ROOTFS_PROVIDER") {
         Some(v) => RootfsProvider::parse(v).ok_or_else(|| Error::BoardConfigParse {
             file: path.to_string(),
-            msg: format!("unknown ROOTFS_PROVIDER '{v}' (valid: gentoo, debian, ubuntu, none)"),
+            msg: format!(
+                "unknown ROOTFS_PROVIDER '{v}' (valid: gentoo, debian, ubuntu, alpine, none)"
+            ),
         })?,
         None => RootfsProvider::default(),
     };
@@ -330,6 +335,9 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         suite: deb.and_then(|d| kv.get(d.suite_key).cloned()),
         mirror: deb.and_then(|d| kv.get(d.mirror_key).cloned()),
         second_stage,
+        alpine_branch: kv.get("ALPINE_BRANCH").cloned(),
+        alpine_mirror: kv.get("ALPINE_MIRROR").cloned(),
+        alpine_repos: kv.get("ALPINE_REPOS").cloned(),
 
         opensbi_repo: kv.get("OPENSBI_REPO").cloned(),
         opensbi_tag: kv.get("OPENSBI_TAG").cloned(),
