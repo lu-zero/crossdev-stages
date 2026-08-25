@@ -170,8 +170,10 @@ pub async fn run(
                             reason: "tar -I 'xz -T0' failed".into(),
                         });
                     }
+                    let digest = write_sha256(&archive)?;
                     let size = std::fs::metadata(&archive).map(|m| m.len()).unwrap_or(0);
                     println!("{archive} ({:.1}M)", size as f64 / 1_048_576.0);
+                    println!("{digest}  {}", archive.file_name().unwrap_or_default());
                 } else {
                     println!("Bundle at {bundle_root}");
                 }
@@ -184,8 +186,10 @@ pub async fn run(
                     if src.is_file() {
                         let dest = out_dir.join(&name);
                         std::fs::copy(&src, &dest)?;
+                        let digest = write_sha256(&dest)?;
                         let size = std::fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
                         println!("{name} ({:.1}M) -> {dest}", size as f64 / 1_048_576.0);
+                        println!("{digest}  {name}");
                     } else {
                         println!("Image file missing: {src}");
                     }
@@ -196,6 +200,40 @@ pub async fn run(
         }
     }
     Ok(())
+}
+
+/// Hash `file` and write `<file>.sha256` beside it, returning the hex digest.
+///
+/// Written in the format `sha256sum -c` expects, with the bare filename rather
+/// than the path, so the check works from whichever directory the image is
+/// carried to.
+fn write_sha256(file: &Utf8Path) -> Result<String> {
+    use sha2::{Digest, Sha256};
+
+    use std::io::Read;
+
+    let mut reader = std::fs::File::open(file)?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 1 << 20];
+    loop {
+        let read = reader.read(&mut buf)?;
+        if read == 0 {
+            break;
+        }
+        hasher.update(&buf[..read]);
+    }
+    let digest: String = hasher.finalize().iter().fold(String::new(), |mut acc, byte| {
+        use std::fmt::Write;
+        let _ = write!(acc, "{byte:02x}");
+        acc
+    });
+
+    let name = file.file_name().unwrap_or_default();
+    std::fs::write(
+        format!("{file}.sha256"),
+        format!("{digest}  {name}\n"),
+    )?;
+    Ok(digest)
 }
 
 /// Copy only the paths listed in `<board>/bundle.list` (one relative path

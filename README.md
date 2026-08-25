@@ -250,6 +250,32 @@ by `uboot`.
 | `TAGS` | no | Free-form labels (bash array, e.g. `TAGS=("testing" "wip")`) -- shown in `board list` and `status` |
 | `DESCRIPTION` | no | Free-form note shown in `board info` |
 
+### Partition identifiers
+
+The `pack` step exports a set of identifiers derived from the board, so a board
+can name its root filesystem without depending on which slot the card lands in.
+Board scripts see them before `board.conf` is sourced, and genimage expands
+them in `genimage.cfg` through `${VAR}`:
+
+| Variable | Description |
+|---|---|
+| `BOOT_DISK_ID` | MBR disk signature, 8 hex digits, never zero |
+| `BOOT_DISK_SIG` | The same value as `0x...`, for genimage's `disk-signature` |
+| `BOOT_DISK_UUID` | GPT disk UUID, for genimage's `disk-uuid` |
+| `BOOT_PART_UUID_1`..`_4` | GPT partition UUIDs, for `partition-uuid` |
+
+The kernel understands only `PARTUUID=`, `PARTLABEL=` and `/dev/` paths without
+an initramfs (`block/early-lookup.c`), and it spells an MBR PARTUUID as the disk
+signature and the 1-based slot: `BOOT_ROOT_DEV="PARTUUID=${BOOT_DISK_ID}-02"`
+for the second partition. GPT boards use `BOOT_PART_UUID_N` directly.
+
+The values come from a hash of what decides the image -- board name, arch,
+CHOST, kernel repo and tag, CFLAGS -- so two boards never collide and building
+the same board twice produces the same disk. Editing a comment in `board.conf`
+does not change them. genimage's own `disk-signature = random` cannot be used
+here: `assemble` writes the boot config before `pack` creates the partition
+table, so the value has to be known first.
+
 ## Limitations
 
 - Some packages are cross-compilation unfriendly and rely on runtime checks (e.g. git iconv checks)
