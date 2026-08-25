@@ -1,0 +1,63 @@
+arm64: dts: rockchip: rk356x: Add JPEG decoder node
+
+From "[PATCH v2 0/4] media: rockchip: Add JPEG decoder driver", Sascha Hauer,
+2026-08-25, Message-ID 20260825-rockchip-jpegdec-v2-0-86af859a3266@pengutronix.de.
+Applies to v7.2 as posted; the series is based on v7.2-rc7.
+
+Add device tree nodes for the Rockchip JPEG hardware decoder and its
+IOMMU on the RK356x.
+
+The decoder is the same block as on the RK3588, here at 0xfded0000 with
+its MMU at 0xfded0480 and the same 0x400 register window.  Only the
+integration differs: ACLK_JDEC and HCLK_JDEC instead of the JPEG decoder
+clocks, SRST_A_JDEC and SRST_H_JDEC for the AXI and AHB resets, and the
+RGA power domain rather than VDPU.
+
+No rate is assigned to the AXI clock here.  Unlike on the RK3588 it is a
+gate off aclk_rga_pre, shared with the RGA, the IEP and the EBC, so a
+rate set for the decoder would move those too.  Its mux tops out at
+300 MHz, close to the 297 MHz the downstream BSP asks for, and the vepu
+node on the same clock tree already leaves it alone.
+
+The domain needs nothing else, it already lists qos_jpeg_dec.
+
+Both blocks are entirely on-SoC and have no board dependency, so they are
+enabled unconditionally like the other codec blocks in this file.
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Sascha Hauer <s.hauer@pengutronix.de>
+
+diff --git a/arch/arm64/boot/dts/rockchip/rk356x-base.dtsi b/arch/arm64/boot/dts/rockchip/rk356x-base.dtsi
+index a5832895bd392..e6c7ae908a99f 100644
+--- a/arch/arm64/boot/dts/rockchip/rk356x-base.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk356x-base.dtsi
+@@ -619,6 +619,28 @@ rga: rga@fdeb0000 {
+ 		power-domains = <&power RK3568_PD_RGA>;
+ 	};
+ 
++	jpegd: video-codec@fded0000 {
++		compatible = "rockchip,rk3568-jpegd";
++		reg = <0x0 0xfded0000 0x0 0x400>;
++		interrupts = <GIC_SPI 62 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&cru ACLK_JDEC>, <&cru HCLK_JDEC>;
++		clock-names = "axi", "ahb";
++		resets = <&cru SRST_A_JDEC>, <&cru SRST_H_JDEC>;
++		reset-names = "axi", "ahb";
++		iommus = <&jpegd_mmu>;
++		power-domains = <&power RK3568_PD_RGA>;
++	};
++
++	jpegd_mmu: iommu@fded0480 {
++		compatible = "rockchip,rk3568-iommu";
++		reg = <0x0 0xfded0480 0x0 0x40>;
++		interrupts = <GIC_SPI 61 IRQ_TYPE_LEVEL_HIGH>;
++		clocks = <&cru ACLK_JDEC>, <&cru HCLK_JDEC>;
++		clock-names = "aclk", "iface";
++		power-domains = <&power RK3568_PD_RGA>;
++		#iommu-cells = <0>;
++	};
++
+ 	vepu: video-codec@fdee0000 {
+ 		compatible = "rockchip,rk3568-vepu";
+ 		reg = <0x0 0xfdee0000 0x0 0x800>;
+

@@ -1,0 +1,149 @@
+media: dt-bindings: Add Rockchip JPEG decoder
+
+From "[PATCH v2 0/4] media: rockchip: Add JPEG decoder driver", Sascha Hauer,
+2026-08-25, Message-ID 20260825-rockchip-jpegdec-v2-0-86af859a3266@pengutronix.de.
+Applies to v7.2 as posted; the series is based on v7.2-rc7.
+
+Add a devicetree binding schema for the JPEG hardware decoder Rockchip
+integrates into a number of its SoCs.  Documents the single register
+window (task registers plus the LLP link-table block at offset 0x300),
+the decode interrupt, the AXI and AHB clocks and resets, the IOMMU and
+the power domain.
+
+The core is not tied to one SoC.  Downstream it is known as the VDPU720
+and the same block sits on the RK3528, RK3562, RK356x, RK3576, RK3588 and
+RV1126B, with only the clocks, the resets and the power domain differing,
+none of which this schema constrains.  A compatible per SoC is all it
+takes to cover them; the RK3568 and the RK3588 are the two that have been
+tested and are enabled here.
+
+The resets and the power domain are required.  The block cannot be
+reached with its domain off, and the driver falls back to pulsing the
+reset lines when a frame times out and the in-block soft reset does not
+complete, which a node without them would leave with no way to recover.
+
+The IOMMU stays optional.  The driver never refers to it, it is a platform
+integration detail, and rockchip-vpu.yaml does not require it for the
+other codec blocks on these SoCs either.
+
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Sascha Hauer <s.hauer@pengutronix.de>
+
+diff --git a/Documentation/devicetree/bindings/media/rockchip,jpeg-decoder.yaml b/Documentation/devicetree/bindings/media/rockchip,jpeg-decoder.yaml
+new file mode 100644
+index 0000000000000..351b2faa11699
+--- /dev/null
++++ b/Documentation/devicetree/bindings/media/rockchip,jpeg-decoder.yaml
+@@ -0,0 +1,92 @@
++# SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/media/rockchip,jpeg-decoder.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Rockchip JPEG Decoder
++
++maintainers:
++  - Lucas Sinn <lucas.sinn@wolfvision.net>
++  - Sascha Hauer <s.hauer@pengutronix.de>
++
++description:
++  Rockchip's in-house JPEG/MJPEG hardware decoder, known downstream as the
++  VDPU720.  The same core is integrated into a number of Rockchip SoCs, which
++  differ only in the clocks, resets and power domain they are wired to.  A
++  dedicated Link List Processor (LLP) register block, located at offset 0x300
++  within the same register window, allows the hardware to decode a chain of
++  frames autonomously ("link mode").
++
++properties:
++  compatible:
++    enum:
++      - rockchip,rk3568-jpegd
++      - rockchip,rk3588-jpegd
++
++  reg:
++    maxItems: 1
++    description:
++      The decoder register window.  It covers both the task (function)
++      registers at offset 0x000 and the LLP (link table) registers at
++      offset 0x300.
++
++  interrupts:
++    maxItems: 1
++
++  clocks:
++    items:
++      - description: AXI clock
++      - description: AHB clock
++
++  clock-names:
++    items:
++      - const: axi
++      - const: ahb
++
++  resets:
++    items:
++      - description: AXI reset line
++      - description: AHB reset line
++
++  reset-names:
++    items:
++      - const: axi
++      - const: ahb
++
++  power-domains:
++    maxItems: 1
++
++  iommus:
++    maxItems: 1
++
++required:
++  - compatible
++  - reg
++  - interrupts
++  - clocks
++  - clock-names
++  - resets
++  - reset-names
++  - power-domains
++
++additionalProperties: false
++
++examples:
++  - |
++    #include <dt-bindings/clock/rockchip,rk3588-cru.h>
++    #include <dt-bindings/interrupt-controller/arm-gic.h>
++    #include <dt-bindings/power/rk3588-power.h>
++    #include <dt-bindings/reset/rockchip,rk3588-cru.h>
++
++    video-codec@fdb90000 {
++        compatible = "rockchip,rk3588-jpegd";
++        reg = <0xfdb90000 0x400>;
++        interrupts = <GIC_SPI 129 IRQ_TYPE_LEVEL_HIGH 0>;
++        clocks = <&cru ACLK_JPEG_DECODER>, <&cru HCLK_JPEG_DECODER>;
++        clock-names = "axi", "ahb";
++        resets = <&cru SRST_A_JPEG_DECODER>, <&cru SRST_H_JPEG_DECODER>;
++        reset-names = "axi", "ahb";
++        iommus = <&jpegd_mmu>;
++        power-domains = <&power RK3588_PD_VDPU>;
++    };
+diff --git a/MAINTAINERS b/MAINTAINERS
+index 8014b9f8253ed..baea7e42663a7 100644
+--- a/MAINTAINERS
++++ b/MAINTAINERS
+@@ -23424,6 +23424,14 @@ F:	Documentation/userspace-api/media/v4l/metafmt-rkisp1.rst
+ F:	drivers/media/platform/rockchip/rkisp1
+ F:	include/uapi/linux/rkisp1-config.h
+ 
++ROCKCHIP JPEG DECODER DRIVER
++M:	Lucas Sinn <lucas.sinn@wolfvision.net>
++M:	Sascha Hauer <s.hauer@pengutronix.de>
++L:	linux-media@vger.kernel.org
++L:	linux-rockchip@lists.infradead.org
++S:	Maintained
++F:	Documentation/devicetree/bindings/media/rockchip,jpeg-decoder.yaml
++
+ ROCKCHIP RK3568 RANDOM NUMBER GENERATOR SUPPORT
+ M:	Daniel Golle <daniel@makrotopia.org>
+ M:	Aurelien Jarno <aurelien@aurel32.net>
+
