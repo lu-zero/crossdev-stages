@@ -245,7 +245,7 @@ by `uboot`.
 | `BOOT_APPEND` | no | Kernel arguments added to that entry |
 | `BOOT_DTB_NAME` | no | DTB to boot, when `BOARD_DTB_GLOB` matches more than one |
 | `ISA_STRICT` | no | `false` downgrades an unrunnable binary to a warning (default: fail) |
-| `ROOTFS_PROVIDER` | no | Who fills the image rootfs: `gentoo` (default; stage3 + cross-emerge + OpenRC), `debian` or `ubuntu` (debootstrap + systemd), `alpine` (apk + OpenRC), `fedora` (container base image + dnf5 + systemd), or `none` (board hooks own it) |
+| `ROOTFS_PROVIDER` | no | Who fills the image rootfs: `gentoo` (default; stage3 + cross-emerge + OpenRC), `debian` or `ubuntu` (debootstrap + systemd), `alpine` (apk + OpenRC), `fedora` (container base image + dnf5 + systemd), `buildroot` (defconfig build), or `none` (board hooks own it) |
 | `DEBIAN_SUITE` | no | debian provider: suite to debootstrap (default `stable`) |
 | `DEBIAN_MIRROR` | no | debian provider: mirror URL (default `https://deb.debian.org/debian`) |
 | `UBUNTU_SUITE` | yes for `ubuntu` | Suite codename, e.g. `noble`; Ubuntu has no rolling alias to default to |
@@ -256,6 +256,9 @@ by `uboot`.
 | `ALPINE_REPOS` | no | alpine provider: repositories under the branch (default `main community`) |
 | `FEDORA_RELEASE` | no | fedora provider: release to unpack (default `44`; only pinned releases are accepted) |
 | `FEDORA_MIRROR` | no | fedora provider: mirror URL (default `https://dl.fedoraproject.org/pub`) |
+| `BUILDROOT_DEFCONFIG` | with `buildroot` | A file in `boards/<board>/` if one is there, otherwise a name in buildroot's own `configs/` |
+| `BUILDROOT_REPO` | no | buildroot provider: git repo (default `https://gitlab.com/buildroot.org/buildroot.git`) |
+| `BUILDROOT_TAG` | no | buildroot provider: release tag, branch or commit SHA (default `master`, warned as unpinned) |
 | `OPENSBI_FW_TYPE` | no | OpenSBI firmware type: `dynamic` (default), `jump`, `payload` |
 | `OPENSBI_MAKE_FLAGS` | no | Extra opensbi make arguments |
 | `U_BOOT_MAKE_FLAGS` | no | Extra u-boot make arguments |
@@ -280,8 +283,10 @@ debootstrap inside the sandbox. `alpine` unpacks the root with `apk`, which
 runs on the host arch, so it needs no emulation at all. `fedora` unpacks a
 pinned container base image and installs on top of it with dnf5. For all four
 the board's extra packages come from
-`boards/<name>/<provider>-packages.txt`, one name per line. `none` leaves it
-to board hooks.
+`boards/<name>/<provider>-packages.txt`, one name per line. `buildroot` runs
+buildroot's own defconfig build and unpacks the rootfs tar it emits, so the
+package set is the defconfig and nothing else. `none` leaves it to board
+hooks.
 
 The debootstrap providers differ only in keyring, mirror and suite naming:
 Ubuntu keeps everything but amd64/i386 on `ports.ubuntu.com`, uses

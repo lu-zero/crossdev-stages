@@ -1115,6 +1115,164 @@ fn report_fedora_missing_init(runner: &SandboxRunner) {
     );
 }
 
+/// Upstream buildroot git.  A board overrides it with BUILDROOT_REPO,
+/// which is how a vendor fork gets used.
+const BUILDROOT_REPO: &str = "https://gitlab.com/buildroot.org/buildroot.git";
+
+/// Buildroot's source tree and its out-of-tree output, both inside the
+/// build dir so they are per-build and go when the build does.
+const BUILDROOT_SRC: &str = "/build/buildroot";
+const BUILDROOT_OUT: &str = "/build/buildroot-out";
+
+/// Run buildroot and unpack the rootfs it produced into `/target`.
+///
+/// `/target` is the seam, not `gen/root`: the whole point of the
+/// provider split is that everything after `deps` is provider-agnostic,
+/// and `assemble` already copies `/target` into `gen/root`, strips the
+/// workspace markers and recreates the mount points.  Handing buildroot
+/// its own path into `gen/root` would buy nothing and cost `chroot
+/// --board`, the target-provider guard, and the ABI and ISA checks,
+/// which all read the target or the tree assemble builds from it.
+///
+/// Buildroot's kernel, DTBs and bootloader stay where buildroot put them
+/// (`BUILDROOT_OUT/images/`); [`buildroot_boot_artifacts`] installs the
+/// ones the board named.
+fn buildroot_deps(runner: &SandboxRunner, target: &Target, board: &BoardConfig) -> Result<()> {
+    let done = target.dir.join(".buildroot-done");
+    if done.exists() {
+        tracing::info!("Buildroot rootfs already provisioned, skipping.");
+        return Ok(());
+    }
+    let defconfig = board.buildroot_defconfig.as_deref().ok_or_else(|| {
+        crate::error::Error::BoardConfigParse {
+            file: board.name.clone(),
+            msg: "the buildroot provider needs BUILDROOT_DEFCONFIG".into(),
+        }
+    })?;
+    // A defconfig name is a make target and a make variable value; a
+    // shell metacharacter in it would run as one.
+    if defconfig.contains(|c: char| c.is_whitespace() || "$`'\"\\;&|<>()".contains(c)) {
+        return Err(crate::error::Error::BoardConfigParse {
+            file: board.name.clone(),
+            msg: format!("BUILDROOT_DEFCONFIG '{defconfig}' is not a plain file name"),
+        });
+    }
+
+    // Everything buildroot's support/dependencies/dependencies.sh calls
+    // mandatory that this project's own defaults do not already install
+    // (bc and git are in defaults/sandbox-packages.txt).  All of these
+    // are in a stage3 today, most of them as somebody else's dependency
+    // -- --noreplace makes saying so cost nothing and stops it being an
+    // assumption.
+    let portage = Portage::new(runner);
+    portage.emerge(&[
+        "--noreplace",
+        "app-arch/cpio",
+        "app-arch/unzip",
+        "net-misc/rsync",
+        "net-misc/wget",
+        "sys-apps/which",
+    ])?;
+
+    // A buildroot build that fails leaves its clone behind and does not
+    // mark `deps` done, so the retry comes back through here and
+    // cached_clone would fall over on the existing directory.  The other
+    // clone sites never see this: they run in `checkout`, which has
+    // nothing after it that can fail.
+    let cloned = runner.run_output(&format!(
+        "[ -d {BUILDROOT_SRC}/.git ] && echo yes || echo no"
+    ))? == "yes";
+    if !cloned {
+        let repo = board.buildroot_repo.as_deref().unwrap_or(BUILDROOT_REPO);
+        let tag = board.buildroot_tag.as_deref().unwrap_or("master");
+        crate::source_cache::cached_clone(runner, repo, tag, BUILDROOT_SRC, "buildroot")?;
+    }
+
+    runner.run(&buildroot_build_script(&board.name, defconfig))?;
+
+    // Same reason debian_deps clears the tree: a half-unpacked rootfs
+    // from a failed run would collide with this one.
+    runner.run(
+        "find /target -mindepth 1 -maxdepth 1 \
+         ! -name '.arch' ! -name '.stage3' ! -name '.provider' -exec rm -rf {} +",
+    )?;
+    // ./dev is excluded for the reason the stage3 unpack excludes it:
+    // the tar carries real device nodes, mknod is denied in a user
+    // namespace, and devtmpfs mounts over the directory at boot anyway.
+    // assemble recreates the empty mount points.
+    runner.run(&format!(
+        "tar -xpf {out}/images/rootfs.tar --numeric-owner --exclude='./dev' -C /target",
+        out = BUILDROOT_OUT,
+    ))?;
+    std::fs::write(done, chrono::Utc::now().to_rfc3339())?;
+    Ok(())
+}
+
+/// Shell that configures and runs buildroot out of tree.
+///
+/// The defconfig is looked up board file first, then buildroot's own
+/// `configs/` -- the same order `KERNEL_CONFIG_FRAGMENTS` uses.  The
+/// lookup happens in the shell rather than on the host so there is one
+/// answer instead of a host-side guess and a sandbox-side one.
+///
+/// `BR2_DL_DIR` points into the workspace cache.  Buildroot fetches
+/// every package tarball itself, and without this each build starts from
+/// an empty download dir and refetches the lot.
+///
+/// No `-j`, which every other build step in this project passes:
+/// buildroot does not support a parallel top-level make and says so.
+/// `BR2_JLEVEL` in the defconfig (default: nproc) is where a board asks
+/// for parallelism.
+fn buildroot_build_script(board_name: &str, defconfig: &str) -> String {
+    format!(
+        "set -e\n\
+         cd {src}\n\
+         mkdir -p /cache/buildroot-dl\n\
+         export BR2_DL_DIR=/cache/buildroot-dl\n\
+         board_defconfig=/scripts/boards/{board_name}/{defconfig}\n\
+         if [ -f \"$board_defconfig\" ]; then\n\
+             echo \"defconfig: $board_defconfig\"\n\
+             make O={out} BR2_DEFCONFIG=\"$board_defconfig\" defconfig\n\
+         elif [ -f configs/{defconfig} ]; then\n\
+             echo \"defconfig: buildroot configs/{defconfig}\"\n\
+             make O={out} {defconfig}\n\
+         else\n\
+             echo \"no BUILDROOT_DEFCONFIG {defconfig}: not in \
+                   boards/{board_name}/ and not in buildroot's configs/\" >&2\n\
+             exit 1\n\
+         fi\n\
+         {tar_rootfs}\
+         make O={out}",
+        src = BUILDROOT_SRC,
+        out = BUILDROOT_OUT,
+        tar_rootfs = buildroot_force_tar_rootfs(),
+    )
+}
+
+/// Shell that makes buildroot emit `images/rootfs.tar` whatever else the
+/// defconfig asked for.
+///
+/// A tar is the one output shape that unpacks into `/target`, and almost
+/// no stock defconfig sets it -- `qemu_riscv64_virt_defconfig` asks for
+/// ext2 and nothing else.  Appending the symbol and re-running
+/// olddefconfig is what the kernel step already does with its config
+/// fragments, and so is checking afterwards that the symbol survived:
+/// olddefconfig drops a symbol whose dependencies are unmet without a
+/// word, and the failure would otherwise surface as a missing file after
+/// an hour of building.
+fn buildroot_force_tar_rootfs() -> String {
+    format!(
+        "echo 'BR2_TARGET_ROOTFS_TAR=y' >> {out}/.config\n\
+         make O={out} olddefconfig\n\
+         grep -qx 'BR2_TARGET_ROOTFS_TAR=y' {out}/.config || {{\n\
+             echo 'buildroot refused BR2_TARGET_ROOTFS_TAR; \
+                   this defconfig cannot emit a rootfs tar' >&2\n\
+             exit 1\n\
+         }}\n",
+        out = BUILDROOT_OUT,
+    )
+}
+
 fn default_checkout(
     runner: &SandboxRunner,
     board: &BoardConfig,
@@ -1376,7 +1534,8 @@ fn default_assemble(
         "rm -f /build/gen/root/.arch /build/gen/root/.stage3 \
          /build/gen/root/.provider /build/gen/root/.stage1 \
          /build/gen/root/.updated /build/gen/root/.debootstrap-done \
-         /build/gen/root/.apk-done /build/gen/root/.fedora-done",
+         /build/gen/root/.apk-done /build/gen/root/.fedora-done \
+         /build/gen/root/.buildroot-done",
     )?;
     // unpack_tarball excludes ./dev to avoid permission errors in rootless containers.
     // Recreate the empty mount-point directories so the kernel can mount devtmpfs,
@@ -1414,6 +1573,8 @@ fn default_assemble(
                 "cp /build/linux/arch/{karch}/boot/{kname} /build/gen/boot/"
             ))?;
         }
+    } else if board.rootfs_provider == RootfsProvider::Buildroot {
+        buildroot_boot_artifacts(runner, board)?;
     }
 
     // Firmware, in the two shapes a board actually has.  Every board carrying
@@ -1457,6 +1618,7 @@ fn default_assemble(
             os_config_systemd(runner, board)?
         }
         RootfsProvider::Alpine => os_config_alpine(runner, board)?,
+        RootfsProvider::Buildroot => os_config_buildroot(board),
         RootfsProvider::None => {}
     }
 
@@ -1475,6 +1637,54 @@ fn default_assemble(
     }
 
     runner.run("/usr/local/bin/ldconfig -v -r /build/gen/root")
+}
+
+/// Install the kernel and device trees buildroot built into `/boot`.
+///
+/// The board says which files with the two fields it would use anyway,
+/// `BOOT_KERNEL_NAME` and `BOARD_DTB_GLOB`; only the directory they are
+/// read from changes, from the kernel tree this project built to the
+/// one buildroot filled.  `extlinux.conf` is written from the same two
+/// fields either way, so a buildroot board boots through the same path
+/// as every other extlinux board.
+///
+/// Kernel modules need nothing here: buildroot installed them into the
+/// rootfs it handed over, which is already in `gen/root`.
+fn buildroot_boot_artifacts(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+    let images = format!("{BUILDROOT_OUT}/images");
+    if let Some(dtb_glob) = &board.kernel_dtb_glob {
+        runner.run(&format!("cp {images}/{dtb_glob} /build/gen/boot/"))?;
+    }
+    if let Some(kname) = &board.kernel_name {
+        runner.run(&format!("cp {images}/{kname} /build/gen/boot/"))?;
+    }
+    Ok(())
+}
+
+/// What the buildroot provider does not configure, and why.
+///
+/// Everything `os_config_openrc` and `os_config_systemd` write is a
+/// defconfig symbol in buildroot: `BR2_TARGET_GENERIC_HOSTNAME`,
+/// `BR2_TARGET_GENERIC_GETTY_PORT`, `BR2_TARGET_GENERIC_ROOT_PASSWD`,
+/// and the init system itself.  Buildroot is the first provider that
+/// owns this seam outright, so the provider writes nothing rather than
+/// arguing with the defconfig -- but a board that set the keys and got
+/// silence would have no way to find that out.
+fn os_config_buildroot(board: &BoardConfig) {
+    let mut ignored: Vec<&str> = Vec::new();
+    if board.serial_tty.is_some() || board.serial_baud.is_some() {
+        ignored.push("BOOT_SERIAL_TTY/BOOT_SERIAL_BAUD");
+    }
+    if !board.services.is_empty() {
+        ignored.push("BOOT_SERVICES");
+    }
+    if !ignored.is_empty() {
+        tracing::warn!(
+            "{} configure the rootfs, which buildroot owns: set \
+             BR2_TARGET_GENERIC_GETTY_* and the init system in the defconfig instead",
+            ignored.join(" and ")
+        );
+    }
 }
 
 /// The OpenRC parts Gentoo and Alpine genuinely share: the runlevel
@@ -1896,6 +2106,9 @@ pub fn build(
                     None if provider == RootfsProvider::Fedora => {
                         fedora_deps(_r, target, board, boards_root)
                     }
+                    None if provider == RootfsProvider::Buildroot => {
+                        buildroot_deps(_r, target, board)
+                    }
                     // No default package installation; override-deps.sh
                     // (already handled by run_step) is the provider.
                     None => Ok(()),
@@ -2063,7 +2276,18 @@ fn warn_unpinned_sources(board: &BoardConfig) {
         board.firmware_repo.as_deref(),
         Some(fw_tag.as_str()),
     );
-    check("kernel", Some(&board.kernel_repo), Some(&board.kernel_tag));
+    if board.rootfs_provider == RootfsProvider::Buildroot {
+        check(
+            "buildroot",
+            Some(board.buildroot_repo.as_deref().unwrap_or(BUILDROOT_REPO)),
+            board.buildroot_tag.as_deref(),
+        );
+    }
+    // A board whose kernel comes from its rootfs provider declares no
+    // kernel repo; there is nothing to be unpinned about.
+    if !board.kernel_repo.is_empty() {
+        check("kernel", Some(&board.kernel_repo), Some(&board.kernel_tag));
+    }
     // TODO: check fip once BOOT_PIPELINE lands fip_repo/fip_tag on BoardConfig.
 }
 
@@ -2086,13 +2310,24 @@ fn record_sources(
         manifest.record_source(runner, "firmware", repo, &tag, "/build/firmware")?;
     }
     // TODO: record fip once BOOT_PIPELINE lands fip_repo/fip_tag on BoardConfig.
-    manifest.record_source(
-        runner,
-        "kernel",
-        &board.kernel_repo,
-        &board.kernel_tag,
-        "/build/linux",
-    )?;
+    if board.rootfs_provider == RootfsProvider::Buildroot {
+        manifest.record_source(
+            runner,
+            "buildroot",
+            board.buildroot_repo.as_deref().unwrap_or(BUILDROOT_REPO),
+            board.buildroot_tag.as_deref().unwrap_or("master"),
+            BUILDROOT_SRC,
+        )?;
+    }
+    if !board.kernel_repo.is_empty() {
+        manifest.record_source(
+            runner,
+            "kernel",
+            &board.kernel_repo,
+            &board.kernel_tag,
+            "/build/linux",
+        )?;
+    }
     Ok(())
 }
 
@@ -2109,7 +2344,8 @@ fn format_duration(d: std::time::Duration) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{atom_cpn, extlinux_conf, extlinux_fdt, kernel_config_fragments};
+    use super::{atom_cpn, buildroot_build_script, extlinux_conf, extlinux_fdt,
+                kernel_config_fragments};
     use crate::board::BoardConfig;
 
     fn board_with(fragments: &[&str]) -> BoardConfig {
@@ -2193,6 +2429,39 @@ mod tests {
         let mut board = extlinux_board();
         board.kernel_name = None;
         assert!(extlinux_conf(&board).is_err());
+    }
+
+    #[test]
+    fn a_defconfig_is_looked_up_board_first_then_buildroots_own_configs() {
+        let script = buildroot_build_script("demo", "qemu_riscv64_virt_defconfig");
+        assert!(script.contains("/scripts/boards/demo/qemu_riscv64_virt_defconfig"));
+        assert!(script.contains("configs/qemu_riscv64_virt_defconfig"));
+        // A board file goes through BR2_DEFCONFIG; a stock name is a
+        // make target.  Both forms have to be generated.
+        assert!(script.contains("BR2_DEFCONFIG=\"$board_defconfig\" defconfig"));
+        assert!(script.contains("make O=/build/buildroot-out qemu_riscv64_virt_defconfig"));
+        // Neither one silently building the wrong thing: a name that is
+        // in neither place stops the build.
+        assert!(script.contains("no BUILDROOT_DEFCONFIG"));
+    }
+
+    #[test]
+    fn the_rootfs_tar_is_forced_on_and_then_checked() {
+        let script = buildroot_build_script("demo", "any_defconfig");
+        // Appending the symbol is not enough: olddefconfig drops one
+        // whose dependencies are unmet without a word.
+        assert!(script.contains("echo 'BR2_TARGET_ROOTFS_TAR=y' >>"));
+        assert!(script.contains("olddefconfig"));
+        assert!(script.contains("grep -qx 'BR2_TARGET_ROOTFS_TAR=y'"));
+    }
+
+    /// Buildroot does not support a parallel top-level make, so the
+    /// `-j$(nproc)` every other build step passes must not appear here.
+    #[test]
+    fn the_top_level_make_is_not_parallel() {
+        let script = buildroot_build_script("demo", "any_defconfig");
+        assert!(!script.contains("-j"));
+        assert!(script.contains("BR2_DL_DIR=/cache/buildroot-dl"));
     }
 
     #[test]

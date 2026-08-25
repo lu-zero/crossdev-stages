@@ -31,6 +31,13 @@ pub struct BoardConfig {
     pub alpine_repos: Option<String>,  // ALPINE_REPOS; alpine provider, None → "main community"
     pub fedora_release: Option<String>, // FEDORA_RELEASE; fedora provider, None → "44"
     pub fedora_mirror: Option<String>, // FEDORA_MIRROR; fedora provider, None → dl.fedoraproject.org/pub
+    /// BUILDROOT_DEFCONFIG; buildroot provider.  A file in
+    /// `boards/<board>/` if one is there, otherwise a name in
+    /// buildroot's own `configs/` -- same board-first lookup
+    /// KERNEL_CONFIG_FRAGMENTS uses.
+    pub buildroot_defconfig: Option<String>,
+    pub buildroot_repo: Option<String>, // BUILDROOT_REPO; None → upstream git
+    pub buildroot_tag: Option<String>,  // BUILDROOT_TAG; None → "master" (warned as unpinned)
 
     // OpenSBI
     pub opensbi_repo: Option<String>,
@@ -299,7 +306,7 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
             file: path.to_string(),
             msg: format!(
                 "unknown ROOTFS_PROVIDER '{v}' \
-                 (valid: gentoo, debian, ubuntu, alpine, fedora, none)"
+                 (valid: gentoo, debian, ubuntu, alpine, fedora, buildroot, none)"
             ),
         })?,
         None => RootfsProvider::default(),
@@ -343,6 +350,11 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
         alpine_repos: kv.get("ALPINE_REPOS").cloned(),
         fedora_release: kv.get("FEDORA_RELEASE").cloned(),
         fedora_mirror: kv.get("FEDORA_MIRROR").cloned(),
+        buildroot_defconfig: kv.get("BUILDROOT_DEFCONFIG").cloned(),
+        buildroot_repo: kv.get("BUILDROOT_REPO").cloned(),
+        // No TAG fallback, for the reason tfa/rkbin/fip have none: TAG
+        // names a vendor-SDK ref that means nothing in buildroot's tree.
+        buildroot_tag: kv.get("BUILDROOT_TAG").cloned(),
 
         opensbi_repo: kv.get("OPENSBI_REPO").cloned(),
         opensbi_tag: kv.get("OPENSBI_TAG").cloned(),

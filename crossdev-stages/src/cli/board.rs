@@ -22,12 +22,38 @@ pub fn run(boards_root: &Utf8Path, cmd: BoardCmd) -> Result<()> {
             println!("CHOST:          {}", board_cfg.chost());
             println!("CFLAGS:         {}", board_cfg.effective_cflags());
             println!("Cross-compile:  {}", board_cfg.cross_compile);
+            // Who fills the rootfs decides what most of the rest means,
+            // so it is not an optional line.
+            println!("Rootfs:         {}", board_cfg.rootfs_provider.name());
+            if let Some(deb) = board_cfg.rootfs_provider.debootstrap() {
+                let suite = board_cfg
+                    .suite
+                    .as_deref()
+                    .or(deb.default_suite)
+                    .unwrap_or("(unset)");
+                println!("Suite:          {suite}");
+                if let Some(m) = &board_cfg.mirror {
+                    println!("Mirror:         {m}");
+                }
+                println!("Second stage:   {}", board_cfg.second_stage.name());
+            }
+            if let Some(d) = &board_cfg.buildroot_defconfig {
+                println!("Buildroot conf: {d}");
+            }
+            if let Some(r) = &board_cfg.buildroot_repo {
+                println!("Buildroot repo: {r}");
+            }
+            if let Some(t) = &board_cfg.buildroot_tag {
+                println!("Buildroot tag:  {t}");
+            }
             if let Some(k) = &board_cfg.kernel_arch {
                 println!("Kernel arch:    {k}");
             }
-            println!("Kernel repo:    {}", board_cfg.kernel_repo);
-            println!("Kernel tag:     {}", board_cfg.kernel_tag);
-            println!("Kernel defconf: {}", board_cfg.kernel_defconfig);
+            if !board_cfg.kernel_repo.is_empty() {
+                println!("Kernel repo:    {}", board_cfg.kernel_repo);
+                println!("Kernel tag:     {}", board_cfg.kernel_tag);
+                println!("Kernel defconf: {}", board_cfg.kernel_defconfig);
+            }
             if let Some(r) = &board_cfg.opensbi_repo {
                 println!("OpenSBI repo:   {r}");
             }
@@ -87,22 +113,6 @@ pub fn run(boards_root: &Utf8Path, cmd: BoardCmd) -> Result<()> {
             }
             if let Some(t) = &board_cfg.fip_tag {
                 println!("FIP tag:        {t}");
-            }
-            println!(
-                "Rootfs:         {}",
-                board_cfg.rootfs_provider.name()
-            );
-            if let Some(deb) = board_cfg.rootfs_provider.debootstrap() {
-                let suite = board_cfg
-                    .suite
-                    .as_deref()
-                    .or(deb.default_suite)
-                    .unwrap_or("(unset)");
-                println!("Suite:          {suite}");
-                if let Some(m) = &board_cfg.mirror {
-                    println!("Mirror:         {m}");
-                }
-                println!("Second stage:   {}", board_cfg.second_stage.name());
             }
             let pipeline = crate::bootloader::pipeline(&board_cfg);
             let default_marker = if board_cfg.boot_pipeline.is_none() {
