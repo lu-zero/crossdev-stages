@@ -14,6 +14,9 @@ pub enum Error {
     #[error("board config parse error in {file}: {msg}")]
     BoardConfigParse { file: String, msg: String },
 
+    #[error("config error in {file}: {msg}")]
+    Config { file: String, msg: String },
+
     #[error("unknown architecture: {0}")]
     UnknownArch(String),
 

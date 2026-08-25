@@ -537,8 +537,17 @@ on the next prepare/crossdev/stage run.
 
 ### The `crossdev-stages` portage overlay
 
-The `defaults/overlay/` directory ships as the `crossdev-stages` portage
-overlay inside the sandbox, installed on every `sandbox prepare`.
+The ebuilds ::gentoo does not carry live in their own repository,
+[crossdev-stages-overlay](https://github.com/OctopusET/crossdev-stages-overlay).
+`defaults/overlay.conf` pins its URL and revision; `sandbox prepare`
+checks it out at `/var/db/repos/crossdev-stages` inside the sandbox and
+writes the repos.conf entry.  Separate because ebuilds carry their
+upstream licenses (::guru's are GPL-2) and this repository is
+Apache-2.0.
+
+`OVERLAY_REPO` also accepts a path to a local clone, which is
+bind-mounted read-only and copied in; leave it empty to build without
+the overlay.
 
 `app-arch/apk-tools` is emerged automatically: `ROOTFS_PROVIDER="alpine"`
 needs a host-arch apk to unpack a foreign-architecture Alpine root, and
@@ -549,7 +558,7 @@ Manifest, so portage records it in the VDB like any other package.
 
 ### Optional: coprocessor firmware (K1/K3 ESOS)
 
-The overlay also carries opt-in (p.masked) ebuilds for SpaceMIT
+The overlay carries opt-in (p.masked) ebuilds for SpaceMIT
 coprocessor firmware:
 
 - `sys-firmware/esos` (USE=k1|k3) - RT-Thread firmware from a single
