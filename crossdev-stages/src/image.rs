@@ -678,14 +678,17 @@ fn extlinux_conf(board: &BoardConfig) -> Result<String> {
     Ok(format!(
         "{exports}mkdir -p /build/gen/boot/extlinux\n\
          cat > /build/gen/boot/extlinux/extlinux.conf <<EOF\n\
-         DEFAULT gentoo\n\
+         DEFAULT linux\n\
          TIMEOUT 30\n\
-         LABEL gentoo\n\
-         \x20   MENU LABEL Gentoo Linux\n\
+         LABEL linux\n\
+         \x20   MENU LABEL {label}\n\
          \x20   LINUX /{kernel}\n\
          {fdt}\x20   APPEND {append}\n\
          EOF\n",
         exports = DiskId::of(board).exports(),
+        // The rootfs is not always Gentoo, and the boot menu is the first
+        // thing anyone reads off a serial console.
+        label = board.description.as_deref().unwrap_or(&board.name),
     ))
 }
 
@@ -1065,6 +1068,28 @@ pub fn build(
         // USE and CPU_FLAGS_X86 when it decides a binary package fits, and
         // never CFLAGS.  A few seconds here against an illegal instruction
         // that otherwise surfaces on the hardware.
+        if *step == "assemble" {
+            // Every architecture: can the image load what it ships?  A binary
+            // that asks for a symbol version the image does not carry does not
+            // start at all, which is a worse failure than a wrong instruction
+            // set and a cheaper one to catch.
+            match crate::abi::verify(
+                &runner,
+                "/build/gen/root",
+                &format!("{}readelf", board.cross_compile),
+            ) {
+                Ok(report) => {
+                    if crate::abi::print(&report) {
+                        return Err(crate::error::Error::CommandFailed {
+                            code: 1,
+                            reason: "the image cannot load its own binaries".into(),
+                        });
+                    }
+                }
+                Err(e) => tracing::warn!("ABI check could not run: {e}"),
+            }
+        }
+
         if *step == "assemble" && crate::isa::applies(board) {
             match crate::isa::verify(&runner, board, "/build/gen/root") {
                 Ok(report) => {
@@ -1263,10 +1288,10 @@ mod tests {
         let body = script.split("<<EOF\n").nth(1).unwrap();
         assert_eq!(
             body,
-            "DEFAULT gentoo\n\
+            "DEFAULT linux\n\
              TIMEOUT 30\n\
-             LABEL gentoo\n    \
-             MENU LABEL Gentoo Linux\n    \
+             LABEL linux\n    \
+             MENU LABEL demo\n    \
              LINUX /Image\n    \
              FDT /rk3568-odroid-m1.dtb\n    \
              APPEND root=PARTUUID=${BOOT_PART_UUID_2} rw rootwait \
