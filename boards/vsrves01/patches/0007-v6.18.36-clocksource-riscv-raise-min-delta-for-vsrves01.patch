@@ -1,0 +1,52 @@
+From 0000000000000000000000000000000000000007 Mon Sep 17 00:00:00 2001
+From: Emil Renner Berthing <emil.renner.berthing@canonical.com>
+Date: Tue, 22 Jul 2025 22:33:43 +0200
+Subject: [PATCH 07/11] clocksource/riscv: raise clockevent min_delta to 1000 ticks
+
+Bump the min_delta passed to clockevents_config_and_register() from 100
+to 1000 ticks in riscv_timer_starting_cpu().  This is the workaround
+recommended in the VLSI VSRV User's Guide section 14.1.1.
+
+The VSRVES01 SoC implements RV32IMA but the A extension is emulated by
+the M-mode SBI firmware, so every AMO ends up costing well over 100
+cycles (S->M trap, register save, cache reload, emulation, mode-switch
+back).  A 100-tick clockevent target therefore expires before the
+kernel has finished arming the timer, and the next match only occurs
+after a full 64-bit counter wrap - many minutes.  Raising the floor to
+1000 ticks gives the kernel enough headroom to arm the timer before
+the deadline passes.
+
+The fix is global and affects every RISC-V clockevent rather than only
+the VSRVES01 hart.  This is intentional and matches the VLSI guide
+recommendation; the cost on faster cores is negligible (the kernel
+rarely asks for sub-microsecond expiries).  A cleaner long-term fix
+would be a per-platform override or expressing the limitation via a
+no-A DT/Kconfig path, but that requires more invasive changes.
+
+Reference: VLSI VSRV User's Guide section 14.1.1
+  https://www.vlsi.fi/fileadmin/products/vsrv/vsrv_guide.pdf
+  https://www.vsdsp-forum.com/phpbb/viewtopic.php?p=16492#p16492
+
+Origin: esmil/linux vsrv branch 3e95fd197f71
+
+Signed-off-by: Emil Renner Berthing <emil.renner.berthing@canonical.com>
+Signed-off-by: Sungjoon Moon <sumoon@seoulsaram.org>
+---
+ drivers/clocksource/timer-riscv.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/clocksource/timer-riscv.c b/drivers/clocksource/timer-riscv.c
+--- a/drivers/clocksource/timer-riscv.c
++++ b/drivers/clocksource/timer-riscv.c
+@@ -118,7 +118,7 @@ static int riscv_timer_starting_cpu(unsigned int cpu)
+ 		ce->features |= CLOCK_EVT_FEAT_C3STOP;
+ 	if (static_branch_likely(&riscv_sstc_available))
+ 		ce->rating = 450;
+-	clockevents_config_and_register(ce, riscv_timebase, 100, ULONG_MAX);
++	clockevents_config_and_register(ce, riscv_timebase, 1000, ULONG_MAX);
+ 
+ 	enable_percpu_irq(riscv_clock_event_irq,
+ 			  irq_get_trigger_type(riscv_clock_event_irq));
+-- 
+2.47.0
+ 

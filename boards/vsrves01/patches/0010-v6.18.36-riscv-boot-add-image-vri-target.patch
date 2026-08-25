@@ -1,0 +1,93 @@
+From 0000000000000000000000000000000000000010 Mon Sep 17 00:00:00 2001
+From: Emil Renner Berthing <emil.renner.berthing@canonical.com>
+Date: Thu, 7 Aug 2025 13:46:22 +0200
+Subject: [PATCH 10/11] riscv: boot: add Image.vri build target
+
+Wire the previously added bin2vri host tool into the riscv boot
+Makefile so that "make Image.vri" produces a VRI1 loader file ready
+for the VSRVES01 SoC's pre-boot loader.  Add a new CONFIG_VRI_ADDRESS
+hex option (depends on ARCH_VLSI, default 0x80400000) used as the
+'-a' load-address argument to bin2vri.
+
+Pieces:
+
+  - arch/riscv/Kconfig:           CONFIG_VRI_ADDRESS
+  - arch/riscv/Makefile:          extend BOOT_TARGETS with Image.vri
+                                  and make it depend on Image
+  - arch/riscv/boot/Makefile:     hostprogs += bin2vri and the
+                                  $(obj)/Image.vri rule guarded by
+                                  ifdef CONFIG_VRI_ADDRESS
+
+This patch is a board-support shim and is unlikely to land upstream
+as-is; it sits beside the other VLSI VSRVES01 helpers and is fully
+opt-in via ARCH_VLSI=y.
+
+Origin: esmil/linux vsrv branch 227b0ea8d8ee (Kconfig/Makefile bits only)
+
+Signed-off-by: Emil Renner Berthing <emil.renner.berthing@canonical.com>
+Signed-off-by: Sungjoon Moon <sumoon@seoulsaram.org>
+---
+ arch/riscv/Kconfig       | 9 +++++++++
+ arch/riscv/Makefile      | 4 ++--
+ arch/riscv/boot/Makefile | 9 +++++++++
+ 3 files changed, 20 insertions(+), 2 deletions(-)
+
+diff --git a/arch/riscv/Kconfig b/arch/riscv/Kconfig
+--- a/arch/riscv/Kconfig
++++ b/arch/riscv/Kconfig
+@@ -1323,6 +1323,15 @@ config BUILTIN_DTB_NAME
+ 	  for the DTS file that will be used to produce the DTB linked into the
+ 	  kernel.
+ 
++config VRI_ADDRESS
++	hex "Load address for the Image.vri target"
++	depends on ARCH_VLSI
++	default 0x80400000
++	help
++	  The VRI format used on the VLSI VSRV SoC has also specifies where in
++	  memory the content should be loaded. Use this option to change the
++	  default of 0x80400000.
++
+ endmenu # "Boot options"
+ 
+ config PORTABLE
+diff --git a/arch/riscv/Makefile b/arch/riscv/Makefile
+--- a/arch/riscv/Makefile
++++ b/arch/riscv/Makefile
+@@ -167,12 +167,12 @@ endif
+ vdso-install-y			+= arch/riscv/kernel/vdso/vdso.so.dbg
+ vdso-install-$(CONFIG_COMPAT)	+= arch/riscv/kernel/compat_vdso/compat_vdso.so.dbg
+ 
+-BOOT_TARGETS := Image Image.gz Image.bz2 Image.lz4 Image.lzma Image.lzo Image.zst Image.xz loader loader.bin xipImage vmlinuz.efi
++BOOT_TARGETS := Image Image.gz Image.bz2 Image.lz4 Image.lzma Image.lzo Image.zst Image.xz Image.vri loader loader.bin xipImage vmlinuz.efi
+ 
+ all:	$(notdir $(KBUILD_IMAGE))
+ 
+ loader.bin: loader
+-Image.gz Image.bz2 Image.lz4 Image.lzma Image.lzo Image.zst Image.xz loader xipImage vmlinuz.efi: Image
++Image.gz Image.bz2 Image.lz4 Image.lzma Image.lzo Image.zst Image.xz Image.vri loader xipImage vmlinuz.efi: Image
+ 
+ $(BOOT_TARGETS): vmlinux
+ 	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
+diff --git a/arch/riscv/boot/Makefile b/arch/riscv/boot/Makefile
+--- a/arch/riscv/boot/Makefile
++++ b/arch/riscv/boot/Makefile
+@@ -60,6 +60,15 @@ $(obj)/Image.zst: $(obj)/Image FORCE
+ $(obj)/Image.xz: $(obj)/Image FORCE
+ 	$(call if_changed,xzkern)
+ 
++ifdef CONFIG_VRI_ADDRESS
++hostprogs := bin2vri
++quiet_cmd_bin2vri = BIN2VRI $@
++cmd_bin2vri = $(obj)/bin2vri -v -a $(CONFIG_VRI_ADDRESS) $< $@
++
++$(obj)/Image.vri: $(obj)/Image $(obj)/bin2vri FORCE
++	$(call if_changed,bin2vri)
++endif
++
+ $(obj)/loader.bin: $(obj)/loader FORCE
+ 	$(call if_changed,objcopy)
+ 
+-- 
+2.47.0
+ 

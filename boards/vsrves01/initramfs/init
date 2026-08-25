@@ -1,0 +1,33 @@
+#!/bin/busybox sh
+# VSRVES01 stage-1 init.
+#
+# The cpio carries just busybox + this script + /image.sqfs.  We loop-
+# mount the squashfs, hop in via switch_root, and let openrc take over.
+# The squashfs holds the full Gentoo userland; keeping it compressed at
+# runtime means ~25-30 MiB of RAM instead of ~80 MiB of extracted files
+# (squashfs decompresses one 4 KiB block per file-page on demand).
+
+/bin/busybox --install -s
+
+mount -t devtmpfs devtmpfs /dev
+echo "vsrves01-init: devtmpfs mounted" >/dev/console
+
+mkdir -p /mnt
+losetup /dev/loop0 /image.sqfs
+echo "vsrves01-init: losetup ok" >/dev/console
+
+mount -t squashfs -o ro /dev/loop0 /mnt
+echo "vsrves01-init: squashfs mounted" >/dev/console
+
+# Create + populate the pseudo-fs mountpoints INSIDE the new root, then
+# mount or move our existing mounts into them so openrc sysinit starts
+# with /dev /proc /sys already live.  busybox switch_root drops any
+# mount under the old rootfs, so without these moves /dev is gone and
+# /sbin/agetty has nothing to open.
+mkdir -p /mnt/dev /mnt/proc /mnt/sys /mnt/run /mnt/tmp
+mount --move /dev /mnt/dev
+mount -t proc  proc  /mnt/proc
+mount -t sysfs sysfs /mnt/sys
+echo "vsrves01-init: dev/proc/sys ready, switch_root" >/mnt/dev/console
+
+exec switch_root /mnt /sbin/init

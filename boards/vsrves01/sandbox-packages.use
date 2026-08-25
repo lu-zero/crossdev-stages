@@ -1,0 +1,3 @@
+# Enable compressors in mksquashfs.  lz4 is the fastest decompressor
+# on the 98 MHz rv32 core (sub-µs per 4 KiB block, no SIMD needed).
+sys-fs/squashfs-tools lz4 lzo zstd

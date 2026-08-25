@@ -1,0 +1,39 @@
+From: Sungjoon Moon <sumoon@seoulsaram.org>
+Date: Thu, 26 Jun 2026 02:30:00 +0900
+Subject: [PATCH] hwclock: fall back to libc settimeofday on time64-only ABIs
+
+Linux 6.x architectures that ship as time64-only from the start (riscv32,
+arc HS, etc.) expose neither SYS_settimeofday nor SYS_settimeofday_time32
+in <asm/unistd.h>; settimeofday was never given a *_time64 variant because
+clock_settime64() supersedes it.  The existing musl-special-case raw
+syscall therefore fails to compile:
+
+  util-linux/hwclock.c:143:27: error: 'SYS_settimeofday' undeclared
+
+Fall back to the libc wrapper when no syscall number exists.  Under musl
+this loses the timezone argument (which is exactly the bug the raw-syscall
+path was working around) but compiles and does not crash — and on these
+new ABIs there is no other option short of open-coding the timezone shim.
+
+Signed-off-by: Sungjoon Moon <sumoon@seoulsaram.org>
+---
+ util-linux/hwclock.c | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/util-linux/hwclock.c b/util-linux/hwclock.c
+--- a/util-linux/hwclock.c
++++ b/util-linux/hwclock.c
+@@ -140,7 +140,11 @@ static void set_kernel_tz(const struct timezone *tz)
+ #if !defined(SYS_settimeofday) && defined(SYS_settimeofday_time32)
+ # define SYS_settimeofday SYS_settimeofday_time32
+ #endif
++#ifdef SYS_settimeofday
+ 	int ret = syscall(SYS_settimeofday, NULL, tz);
++#else
++	int ret = settimeofday(NULL, tz);
++#endif
+ #else
+ 	int ret = settimeofday(NULL, tz);
+ #endif
+--
+2.47.0
