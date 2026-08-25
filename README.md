@@ -7,7 +7,10 @@ Rootless cross-compilation of Gentoo stages using crossdev and hakoniwa
 - [x] Update a compatible stage3 image
 - [x] Build opensbi + u-boot images and linux kernel + modules
 - [x] Assemble bootable images
-- [x] Per-CFLAGS target stage isolation (glibc-only rebuild)
+- [x] Content-addressed crossdev prefix store, keyed by `(chost, CFLAGS-hash, gcc)`
+- [x] Shared binpkg cache, keyed by `(chost, CFLAGS-hash)`
+- [x] `build.lock.toml` per image with pinned source commits + CFLAGS
+- [x] `crossdev-stages update` to compare lock vs upstream HEAD
 - [x] Rust CLI using [hakoniwa](https://github.com/souk4711/hakoniwa) for sandboxing
 - [x] Modular bootloader (opensbi, u-boot, grub, syslinux, tfa, rkbin)
 - [x] File-convention hooks (pre/post/override scripts per build step)
@@ -41,6 +44,8 @@ Commands:
   board     Manage and inspect boards
   maint     Maintenance: clean, logs, diagnostics
   status    Show overview of sandboxes, targets, builds, and boards
+  store     Manage the content-addressed crossdev prefix store
+  update    Compare a board's build.lock.toml against upstream HEAD
 
 Options:
   --project-dir <DIR>  Project root (where boards/ lives) [default: .]
@@ -71,14 +76,22 @@ crossdev-stages target update
 # Build an image
 crossdev-stages image build --board <BOARD>
 
-# Check status
+# Inspect builds, sandboxes, and the toolchain store
 crossdev-stages status
+
+# See what would change on a fresh build (read-only)
+crossdev-stages update --board <BOARD>
+crossdev-stages update --all
 
 # Export the image
 crossdev-stages image export --board <BOARD> -o /tmp/
 
 # Export a full flash bundle (all boot blobs + images), optionally as .tar.xz
 crossdev-stages image export --board <BOARD> --all --tar -o /tmp/
+
+# List toolchain store entries; delete ones no current board uses
+crossdev-stages store list
+crossdev-stages store gc --force
 
 # Clean up stale builds and old stage3 tarballs
 crossdev-stages maint clean
@@ -118,11 +131,26 @@ partition table parsed from `genimage.cfg`:
 Useful for verifying integrity and writing individual partitions to
 eMMC/SPI flash at known offsets without re-parsing `genimage.cfg`.
 
-### Source cache
+### Cache layout
 
-Git repos are cached as bare repositories at `~/.cache/crossdev-stages/sources/`.
-First clone fetches from upstream; subsequent builds use `--reference` for
-near-instant checkout.
+Everything lives under `~/.cache/crossdev-stages/`:
+
+| Path | Contents |
+|---|---|
+| `stages/` | downloaded stage3 tarballs |
+| `sources/<repo>.git/` | bare git mirrors used as `--reference` for fast clones |
+| `sandboxes/<name>/` | host stage3 unpacks; `.overlay-upper-*/` dirs hold per-toolchain overlay writes |
+| `targets/<name>/` | cross-compiled target rootfs |
+| `store/<chost>/<cflags-hash>-gcc<ver>/` | immutable crossdev prefix; built once per `(chost, canonical CFLAGS, gcc version)` and overlay-mounted at `/usr/<chost>/` for every build that needs it |
+| `binpkgs/<chost>/<cflags-hash>/` | shared `PKGDIR` for cross-compiled packages so different boards with compatible CFLAGS reuse builds |
+| `builds/<board>/<timestamp>/` | per-image build output, including `build.lock.toml` |
+| `logs/` | build step logs |
+
+CFLAGS are canonicalized via [sokgi](https://github.com/OctopusET/sokgi)
+before hashing, so semantically equivalent flag strings (different token
+order, last-wins overrides) share a store entry.  `store list` shows what
+is present; `store gc` removes entries (and binpkg caches) no current
+board resolves to.
 
 ## Requirements
 
@@ -219,7 +247,8 @@ by `uboot`.
 | `FIP_REPO` / `FIP_TAG` | no | Amlogic boot-FIP packaging repo, tag (default `master`) |
 | `FIRMWARE_TAG` | no | Tag for the firmware overlay repo (default: `TAG`) |
 | `COMPRESSION` | no | Image compression: `xz` (default), `gz`, `none` |
-| `TESTING` | no | Mark board as testing (`true`/`false`) |
+| `TAGS` | no | Free-form labels (bash array, e.g. `TAGS=("testing" "wip")`) -- shown in `board list` and `status` |
+| `DESCRIPTION` | no | Free-form note shown in `board info` |
 
 ## Limitations
 
