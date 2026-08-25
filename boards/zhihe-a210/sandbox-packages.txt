@@ -1,0 +1,4 @@
+# Sandbox packages for zhihe-a210.
+# mkimage (sys-boot/u-boot-tools) and dtc are installed by install_dependencies.
+# OpenSBI is built with the host toolchain — no clang needed (vendor opensbi
+# v2.9.0 is GCC-clean, unlike upstream which now requires clang).
