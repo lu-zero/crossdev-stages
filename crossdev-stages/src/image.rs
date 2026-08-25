@@ -1635,13 +1635,20 @@ fn default_assemble(
     }
 
     if let Some(dracut_modules) = &board.dracut_modules {
+        // dracut --sysroot ignores the sysroot's /etc/dracut.conf.d, so
+        // pass --install entries explicitly per board.
+        let install_args = board
+            .initramfs_install
+            .iter()
+            .map(|p| format!(" --install '{p}'"))
+            .collect::<String>();
         runner.run(&format!(
             "kver=$(ls /build/gen/root/lib/modules/ | head -1) && \
              [ -n \"$kver\" ] && \
              dracutbasedir=/usr/lib/dracut \
              DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
                dracut -f --no-early-microcode --no-kernel \
-                 -m '{dracut_modules}' --gzip \
+                 -m '{dracut_modules}'{install_args} --gzip \
                  --sysroot /build/gen/root \
                  --tmpdir /tmp \
                  /build/gen/boot/initramfs.img \"$kver\""
