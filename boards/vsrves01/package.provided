@@ -1,0 +1,35 @@
+# Atoms portage should treat as already-installed (won't pull as deps,
+# won't try to compile).  Used to break dep chains into packages we
+# don't actually need and that don't cross-build on rv32-musl.
+#
+# Copied to /target/etc/portage/profile/package.provided by the Rust
+# image build (default_deps) — same path used by the cross-prefix
+# emerge via PORTAGE_CONFIGROOT=/target.
+
+# virtual/udev is provided ONLY by sys-apps/systemd-utils[udev] in
+# current Gentoo (eudev was last_rite'd, mdevd is alt).  systemd-utils
+# doesn't cross-build on rv32-musl.  We don't run udevd — devtmpfs +
+# devtmpfs.mount handle /dev population, no hotplug on this board.
+virtual/udev-217-r7
+
+# virtual/tmpfiles: same story.  Only systemd-utils[tmpfiles] provides
+# it now (opentmpfiles was retired from ::gentoo in 2024).  We ship no
+# tmpfiles.d/*.conf snippets, so nothing reads/writes them at boot.
+virtual/tmpfiles-0-r7
+
+# net-tools (ifconfig/route) doesn't cross-build cleanly on rv32-musl
+# (configure script linker probe fails).  iproute2 + busybox provide
+# the same surface.  @system pulls it via baselayout in some profiles —
+# fake-provide to skip.
+sys-apps/net-tools-2.10
+
+# portage on /target — we don't run emerge on the device, ever.
+# Listing it in @system on the rv32-musl profile is a leftover from
+# stage3 design; we don't ship a writable Python on this image.
+sys-apps/portage-3.0.80
+
+# perl-cleaner runs post-perl-upgrade to fix module ABIs.  It hard-
+# depends on sys-apps/portage which we've just fake-provided.  We never
+# upgrade perl on the device (read-only squashfs), so the script can't
+# run anyway.
+app-admin/perl-cleaner-2.31-r2
