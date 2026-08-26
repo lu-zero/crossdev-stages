@@ -1,0 +1,10 @@
+# dell-dimension-4100 extras on top of defaults/target-packages.txt.
+# net-misc/ntp and app-admin/metalog, which BOOT_SERVICES enables, are
+# already defaults and are not repeated here.
+
+# Network (dhcpcd:default in BOOT_SERVICES; the NIC is e100 or 3c59x)
+net-misc/dhcpcd
+
+# resize2fs, for the grow-rootfs first-boot service.  sfdisk and partx come
+# from util-linux via @system, e2fsprogs does not.
+sys-fs/e2fsprogs

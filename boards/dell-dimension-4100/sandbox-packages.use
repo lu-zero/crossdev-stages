@@ -1,0 +1,3 @@
+# GRUB_PLATFORMS already makes the Rust side write grub_platforms_pc; this
+# file is here for the negative, so the EFI half is not built as well.
+sys-boot/grub grub_platforms_pc -grub_platforms_efi-64

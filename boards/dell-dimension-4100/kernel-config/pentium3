@@ -1,0 +1,12 @@
+# Dell Dimension 4100: the CPU model.
+#
+# i386_defconfig names no processor family, so the choice in
+# arch/x86/Kconfig.cpu takes its own default and lands on M686.
+# MPENTIUMIII is the Coppermine entry, and two things follow from it that
+# M686 does not give: Makefile_32.cpu adds -mtune=pentium3 on top of the
+# same -march=i686, and X86_INTEL_USERCOPY turns on (its depends list in
+# Kconfig.cpu names MPENTIUMIII and not M686).
+#
+# X86_L1_CACHE_SHIFT and X86_USE_PPRO_CHECKSUM come out the same either
+# way, so those are not reasons.
+CONFIG_MPENTIUMIII=y

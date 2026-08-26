@@ -1,0 +1,29 @@
+# Dell Dimension 4100: the peripherals i386_defconfig does not carry.
+#
+# What it already carries was read out of the defconfig, not assumed:
+# ATA_PIIX=y (its PCI table has 8086:244B "Intel ICH2 UDMA 100"),
+# BLK_DEV_SD=y, E100=y (8086:2449 is the ICH2 integrated LAN),
+# SERIAL_8250=y with SERIAL_8250_CONSOLE=y, USB_UHCI_HCD=y, and EXT4_FS=y
+# and VFAT_FS=y both built in, which is what lets the kernel mount root
+# with no initramfs.  VGA_CONSOLE is default y on x86 and not
+# user-selectable without EXPERT, so the text console needs no line here.
+
+# 82801BA ICH2 AC97 controller, 8086:2445 in sound/pci/intel8x0.c, which
+# names it "Intel 82801BA-ICH2".  Dell's solution guide calls the
+# integrated audio "ADI SoundMAX 2.0", an AC-link codec snd-ac97-codec
+# drives.  Not SND_HDA_INTEL, which is what the defconfig carries and
+# which this chipset predates by years.
+CONFIG_SND_INTEL8X0=y
+
+# 3Com 3C905C-TXM, which Dell's tech specs list as an option alongside the
+# integrated Intel 10/100 that CONFIG_E100 already covers.  Only opening
+# the case says which is fitted, so both are built in.
+CONFIG_VORTEX=y
+
+# The 815's integrated video has no driver in this tree that can bind it.
+# i915's pciidlist starts at INTEL_I830_IDS; INTEL_I815_IDS (0x1132) is
+# defined in include/drm/intel/pciids.h and referenced by nothing under
+# drivers/, and the legacy drm/i810 driver is gone.  Dropping it saves
+# megabytes of always-resident text on a 512 MB machine and loses nothing:
+# the console is VGA text mode either way.
+# CONFIG_DRM_I915 is not set

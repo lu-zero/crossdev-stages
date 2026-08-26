@@ -1,0 +1,4 @@
+# Sandbox packages for dell-dimension-4100.
+# sys-boot/grub provides grub-mkimage (the host tool bootloader/grub.rs
+# calls) and the i386-pc modules the post-assemble hook copies.
+sys-boot/grub

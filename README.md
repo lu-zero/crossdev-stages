@@ -33,6 +33,7 @@ Rootless cross-compilation of Gentoo stages using crossdev and hakoniwa
 | odroid-xu4 | armv7a | mainline v7.2 | signed BL1/BL2/TZSW + U-Boot | `-O2 -march=armv7ve -mtune=cortex-a15.cortex-a7 -mfpu=neon-vfpv4` | testing |
 | orangepi-5-ultra | aarch64 | mainline v7.2 | TFA + U-Boot + rkbin | `-O3 -mcpu=cortex-a76.cortex-a55+crc+crypto` | testing |
 | pentium-mmx | i586 | mainline v6.18 | BIOS (no firmware) | `-O2 -march=pentium-mmx` | testing |
+| dell-dimension-4100 | i686 | mainline v7.2 | BIOS (no firmware) | `-O2 -march=pentium3` | testing |
 | premier-p550 | riscv64 | mainline v7.2-rc1 | vendor QSPI (OpenSBI + U-Boot) + extlinux | `-O3 -march=rv64gc_zba_zbb` | testing |
 | vsrves01 | riscv32 | mainline v6.18 + patches | VSDSP6/VSOS DDRLoad (no U-Boot/OpenSBI) | `-Os -march=rv32ima_zicsr_zifencei` | experimental (hardware dead) |
 | ch32v467 | riscv32 | mainline v7.1 + patches (buildroot) | none: MCU firmware is the machine (tiny-rv32ima) | `-Os -march=rv32ima_zicsr_zifencei` | experimental (never run on hardware) |
