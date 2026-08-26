@@ -217,9 +217,49 @@ pub fn load(boards_root: &Utf8Path, name: &str) -> Result<BoardConfig> {
         merged.push('\n');
     }
     merged.push_str(&content);
+
+    // Last-wins is the point ACROSS files: an include states a default and the
+    // board overrides it.  Inside ONE file it is a mistake -- the second
+    // assignment erases the first with nothing to show for it.  That is how
+    // boards/pentium-mmx came to declare its arch tags on line 2 and lose them
+    // to a bare TAGS=("testing") thirty lines later, so `board list` reported
+    // one tag where the file named three.
+    duplicate_keys(&content, &path)?;
+
     let board = parse(name, &path, &merged)?;
     check_cflags(&board, &path)?;
     Ok(board)
+}
+
+/// Reject a key assigned twice in the same file.  Mirrors the parser's own
+/// idea of what an assignment is, so it cannot warn about a line the parser
+/// ignores or stay quiet about one it reads.
+fn duplicate_keys(content: &str, path: &Utf8Path) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    let mut dups: Vec<&str> = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((key, _)) = line.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        if !seen.insert(key) && !dups.contains(&key) {
+            dups.push(key);
+        }
+    }
+    if dups.is_empty() {
+        return Ok(());
+    }
+    Err(Error::BoardConfigParse {
+        file: path.to_string(),
+        msg: format!(
+            "assigned twice, so the first value is silently dropped: {}",
+            dups.join(", ")
+        ),
+    })
 }
 
 /// The `INCLUDE` list a board declares, read before parsing because it decides
@@ -551,4 +591,36 @@ fn parse_array(inner: &str) -> Vec<String> {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_key_assigned_twice_in_one_file_is_refused() {
+        let err = duplicate_keys(
+            "TAGS=(\"x86\" \"i586\")\nBOARD_ARCH=\"i586\"\nTAGS=(\"testing\")\n",
+            Utf8Path::new("board.conf"),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("TAGS"), "{err}");
+    }
+
+    #[test]
+    fn comments_and_blanks_are_not_assignments() {
+        duplicate_keys(
+            "# TAGS=(\"a\")\n\nTAGS=(\"b\")\n# TAGS=(\"c\")\n",
+            Utf8Path::new("board.conf"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn the_same_key_in_two_files_is_what_include_is_for() {
+        // load() checks each file on its own, so an include stating a default
+        // and a board overriding it never reach this function together.
+        duplicate_keys("BOARD_CFLAGS=\"-O2\"\n", Utf8Path::new("include.conf")).unwrap();
+        duplicate_keys("BOARD_CFLAGS=\"-O3\"\n", Utf8Path::new("board.conf")).unwrap();
+    }
 }
