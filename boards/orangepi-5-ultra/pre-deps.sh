@@ -1,0 +1,60 @@
+set -e
+
+# `{chost}-emerge` reads PORTAGE_CONFIGROOT=/usr/${CHOST}, so target settings
+# go in the crossdev prefix, not /target.
+chost="${CROSS_COMPILE%-}"
+cross="/usr/${chost}/etc/portage"
+
+sed -i '/^VIDEO_CARDS=/d' "${cross}/make.conf"
+echo 'VIDEO_CARDS="panfrost"' >> "${cross}/make.conf"
+
+# No X server on this board.  zink runs GL on top of panvk, which is the path
+# a wlroots compositor can actually accelerate on Mali-G610.
+#
+# -introspection is not a preference.  glib builds gobject-introspection as a
+# subproject and its g-ir-compiler is a target binary that meson wants to run
+# on the build host: "An exe_wrapper is needed for .../tools/g-ir-compiler".
+# There is no such thing when the target is aarch64 and the host is x86_64.
+#
+# Rewritten every run rather than appended once.  crossdev already put a
+# USE= line here, so a guard on the variable never fires, and a guard on our
+# own marker means editing this list has no effect on a sandbox that already
+# ran once -- which is how -introspection silently failed to arrive.
+sed -i '/# crossdev-stages USE/,+1d' "${cross}/make.conf"
+cat >> "${cross}/make.conf" <<'USEEOF'
+# crossdev-stages USE
+USE="${USE} -X wayland vulkan zink alsa pipewire screencast -introspection"
+USEEOF
+
+mkdir -p "${cross}/package.use"
+
+# mesa pulls libglvnd[X] for GLX.
+echo 'media-libs/libglvnd X' > "${cross}/package.use/mesa"
+
+# x264 forces gpl in REQUIRED_USE.  v4l for the HDMI receiver, srt to ship the
+# stream, opus for the audio that goes with it.
+echo 'media-video/ffmpeg gpl x264 v4l alsa opus srt' > "${cross}/package.use/ffmpeg"
+
+# alsa is off by default here and compositor/textoverlay live in -base.
+echo 'media-libs/gst-plugins-base alsa pango gles2 egl' > "${cross}/package.use/gstreamer"
+
+# modetest, which is how the HDMI output modes get read, ships only with tools.
+echo 'x11-libs/libdrm tools' > "${cross}/package.use/libdrm"
+
+# pango wants a harfbuzz-enabled freetype, and sway wants pango.
+echo 'media-libs/freetype harfbuzz' > "${cross}/package.use/freetype"
+
+# seatd with no USE flags builds libseat and no daemon at all, which leaves
+# sway with nothing to ask for a seat and a dangling init script.  server is
+# the daemon; builtin lets a client fall back to running the logic in-process.
+echo 'sys-auth/seatd server builtin' > "${cross}/package.use/seatd"
+
+# libdecor draws window decorations for clients that have none, and its gtk
+# backend drags in gtk+3, which drags in cairo[X] and libglvnd[X].  On a board
+# with no X server that is the entire X stack arriving for a fallback nobody
+# uses.
+echo 'gui-libs/libdecor -gtk' > "${cross}/package.use/libdecor"
+
+# mesa_clc builds for CBUILD, so the card selection is repeated on the host.
+mkdir -p /etc/portage/package.use
+echo 'dev-util/mesa_clc video_cards_panfrost' > /etc/portage/package.use/mesa

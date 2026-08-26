@@ -1,0 +1,71 @@
+media: verisilicon: Allow the EOS event to be subscribed
+
+From "[PATCH 0/3] media: verisilicon: Fix error paths in hantro drivers",
+Sascha Hauer, 2026-08-24, Message-ID
+20260824-rk3588-jpegdec-v1-0-180a30a2852d@pengutronix.de.
+Applies to v7.2 as posted; the series is based on post-v7.2 mainline,
+commit 0a0d1d55dad5.
+
+hantro queues a V4L2_EVENT_EOS in three places.  vidioc_encoder_cmd()
+sends it when a V4L2_ENC_CMD_STOP has drained the encoder:
+
+	if (ec->cmd == V4L2_ENC_CMD_STOP &&
+	    v4l2_m2m_has_stopped(ctx->fh.m2m_ctx))
+		v4l2_event_queue_fh(&ctx->fh, &hantro_eos_event);
+
+hantro_buf_queue() sends it for a capture buffer queued after the last
+one, and hantro_stop_streaming() when the output queue stops while
+draining.
+
+No application can ask for any of them.  The ioctl ops offer
+
+	.vidioc_subscribe_event = v4l2_ctrl_subscribe_event,
+
+and v4l2_ctrl_subscribe_event() only knows about V4L2_EVENT_CTRL, so
+VIDIOC_SUBSCRIBE_EVENT for V4L2_EVENT_EOS fails with -EINVAL and the
+queued events are dropped on the floor.  An application following the
+drain sequence in the stateful encoder documentation has to fall back to
+V4L2_BUF_FLAG_LAST, which hantro does set, so this has gone unnoticed.
+
+Dispatch on the event type and hand V4L2_EVENT_EOS to
+v4l2_event_subscribe(), the way coda-common.c does.  Everything else
+keeps going to the control handler.
+
+V4L2_EVENT_SOURCE_CHANGE is deliberately not added, hantro never sends
+one.
+
+Fixes: daf3999c12dc ("media: hantro: Implement support for encoder commands")
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Sascha Hauer <s.hauer@pengutronix.de>
+
+diff --git a/drivers/media/platform/verisilicon/hantro_v4l2.c b/drivers/media/platform/verisilicon/hantro_v4l2.c
+index 83af9fa1ce949..9e19daffe0075 100644
+--- a/drivers/media/platform/verisilicon/hantro_v4l2.c
++++ b/drivers/media/platform/verisilicon/hantro_v4l2.c
+@@ -765,6 +765,17 @@ static int vidioc_encoder_cmd(struct file *file, void *priv,
+ 	return 0;
+ }
+ 
++static int hantro_subscribe_event(struct v4l2_fh *fh,
++				  const struct v4l2_event_subscription *sub)
++{
++	switch (sub->type) {
++	case V4L2_EVENT_EOS:
++		return v4l2_event_subscribe(fh, sub, 0, NULL);
++	default:
++		return v4l2_ctrl_subscribe_event(fh, sub);
++	}
++}
++
+ const struct v4l2_ioctl_ops hantro_ioctl_ops = {
+ 	.vidioc_querycap = vidioc_querycap,
+ 	.vidioc_enum_framesizes = vidioc_enum_framesizes,
+@@ -787,7 +798,7 @@ const struct v4l2_ioctl_ops hantro_ioctl_ops = {
+ 	.vidioc_remove_bufs = v4l2_m2m_ioctl_remove_bufs,
+ 	.vidioc_expbuf = v4l2_m2m_ioctl_expbuf,
+ 
+-	.vidioc_subscribe_event = v4l2_ctrl_subscribe_event,
++	.vidioc_subscribe_event = hantro_subscribe_event,
+ 	.vidioc_unsubscribe_event = v4l2_event_unsubscribe,
+ 
+ 	.vidioc_streamon = v4l2_m2m_ioctl_streamon,

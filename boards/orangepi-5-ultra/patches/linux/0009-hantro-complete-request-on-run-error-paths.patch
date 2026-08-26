@@ -1,0 +1,143 @@
+media: verisilicon: Complete the request on the ->run() error paths
+
+From "[PATCH 0/3] media: verisilicon: Fix error paths in hantro drivers",
+Sascha Hauer, 2026-08-24, Message-ID
+20260824-rk3588-jpegdec-v1-0-180a30a2852d@pengutronix.de.
+Applies to v7.2 as posted; the series is based on post-v7.2 mainline,
+commit 0a0d1d55dad5.
+
+Several codec ->run() operations return early without completing the
+request, even though hantro_start_prepare_run() has already run and set up
+the controls of the request attached to the source buffer.
+
+The buffers are still returned to userspace, device_run() finishes the job
+with VB2_BUF_STATE_ERROR, but nothing completes the control handler object
+bound to the media request. vb2_buffer_done() only unbinds the request
+object owned by videobuf2 itself, so num_incomplete_objects never drops to
+zero and the request stays in MEDIA_REQUEST_STATE_QUEUED forever: poll() on
+the request file descriptor never returns and MEDIA_REQUEST_IOC_REINIT
+fails with -EBUSY. The request is only cleaned up when userspace closes it.
+
+The vb2 buf_request_complete() callback does not help here, it is only
+called from __vb2_queue_cancel() for buffers that were never queued to the
+driver.
+
+Call hantro_abort_prepare_run() on those paths, which completes the request
+and leaves the watchdog alone.
+
+Fixes: 42cb2a8f27d2 ("media: hantro: change hantro_codec_ops run prototype to return errors")
+Assisted-by: Claude:claude-opus-5
+Signed-off-by: Sascha Hauer <s.hauer@pengutronix.de>
+
+diff --git a/drivers/media/platform/verisilicon/hantro_g1_h264_dec.c b/drivers/media/platform/verisilicon/hantro_g1_h264_dec.c
+index ad5c1a6634f5c..14ebb25ea24be 100644
+--- a/drivers/media/platform/verisilicon/hantro_g1_h264_dec.c
++++ b/drivers/media/platform/verisilicon/hantro_g1_h264_dec.c
+@@ -255,8 +255,10 @@ int hantro_g1_h264_dec_run(struct hantro_ctx *ctx)
+ 
+ 	/* Prepare the H264 decoder context. */
+ 	ret = hantro_h264_dec_prepare_run(ctx);
+-	if (ret)
++	if (ret) {
++		hantro_abort_prepare_run(ctx);
+ 		return ret;
++	}
+ 
+ 	/* Configure hardware registers. */
+ 	src_buf = hantro_get_src_buf(ctx);
+diff --git a/drivers/media/platform/verisilicon/hantro_g1_vp8_dec.c b/drivers/media/platform/verisilicon/hantro_g1_vp8_dec.c
+index 851eb67f19f50..e866ff86019a0 100644
+--- a/drivers/media/platform/verisilicon/hantro_g1_vp8_dec.c
++++ b/drivers/media/platform/verisilicon/hantro_g1_vp8_dec.c
+@@ -442,8 +442,10 @@ int hantro_g1_vp8_dec_run(struct hantro_ctx *ctx)
+ 	hantro_start_prepare_run(ctx);
+ 
+ 	hdr = hantro_get_ctrl(ctx, V4L2_CID_STATELESS_VP8_FRAME);
+-	if (WARN_ON(!hdr))
++	if (WARN_ON(!hdr)) {
++		hantro_abort_prepare_run(ctx);
+ 		return -EINVAL;
++	}
+ 
+ 	/* Reset segment_map buffer in keyframe */
+ 	if (V4L2_VP8_FRAME_IS_KEY_FRAME(hdr) && ctx->vp8_dec.segment_map.cpu)
+diff --git a/drivers/media/platform/verisilicon/hantro_g2_hevc_dec.c b/drivers/media/platform/verisilicon/hantro_g2_hevc_dec.c
+index e8c2e83379def..5778813a9eb2f 100644
+--- a/drivers/media/platform/verisilicon/hantro_g2_hevc_dec.c
++++ b/drivers/media/platform/verisilicon/hantro_g2_hevc_dec.c
+@@ -596,7 +596,7 @@ int hantro_g2_hevc_dec_run(struct hantro_ctx *ctx)
+ 	/* Prepare HEVC decoder context. */
+ 	ret = hantro_hevc_dec_prepare_run(ctx);
+ 	if (ret)
+-		return ret;
++		goto abort_prepare_run;
+ 
+ 	/* Configure hardware registers. */
+ 	set_params(ctx);
+@@ -604,7 +604,7 @@ int hantro_g2_hevc_dec_run(struct hantro_ctx *ctx)
+ 	/* set reference pictures */
+ 	ret = set_ref(ctx);
+ 	if (ret)
+-		return ret;
++		goto abort_prepare_run;
+ 
+ 	set_buffers(ctx);
+ 	prepare_tile_info_buffer(ctx);
+@@ -634,4 +634,9 @@ int hantro_g2_hevc_dec_run(struct hantro_ctx *ctx)
+ 	vdpu_write(vpu, G2_REG_INTERRUPT_DEC_E, G2_REG_INTERRUPT);
+ 
+ 	return 0;
++
++abort_prepare_run:
++	hantro_abort_prepare_run(ctx);
++
++	return ret;
+ }
+diff --git a/drivers/media/platform/verisilicon/rockchip_vpu2_hw_h264_dec.c b/drivers/media/platform/verisilicon/rockchip_vpu2_hw_h264_dec.c
+index 6da87f5184bcb..d412d5d661226 100644
+--- a/drivers/media/platform/verisilicon/rockchip_vpu2_hw_h264_dec.c
++++ b/drivers/media/platform/verisilicon/rockchip_vpu2_hw_h264_dec.c
+@@ -473,8 +473,10 @@ int rockchip_vpu2_h264_dec_run(struct hantro_ctx *ctx)
+ 
+ 	/* Prepare the H264 decoder context. */
+ 	ret = hantro_h264_dec_prepare_run(ctx);
+-	if (ret)
++	if (ret) {
++		hantro_abort_prepare_run(ctx);
+ 		return ret;
++	}
+ 
+ 	src_buf = hantro_get_src_buf(ctx);
+ 	set_params(ctx, src_buf);
+diff --git a/drivers/media/platform/verisilicon/rockchip_vpu2_hw_jpeg_enc.c b/drivers/media/platform/verisilicon/rockchip_vpu2_hw_jpeg_enc.c
+index 61621b1be8a2f..0ba078b9d1875 100644
+--- a/drivers/media/platform/verisilicon/rockchip_vpu2_hw_jpeg_enc.c
++++ b/drivers/media/platform/verisilicon/rockchip_vpu2_hw_jpeg_enc.c
+@@ -143,8 +143,10 @@ int rockchip_vpu2_jpeg_enc_run(struct hantro_ctx *ctx)
+ 
+ 	memset(&jpeg_ctx, 0, sizeof(jpeg_ctx));
+ 	jpeg_ctx.buffer = vb2_plane_vaddr(&dst_buf->vb2_buf, 0);
+-	if (!jpeg_ctx.buffer)
++	if (!jpeg_ctx.buffer) {
++		hantro_abort_prepare_run(ctx);
+ 		return -ENOMEM;
++	}
+ 
+ 	jpeg_ctx.width = ctx->dst_fmt.width;
+ 	jpeg_ctx.height = ctx->dst_fmt.height;
+diff --git a/drivers/media/platform/verisilicon/rockchip_vpu2_hw_vp8_dec.c b/drivers/media/platform/verisilicon/rockchip_vpu2_hw_vp8_dec.c
+index d079075448c96..15f4872dd2bdd 100644
+--- a/drivers/media/platform/verisilicon/rockchip_vpu2_hw_vp8_dec.c
++++ b/drivers/media/platform/verisilicon/rockchip_vpu2_hw_vp8_dec.c
+@@ -519,8 +519,10 @@ int rockchip_vpu2_vp8_dec_run(struct hantro_ctx *ctx)
+ 	hantro_start_prepare_run(ctx);
+ 
+ 	hdr = hantro_get_ctrl(ctx, V4L2_CID_STATELESS_VP8_FRAME);
+-	if (WARN_ON(!hdr))
++	if (WARN_ON(!hdr)) {
++		hantro_abort_prepare_run(ctx);
+ 		return -EINVAL;
++	}
+ 
+ 	/* Reset segment_map buffer in keyframe */
+ 	if (V4L2_VP8_FRAME_IS_KEY_FRAME(hdr) && ctx->vp8_dec.segment_map.cpu)
