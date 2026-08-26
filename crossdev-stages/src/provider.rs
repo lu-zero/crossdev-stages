@@ -145,6 +145,21 @@ impl RootfsProvider {
         }
     }
 
+    /// Whether the `deps` step emerges atoms the crossdev-stages overlay
+    /// carries (`app-arch/apk-tools`, `sys-apps/dnf5`).  The only reason
+    /// any build needs the overlay repository to be reachable, so nothing
+    /// else may treat it as a precondition.
+    pub fn needs_overlay(&self) -> bool {
+        match self {
+            Self::Alpine | Self::Fedora => true,
+            Self::Gentoo
+            | Self::Debian
+            | Self::Ubuntu
+            | Self::Buildroot
+            | Self::None => false,
+        }
+    }
+
     /// The debootstrap flavour behind this provider, if it is one.
     pub fn debootstrap(&self) -> Option<Debootstrap> {
         match self {
@@ -441,6 +456,25 @@ impl FedoraImage {
 #[cfg(test)]
 mod tests {
     use super::{Debootstrap, RootfsProvider, SecondStage};
+
+    #[test]
+    fn only_alpine_and_fedora_need_the_overlay() {
+        assert!(RootfsProvider::Alpine.needs_overlay());
+        assert!(RootfsProvider::Fedora.needs_overlay());
+        for p in [
+            RootfsProvider::Gentoo,
+            RootfsProvider::Debian,
+            RootfsProvider::Ubuntu,
+            RootfsProvider::Buildroot,
+            RootfsProvider::None,
+        ] {
+            assert!(
+                !p.needs_overlay(),
+                "{} must build without the overlay",
+                p.name()
+            );
+        }
+    }
 
     #[test]
     fn parse_known_values() {

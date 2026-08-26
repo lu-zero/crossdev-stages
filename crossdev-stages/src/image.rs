@@ -2089,6 +2089,13 @@ pub fn build(
 
         let result = match *step {
             "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board, |_r| {
+                // The overlay is a precondition of these providers alone
+                // (apk-tools, dnf5), so it is installed here and not in
+                // prepare(): every other command, a plain kernel build
+                // included, must build with the overlay repo unreachable.
+                if provider.needs_overlay() {
+                    sandbox.install_overlay(defaults_root, provider)?;
+                }
                 // A wrong atom is otherwise only found by emerge, which gets
                 // there after the sandbox list has already been built -- ten
                 // minutes of compiling thrown away over a package that was
