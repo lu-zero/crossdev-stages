@@ -6,3 +6,11 @@ k230-build*.log
 # committable.  This has to come after *.log: git takes the last pattern that
 # matches, so the exception was doing nothing above it.
 !boards/*/evidence/*.log
+
+# Vendor closed firmware blobs (NOT redistributable, see the board's README)
+boards/*/firmware/vendor/
+boards/zhihe-a210/firmware/*.bin
+
+# Build artifacts staged into a bundle
+boards/*/uboot_env.img
+boards/*/gpt.img
