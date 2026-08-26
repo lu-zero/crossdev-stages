@@ -863,6 +863,16 @@ fn install_overlay(runner: SandboxRunner, sandbox: &Utf8Path, repo: &str, tag: &
         )?;
         runner
     };
+    // A clone or a copy can succeed and still not be a portage repository:
+    // a wrong OVERLAY_TAG, or an OVERLAY_REPO naming the wrong local
+    // directory.  Portage takes such a tree as a repository with no packages
+    // and says nothing about it beyond a masters warning, so the overlay's
+    // ebuilds go missing and the failure is reported against the package.
+    // Refuse here, while the previous overlay is still in place.
+    runner.run(&format!(
+        "test -s {OVERLAY_STAGE}/profiles/repo_name || \
+         {{ echo 'overlay checkout has no profiles/repo_name' >&2; exit 1; }}"
+    ))?;
     runner.run(&format!(
         "rm -rf {OVERLAY_DIR} && mv {OVERLAY_STAGE} {OVERLAY_DIR}"
     ))?;
