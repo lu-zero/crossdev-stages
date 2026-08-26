@@ -143,14 +143,16 @@ pub fn run(boards_root: &Utf8Path, cmd: BoardCmd) -> Result<()> {
             }
 
             let board_dir = boards_root.join(&board_name);
-            let steps = [
-                "deps",
-                "checkout",
-                "bootloader",
-                "kernel",
-                "assemble",
-                "pack",
-            ];
+            // The default steps, plus any step this board invented.  A custom
+            // step has no Rust default, so its override-<step>.sh is the only
+            // thing that makes it run at all -- listing only the six built-in
+            // names hides the hook that defines such a board.
+            let mut steps: Vec<&str> = board::DEFAULT_BUILD_STEPS.to_vec();
+            for s in board_cfg.effective_build_steps() {
+                if !steps.contains(&s) {
+                    steps.push(s);
+                }
+            }
             let mut hooks = Vec::new();
             for s in &steps {
                 if board_dir.join(format!("override-{s}.sh")).exists() {
