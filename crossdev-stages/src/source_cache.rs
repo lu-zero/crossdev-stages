@@ -42,7 +42,7 @@ pub fn cached_clone(
         // transfer and no default-branch checkout for the pinned commit to
         // overwrite.  The network is touched only on a cache miss, where
         // `git fetch <sha>` asks for an object no ref advertises: that needs
-        // protocol v2 (the client default since git 2.26) or
+        // protocol v2 (git's default, `protocol.version`) or the server's
         // uploadpack.allowReachableSHA1InWant -- git.kernel.org refuses it
         // over v0.  A fetched commit is unreferenced in a bare repo, so
         // refs/pins/ is what keeps the cache's own gc off it.
