@@ -12,8 +12,13 @@ use crate::error::Result;
 /// 2. Bare cache exists -> `git fetch`
 /// 3. Branch/tag: `git clone --reference cache --depth=1 --branch tag repo dest`
 ///    Commit SHA (from a pinned build.lock.toml): `git clone --branch` cannot
-///    resolve raw commits, so clone without it, fetch the commit explicitly
-///    and check it out detached.
+///    resolve raw commits, so the commit is put in the bare cache and the
+///    checkout is cloned from the cache instead of from the network.
+///
+/// `dest` is replaced, not reused.  A checkout is derived state: the tree
+/// left by a run that stopped after cloning and before its patches applied
+/// is at some other tag, or half patched, and `git clone` into it only
+/// fails with "already exists and is not an empty directory".
 pub fn cached_clone(
     runner: &SandboxRunner,
     repo: &str,
@@ -33,14 +38,28 @@ pub fn cached_clone(
     ))?;
 
     if is_commit_sha(tag) {
+        // `--shared` borrows the cache's objects, so the pin costs no
+        // transfer and no default-branch checkout for the pinned commit to
+        // overwrite.  The network is touched only on a cache miss, where
+        // `git fetch <sha>` asks for an object no ref advertises: that needs
+        // protocol v2 (the client default since git 2.26) or
+        // uploadpack.allowReachableSHA1InWant -- git.kernel.org refuses it
+        // over v0.  A fetched commit is unreferenced in a bare repo, so
+        // refs/pins/ is what keeps the cache's own gc off it.
         runner.run(&format!(
-            "git clone --reference {cache} {repo} {dest} && \
-             git -C {dest} fetch origin {tag} && \
-             git -C {dest} checkout --detach FETCH_HEAD"
+            "rm -rf {dest} && \
+             if ! git -C {cache} cat-file -e {tag} 2>/dev/null; then \
+                 git -C {cache} fetch origin {tag} && \
+                 git -C {cache} update-ref refs/pins/{tag} {tag}; \
+             fi && \
+             git clone --shared --no-checkout {cache} {dest} && \
+             git -C {dest} remote set-url origin {repo} && \
+             git -C {dest} checkout --detach {tag}"
         ))
     } else {
         runner.run(&format!(
-            "git clone --reference {cache} --depth=1 --branch {tag} {repo} {dest}"
+            "rm -rf {dest} && \
+             git clone --reference {cache} --depth=1 --branch {tag} {repo} {dest}"
         ))
     }
 }
