@@ -245,7 +245,7 @@ by `uboot`.
 | `BOARD_GCC_VERSION` | no | Pin gcc: `15` (slot), `15.2` (prefix), or exact version (default: highest installed slot) |
 | `KERNEL_TAG` | no | Kernel git ref (default: top-level `TAG`) |
 | `KERNEL_ARCH` | no | Linux `ARCH=` value (default: auto from `BOARD_ARCH`) |
-| `BUILD_STEPS` | no | Build pipeline steps (default: deps checkout bootloader kernel assemble pack); custom step names require a matching `override-<step>.sh` hook |
+| `BUILD_STEPS` | no | Build pipeline steps (default: deps checkout bootloader kernel assemble pack); custom step names require a matching `override-<step>.sh` hook and build with the cross toolchain |
 | `BOOT_PIPELINE` | no | Ordered bootloader stages (default: `("opensbi" "uboot" "syslinux" "grub")`; `()` = none) |
 | `BOOT_EXTLINUX` | no | `true` makes `assemble` write `/extlinux/extlinux.conf` |
 | `BOOT_APPEND` | no | Kernel arguments added to that entry |

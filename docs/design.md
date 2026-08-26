@@ -150,7 +150,9 @@ none     nothing seeded, installed, or configured; board hook scripts
 ```
 
 Providers other than gentoo set up the toolchain store only when
-BUILD_STEPS compiles target code (kernel/bootloader).
+BUILD_STEPS compiles target code.  `deps`, `checkout`, `assemble` and
+`pack` do not; `kernel`, `bootloader` and every step a board invents do,
+because a board invents a step to build what no built-in step builds.
 
 ### `SecondStage`
 
@@ -396,7 +398,9 @@ sibling helpers.
 `BUILD_STEPS` may also name custom steps with no Rust default.  A custom
 step must provide `override-{step}.sh` (it runs with the same `.{step}`
 marker and hook conventions); a custom step with no override hook is a hard
-error, not a silent skip.
+error, not a silent skip.  It runs with the cross toolchain mounted, which
+a board that compiles nothing there can avoid by making the work a
+`pre-`/`post-{step}.sh` hook on a step it already runs.
 
 ---
 

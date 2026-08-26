@@ -118,10 +118,25 @@ impl RootfsProvider {
             | Self::Alpine
             | Self::Fedora
             | Self::Buildroot
-            | Self::None => steps
-                .iter()
-                .any(|s| matches!(*s, "kernel" | "bootloader")),
+            | Self::None => steps.iter().any(|s| Self::step_needs_cross_toolchain(s)),
         }
+    }
+
+    /// Whether one build step compiles target code, and so needs the
+    /// prefix.  Stated as what does not: `deps` fills /target with the
+    /// provider's own tool, `checkout` clones, `assemble` lays out a
+    /// tree, `pack` runs genimage.  Everything else does, invented step
+    /// names included: a board writes `override-<step>.sh` precisely
+    /// when it builds what no built-in step builds, which is the case
+    /// most likely to want a cross compiler.  Naming the compiling
+    /// steps instead mounted no prefix for such a step, leaving its
+    /// hook the host gcc or whatever toolchain residue the sandbox
+    /// rootfs happened to carry, and the ABI and ISA checks that would
+    /// catch the result need that same prefix to run.  Work that
+    /// compiles nothing belongs in a `pre-`/`post-<step>.sh` hook on a
+    /// step that already runs, and costs no toolchain.
+    fn step_needs_cross_toolchain(step: &str) -> bool {
+        !matches!(step, "deps" | "checkout" | "assemble" | "pack")
     }
 
     /// Whether `/target` is seeded from a Gentoo stage3 tarball.
@@ -522,6 +537,19 @@ mod tests {
         assert!(!p.needs_cross_toolchain(&["deps", "assemble", "pack"]));
         assert!(p.needs_cross_toolchain(&["kernel", "assemble", "pack"]));
         assert!(p.needs_cross_toolchain(&["bootloader", "pack"]));
+    }
+
+    /// A board only invents a step because it compiles something no
+    /// built-in step covers, so the invented step is the one most
+    /// likely to want the prefix.  Naming the compiling steps left it
+    /// with no prefix and no way to ask for one.
+    #[test]
+    fn a_step_a_board_invented_gets_the_toolchain() {
+        let p = RootfsProvider::Debian;
+        assert!(p.needs_cross_toolchain(&["deps", "firmware", "assemble", "pack"]));
+        // The inverted list is load-bearing: every built-in step that
+        // compiles nothing has to stay toolchain-free.
+        assert!(!p.needs_cross_toolchain(&["deps", "checkout", "assemble", "pack"]));
     }
 
     /// Which of (a) and (c) a buildroot board gets is decided by
