@@ -35,6 +35,7 @@ Rootless cross-compilation of Gentoo stages using crossdev and hakoniwa
 | pentium-mmx | i586 | mainline v6.18 | BIOS (no firmware) | `-O2 -march=pentium-mmx` | testing |
 | premier-p550 | riscv64 | mainline v7.2-rc1 | vendor QSPI (OpenSBI + U-Boot) + extlinux | `-O3 -march=rv64gc_zba_zbb` | testing |
 | vsrves01 | riscv32 | mainline v6.18 + patches | VSDSP6/VSOS DDRLoad (no U-Boot/OpenSBI) | `-Os -march=rv32ima_zicsr_zifencei` | experimental (hardware dead) |
+| ch32v467 | riscv32 | mainline v7.1 + patches (buildroot) | none: MCU firmware is the machine (tiny-rv32ima) | `-Os -march=rv32ima_zicsr_zifencei` | experimental (never run on hardware) |
 
 ## CLI
 
@@ -412,7 +413,6 @@ runs in: the build host, with the cross compiler, and the target mounted at
 `/target`.
 
 ### Debugging a build
-### Debugging a build
 
 `enter` opens a shell in the very container a build step runs in -- same
 rootfs, same cross toolchain on PATH, same `/target`, `/build`, `/scripts` and
@@ -457,7 +457,6 @@ The measurement is the ABI and ISA checks below, against the finished image.
 They are the only thing that can fail a build, because they are the only thing
 that reads the artifact.
 
-### ABI verification
 ### ABI verification
 
 Nothing in a binary package records the libc or the compiler that produced it.
