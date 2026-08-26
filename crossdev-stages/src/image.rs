@@ -39,7 +39,7 @@ impl Build {
         if let Ok(builds) = ws.list_builds() {
             for dir in builds {
                 if let Some(b) = Self::open(dir.clone()) {
-                    if b.board == board && !b.is_done("packed") {
+                    if b.board == board && !b.is_packed() {
                         tracing::info!("Resuming build: {}", dir);
                         return Ok(b);
                     }
@@ -77,13 +77,40 @@ impl Build {
         self.dir.join(format!(".{step}"))
     }
 
-    fn is_done(&self, step: &str) -> bool {
-        self.marker(step).exists()
+    /// Whether this leaf reached the end of the pipeline.  Resume picks a
+    /// leaf, [`Build::is_done`] picks the steps inside it.
+    fn is_packed(&self) -> bool {
+        self.marker("packed").exists()
     }
 
-    fn mark_done(&self, step: &str) -> Result<()> {
-        std::fs::write(self.marker(step), Utc::now().to_rfc3339())?;
+    /// A step is done only when its marker names the inputs it ran with and
+    /// they have not moved since.  Existence alone cannot tell a resumed
+    /// build from a stale one: adding a patch or moving a TAG leaves the
+    /// marker in place, the step is skipped, and the image is built from
+    /// what was there before.
+    ///
+    /// A marker written before the digest was recorded carries none, so it
+    /// reads as stale.  That costs one rebuild and never ships an image the
+    /// board.conf no longer describes.
+    fn is_done(&self, step: &str, inputs: &str) -> bool {
+        let Ok(body) = std::fs::read_to_string(self.marker(step)) else {
+            return false;
+        };
+        body.lines()
+            .any(|line| line.strip_prefix("inputs ") == Some(inputs))
+    }
+
+    fn mark_done(&self, step: &str, inputs: &str) -> Result<()> {
+        std::fs::write(
+            self.marker(step),
+            format!("{}\ninputs {inputs}\n", Utc::now().to_rfc3339()),
+        )?;
         Ok(())
+    }
+
+    /// Drop a step's marker.  True when there was one to drop.
+    fn clear_marker(&self, step: &str) -> bool {
+        std::fs::remove_file(self.marker(step)).is_ok()
     }
 }
 
@@ -120,14 +147,15 @@ fn migrate_legacy_build(ws: &Workspace, board: &str) -> Result<()> {
 
 fn run_step(
     step: &str,
-    marker: &str,
+    inputs: &str,
     build: &Build,
     runner: &SandboxRunner,
     boards_root: &Utf8Path,
     board: &BoardConfig,
     default_fn: impl FnOnce(&SandboxRunner) -> Result<()>,
 ) -> Result<()> {
-    if build.is_done(marker) {
+    let marker = marker_for(step);
+    if build.is_done(marker, inputs) {
         return Ok(());
     }
 
@@ -136,7 +164,7 @@ fn run_step(
     let override_sh = format!("override-{step}.sh");
     if board_dir.join(&override_sh).exists() {
         runner.run(&run_board_script(board, &override_sh))?;
-        return build.mark_done(marker);
+        return build.mark_done(marker, inputs);
     }
 
     let pre_sh = format!("pre-{step}.sh");
@@ -151,7 +179,7 @@ fn run_step(
         runner.run(&run_board_script(board, &post_sh))?;
     }
 
-    build.mark_done(marker)
+    build.mark_done(marker, inputs)
 }
 
 fn run_board_script(board: &BoardConfig, script: &str) -> String {
@@ -170,6 +198,191 @@ fn run_board_script(board: &BoardConfig, script: &str) -> String {
         disk = DiskId::of(board).exports(),
         name = board.name,
     )
+}
+
+// -- What each step reads ---------------------------------------------------
+//
+// A marker that only records "this ran" is a cache with no key.  Each step
+// therefore records a digest of its own inputs, and is redone when they
+// move.  A step missing from this map is a step that can be skipped after
+// its inputs change, so anything a step grows has to be added here.
+
+/// Marker file name for a build step.  Three markers were named before the
+/// convention settled and keep the names already on disk.
+fn marker_for(step: &str) -> &str {
+    match step {
+        "checkout" => "sources",
+        "assemble" => "assembled",
+        "pack" => "packed",
+        other => other,
+    }
+}
+
+fn digest_of(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hasher.finalize().iter().fold(String::new(), |mut acc, byte| {
+        use std::fmt::Write;
+        let _ = write!(acc, "{byte:02x}");
+        acc
+    })
+}
+
+/// Digest of a file's contents, or `absent` -- a file appearing and a file
+/// changing are the same event to a step that reads it.
+fn file_digest(path: &Utf8Path) -> String {
+    match std::fs::read(path) {
+        Ok(bytes) => digest_of(&bytes),
+        Err(_) => "absent".to_string(),
+    }
+}
+
+/// Every file under `dir`, depth first in name order, as `label/rel digest`.
+/// A file added, removed or edited all move the result.
+fn tree_lines(label: &str, dir: &Utf8Path, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        out.push(format!("{label} absent"));
+        return;
+    };
+    let mut paths: Vec<Utf8PathBuf> = entries
+        .filter_map(|e| Utf8PathBuf::from_path_buf(e.ok()?.path()).ok())
+        .collect();
+    paths.sort();
+    for path in paths {
+        let name = path.file_name().unwrap_or_default().to_string();
+        let label = format!("{label}/{name}");
+        if path.is_dir() {
+            tree_lines(&label, &path, out);
+        } else {
+            out.push(format!("{label} {}", file_digest(&path)));
+        }
+    }
+}
+
+/// A config file's settings, with comments and blank lines dropped: editing
+/// a comment in board.conf must not cost a rebuild, editing a value must.
+fn config_settings(path: &Utf8Path) -> String {
+    let Ok(body) = std::fs::read_to_string(path) else {
+        return String::new();
+    };
+    body.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .fold(String::new(), |mut acc, line| {
+            acc.push_str(line);
+            acc.push('\n');
+            acc
+        })
+}
+
+/// board.conf and the include files it names, in the order the loader and
+/// the hook scripts read them.  Every step sees these, because every step
+/// is either a Rust default reading the parsed config or a hook sourcing
+/// the same files.
+fn board_config_digest(board: &BoardConfig, boards_root: &Utf8Path) -> String {
+    let mut text = String::new();
+    for name in &board.includes {
+        text.push_str(&config_settings(
+            &boards_root.join("include").join(format!("{name}.conf")),
+        ));
+    }
+    text.push_str(&config_settings(
+        &boards_root.join(&board.name).join("board.conf"),
+    ));
+    digest_of(text.as_bytes())
+}
+
+/// Digest of everything `step` reads that a build can change between runs.
+///
+/// Not included, deliberately: what an earlier step produced (a step that
+/// is redone invalidates every step after it, which covers that), and the
+/// sandbox and crossdev prefix (portage keys its own caches; a stamp that
+/// triggers rebuilds on a gcc bump is a cache key with worse ergonomics --
+/// the ABI and ISA checks at the end of assemble read the artifact).
+fn step_inputs(
+    step: &str,
+    board: &BoardConfig,
+    boards_root: &Utf8Path,
+    defaults_root: &Utf8Path,
+) -> String {
+    let board_dir = boards_root.join(&board.name);
+    let mut lines = vec![
+        format!("step {step}"),
+        format!("board.conf {}", board_config_digest(board, boards_root)),
+    ];
+
+    // The hooks are the step, whenever a board writes one.
+    for hook in [
+        format!("override-{step}.sh"),
+        format!("pre-{step}.sh"),
+        format!("post-{step}.sh"),
+    ] {
+        lines.push(format!("{hook} {}", file_digest(&board_dir.join(&hook))));
+    }
+
+    match step {
+        "deps" => {
+            for name in ["sandbox-packages.txt", "target-packages.txt", "overlay.conf"] {
+                lines.push(format!(
+                    "defaults/{name} {}",
+                    file_digest(&defaults_root.join(name))
+                ));
+            }
+            let provider_list = format!("{}-packages.txt", board.rootfs_provider.name());
+            for name in [
+                "sandbox-packages.txt",
+                "sandbox-packages.use",
+                "target-packages.txt",
+                "target-packages.use",
+                "package.provided",
+                provider_list.as_str(),
+            ] {
+                lines.push(format!("{name} {}", file_digest(&board_dir.join(name))));
+            }
+            tree_lines(
+                "portage-patches",
+                &board_dir.join("portage-patches"),
+                &mut lines,
+            );
+        }
+        // The one that bit: a patch added under patches/<source>/ changes
+        // what checkout produces and nothing else says so.
+        "checkout" => tree_lines("patches", &board_dir.join("patches"), &mut lines),
+        "kernel" => {
+            for name in &board.kernel_config_fragments {
+                // Board first, then defaults -- the order the shell uses.
+                let in_board = board_dir.join("kernel-config").join(name);
+                let path = if in_board.is_file() {
+                    in_board
+                } else {
+                    defaults_root.join("kernel-config").join(name)
+                };
+                lines.push(format!("kernel-config/{name} {}", file_digest(&path)));
+            }
+        }
+        "assemble" => {
+            lines.push(format!(
+                "make.conf {}",
+                file_digest(&board_dir.join("make.conf"))
+            ));
+            tree_lines("defaults/scripts", &defaults_root.join("scripts"), &mut lines);
+        }
+        "pack" => {
+            let in_board = board_dir.join("genimage.cfg");
+            let path = if in_board.is_file() {
+                in_board
+            } else {
+                project_root(boards_root).join("genimage.cfg")
+            };
+            lines.push(format!("genimage.cfg {}", file_digest(&path)));
+        }
+        // bootloader, and any custom step, read the board config and their
+        // own hooks and nothing else on the host.
+        _ => {}
+    }
+
+    digest_of(lines.join("\n").as_bytes())
 }
 
 /// Identifiers for the partition table, derived from the board rather than
@@ -2065,10 +2278,38 @@ pub fn build(
     // entirely (it may not exist); their runners are plain sandbox runners.
     let needs_toolchain = provider.needs_cross_toolchain(&steps_to_run);
 
+    // Resume is decided here, before anything runs, because a step that has
+    // to be redone invalidates every step after it: they were built out of
+    // what it produced.  Clearing those markers up front is what stops a
+    // fresh `checkout` from being assembled behind a stale `kernel`.
+    let inputs: Vec<String> = steps_to_run
+        .iter()
+        .map(|step| step_inputs(step, board, boards_root, defaults_root))
+        .collect();
+    if let Some(first) = steps_to_run
+        .iter()
+        .zip(&inputs)
+        .position(|(step, digest)| !bld.is_done(marker_for(step), digest))
+    {
+        let cleared: Vec<&str> = steps_to_run[first..]
+            .iter()
+            .copied()
+            .filter(|step| bld.clear_marker(marker_for(step)))
+            .collect();
+        if !cleared.is_empty() {
+            tracing::info!(
+                "Inputs changed at step '{}': redoing {}",
+                steps_to_run[first],
+                cleared.join(" ")
+            );
+        }
+    }
+
     let total = steps_to_run.len();
     let build_start = std::time::Instant::now();
 
     for (i, step) in steps_to_run.iter().enumerate() {
+        let d = inputs[i].as_str();
         let step_start = std::time::Instant::now();
         println!("==> [{}/{}] {}...", i + 1, total, step);
 
@@ -2088,7 +2329,7 @@ pub fn build(
         .with_binpkgs(&binpkgs_dir);
 
         let result = match *step {
-            "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board, |_r| {
+            "deps" => run_step("deps", d, &bld, &runner, boards_root, board, |_r| {
                 // The overlay is a precondition of these providers alone
                 // (apk-tools, dnf5), so it is installed here and not in
                 // prepare(): every other command, a plain kernel build
@@ -2130,7 +2371,7 @@ pub fn build(
             }),
             "checkout" => run_step(
                 "checkout",
-                "sources",
+                d,
                 &bld,
                 &runner,
                 boards_root,
@@ -2139,19 +2380,19 @@ pub fn build(
             ),
             "bootloader" => run_step(
                 "bootloader",
-                "bootloader",
+                d,
                 &bld,
                 &runner,
                 boards_root,
                 board,
                 |r| default_bootloader(r, board),
             ),
-            "kernel" => run_step("kernel", "kernel", &bld, &runner, boards_root, board, |r| {
+            "kernel" => run_step("kernel", d, &bld, &runner, boards_root, board, |r| {
                 default_kernel(r, board)
             }),
             "assemble" => run_step(
                 "assemble",
-                "assembled",
+                d,
                 &bld,
                 &runner,
                 boards_root,
@@ -2162,13 +2403,13 @@ pub fn build(
                     default_assemble(r, board, &bld, ws, kernel_built)
                 },
             ),
-            "pack" => run_step("pack", "packed", &bld, &runner, boards_root, board, |r| {
+            "pack" => run_step("pack", d, &bld, &runner, boards_root, board, |r| {
                 default_pack(r, board, &bld, boards_root)
             }),
             // Custom step: no Rust default. run_step still honours an
             // override-<step>.sh hook (with resume-marker support); if the
             // hook is missing, the default_fn below turns it into a hard error.
-            other => run_step(other, other, &bld, &runner, boards_root, board, |_r| {
+            other => run_step(other, d, &bld, &runner, boards_root, board, |_r| {
                 let hook = format!("boards/{}/override-{}.sh", board.name, other);
                 Err(crate::error::Error::BoardConfigParse {
                     file: hook.clone(),
@@ -2383,14 +2624,147 @@ fn format_duration(d: std::time::Duration) -> String {
 #[cfg(test)]
 mod tests {
     use super::{atom_cpn, buildroot_build_script, extlinux_conf, extlinux_fdt,
-                kernel_config_fragments};
+                kernel_config_fragments, marker_for, step_inputs, Build};
     use crate::board::BoardConfig;
+    use camino::Utf8PathBuf;
 
     fn board_with(fragments: &[&str]) -> BoardConfig {
         let mut board = crate::cli::util::default_board_config("riscv64");
         board.name = "demo".into();
         board.kernel_config_fragments = fragments.iter().map(|s| s.to_string()).collect();
         board
+    }
+
+
+    // -- Step markers ------------------------------------------------------
+    //
+    // The defect these cover: `is_done` used to be `marker(step).exists()`,
+    // so a step whose inputs had moved was skipped and the image was built
+    // from what was there before.  Observed twice: a patch added under
+    // patches/linux/ and a KERNEL_TAG moved to another commit both produced
+    // an exit-0 image from the old tree.
+
+    /// A directory under target/ that no other test shares.  Not /tmp: this
+    /// project's own workspace lives on disk for the same reason.
+    fn scratch(name: &str) -> Utf8PathBuf {
+        let dir = Utf8PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target/test-scratch")
+            .join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn demo_board() -> BoardConfig {
+        let mut board = crate::cli::util::default_board_config("aarch64");
+        board.name = "demo".into();
+        board
+    }
+
+    #[test]
+    fn a_marker_that_names_other_inputs_is_not_done() {
+        let dir = scratch("marker-inputs");
+        let build = Build {
+            dir: dir.clone(),
+            board: "demo".into(),
+        };
+        build.mark_done("sources", "aaa").unwrap();
+
+        // What the old implementation looked at, and why it was wrong.
+        assert!(dir.join(".sources").exists());
+
+        assert!(build.is_done("sources", "aaa"));
+        assert!(!build.is_done("sources", "bbb"));
+    }
+
+    #[test]
+    fn a_marker_from_before_the_digest_reads_as_stale() {
+        let dir = scratch("marker-legacy");
+        let build = Build {
+            dir: dir.clone(),
+            board: "demo".into(),
+        };
+        // Exactly what mark_done wrote before: a bare RFC3339 timestamp.
+        std::fs::write(dir.join(".sources"), "2026-08-25T22:50:10.389533200+00:00").unwrap();
+        assert!(!build.is_done("sources", "aaa"));
+    }
+
+    #[test]
+    fn markers_keep_the_names_already_on_disk() {
+        assert_eq!(marker_for("checkout"), "sources");
+        assert_eq!(marker_for("assemble"), "assembled");
+        assert_eq!(marker_for("pack"), "packed");
+        assert_eq!(marker_for("kernel"), "kernel");
+        assert_eq!(marker_for("flash-blobs"), "flash-blobs");
+    }
+
+    #[test]
+    fn adding_a_patch_moves_the_checkout_digest() {
+        let root = scratch("checkout-digest");
+        let boards = root.join("boards");
+        let defaults = root.join("defaults");
+        let patches = boards.join("demo/patches/linux");
+        std::fs::create_dir_all(&patches).unwrap();
+        std::fs::create_dir_all(&defaults).unwrap();
+        std::fs::write(boards.join("demo/board.conf"), "KERNEL_TAG=\"v7.2\"\n").unwrap();
+        std::fs::write(patches.join("0001-a.patch"), "one\n").unwrap();
+        let board = demo_board();
+
+        let before = step_inputs("checkout", &board, &boards, &defaults);
+        std::fs::write(patches.join("0002-b.patch"), "two\n").unwrap();
+        let after = step_inputs("checkout", &board, &boards, &defaults);
+        assert_ne!(before, after, "a new patch has to invalidate checkout");
+
+        // Editing one in place counts too, and so does taking one away.
+        std::fs::write(patches.join("0002-b.patch"), "two, edited\n").unwrap();
+        let edited = step_inputs("checkout", &board, &boards, &defaults);
+        assert_ne!(after, edited);
+        std::fs::remove_file(patches.join("0002-b.patch")).unwrap();
+        assert_eq!(before, step_inputs("checkout", &board, &boards, &defaults));
+    }
+
+    #[test]
+    fn a_comment_costs_no_rebuild_but_a_value_does() {
+        let root = scratch("board-conf-digest");
+        let boards = root.join("boards");
+        let defaults = root.join("defaults");
+        std::fs::create_dir_all(boards.join("demo")).unwrap();
+        std::fs::create_dir_all(&defaults).unwrap();
+        let conf = boards.join("demo/board.conf");
+        std::fs::write(&conf, "KERNEL_TAG=\"v7.2\"\n").unwrap();
+        let board = demo_board();
+
+        let before = step_inputs("kernel", &board, &boards, &defaults);
+        std::fs::write(&conf, "# mainline\nKERNEL_TAG=\"v7.2\"\n\n").unwrap();
+        assert_eq!(before, step_inputs("kernel", &board, &boards, &defaults));
+
+        std::fs::write(&conf, "KERNEL_TAG=\"4e69c185\"\n").unwrap();
+        assert_ne!(before, step_inputs("kernel", &board, &boards, &defaults));
+    }
+
+    #[test]
+    fn a_board_hook_is_part_of_its_step() {
+        let root = scratch("hook-digest");
+        let boards = root.join("boards");
+        let defaults = root.join("defaults");
+        std::fs::create_dir_all(boards.join("demo")).unwrap();
+        std::fs::create_dir_all(&defaults).unwrap();
+        std::fs::write(boards.join("demo/board.conf"), "KERNEL_ARCH=\"arm64\"\n").unwrap();
+        let board = demo_board();
+
+        let before = step_inputs("kernel", &board, &boards, &defaults);
+        let hook = boards.join("demo/override-kernel.sh");
+        std::fs::write(&hook, "make\n").unwrap();
+        let with_hook = step_inputs("kernel", &board, &boards, &defaults);
+        assert_ne!(before, with_hook);
+        std::fs::write(&hook, "make -j4\n").unwrap();
+        assert_ne!(with_hook, step_inputs("kernel", &board, &boards, &defaults));
+        // Another step's hook is not this step's input.
+        std::fs::write(boards.join("demo/post-pack.sh"), "true\n").unwrap();
+        assert_eq!(
+            step_inputs("kernel", &board, &boards, &defaults),
+            step_inputs("kernel", &board, &boards, &defaults)
+        );
     }
 
     #[test]

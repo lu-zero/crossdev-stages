@@ -236,9 +236,11 @@ fn logs(ws: &Workspace, board_name: &str, step: Option<&str>) -> Result<()> {
     ] {
         let marker = build.dir.join(format!(".{s}"));
         if marker.exists() {
-            let ts = std::fs::read_to_string(&marker).unwrap_or_default();
+            // First line is the timestamp; the rest is the input digest.
+            let body = std::fs::read_to_string(&marker).unwrap_or_default();
+            let ts = body.lines().next().unwrap_or_default();
             let label = if step == Some(s) { " <--" } else { "" };
-            println!("  {s}: {}{label}", ts.trim());
+            println!("  {s}: {ts}{label}");
         }
     }
 
