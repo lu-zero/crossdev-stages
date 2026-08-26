@@ -1,8 +1,9 @@
 //! Build provenance and image manifests.  Two emitters:
 //!
 //! - [`ManifestBuilder`] → `build.lock.toml` in the build dir: source
-//!   commits, stage3, toolchain CFLAGS, config hashes.  Observability
-//!   only (no enforcement yet).
+//!   commits, stage3, toolchain CFLAGS, config hashes.  Observability,
+//!   with one exception: a source pinned to a commit SHA that the built
+//!   tree is not on fails the build (see `pin_mismatches`).
 //! - [`write_image_sidecar`] → `<image>.manifest.json` next to the packed
 //!   image: full-image sha256 + partition table (offset/size/source/sha256)
 //!   for verifying integrity and dd-ing partitions to eMMC/SPI flash at
@@ -19,7 +20,7 @@ use crate::container::SandboxRunner;
 use crate::error::Result;
 
 /// What went into a single image build. Written as `build.lock.toml` in the
-/// build dir at pipeline end. Phase 1: observability only (no enforcement).
+/// build dir at pipeline end.
 #[derive(Debug, Serialize)]
 pub struct BuildManifest {
     pub build: BuildMeta,
@@ -151,6 +152,29 @@ impl ManifestBuilder {
             },
         );
         Ok(())
+    }
+
+    /// Sources whose recorded tag is a full commit SHA the built tree does
+    /// not sit on.  A 40-hex tag names one tree and nothing else, so tag and
+    /// commit are the same quantity read twice: what the build was told to
+    /// check out, and what `git rev-parse HEAD` found in the tree the build
+    /// compiled.  They cannot legitimately disagree -- a skipped checkout, or
+    /// a SHA pinned onto the wrong repo, and the image is not what the lock
+    /// says it is.  A named tag or branch makes no such claim and is skipped.
+    pub fn pin_mismatches(&self) -> Vec<String> {
+        self.sources
+            .iter()
+            .filter(|(_, s)| matches!(s.kind, SourceKind::Git))
+            .filter(|(_, s)| {
+                crate::source_cache::is_commit_sha(&s.tag) && !s.tag.eq_ignore_ascii_case(&s.commit)
+            })
+            .map(|(name, s)| {
+                format!(
+                    "source '{name}' pinned to {} but the tree that was built is at {}",
+                    s.tag, s.commit
+                )
+            })
+            .collect()
     }
 
     /// Gather toolchain CFLAGS by reading the two relevant make.conf files
@@ -417,6 +441,84 @@ fn parse_partitions(cfg: &str) -> Vec<Partition> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn builder_with(entries: &[(&str, &str, &str, SourceKind)]) -> ManifestBuilder {
+        let mut b = ManifestBuilder::new(&crate::cli::util::default_board_config("aarch64"));
+        for (name, tag, commit, kind) in entries {
+            b.sources.insert(
+                (*name).to_string(),
+                SourceEntry {
+                    repo: "https://example.invalid/repo.git".into(),
+                    tag: (*tag).to_string(),
+                    commit: (*commit).to_string(),
+                    kind: match kind {
+                        SourceKind::Git => SourceKind::Git,
+                        SourceKind::Local => SourceKind::Local,
+                        SourceKind::Missing => SourceKind::Missing,
+                    },
+                    path: format!("/build/{name}"),
+                },
+            );
+        }
+        b
+    }
+
+    /// The lock a real build wrote on 2026-08-25: the kernel step was skipped
+    /// by its resume marker, so the pin never reached the tree.
+    #[test]
+    fn pinned_sha_against_a_stale_tree_is_a_mismatch() {
+        let b = builder_with(&[(
+            "kernel",
+            "4e69c1856bfd9ffb7e9d335a25842fa211628929",
+            "8d3ae59288f1e7d58d76558a6ee96d533bc5019f",
+            SourceKind::Git,
+        )]);
+        let found = b.pin_mismatches();
+        assert_eq!(found.len(), 1);
+        assert!(found[0].contains("kernel"));
+    }
+
+    #[test]
+    fn pinned_sha_that_matches_is_clean() {
+        let sha = "4e69c1856bfd9ffb7e9d335a25842fa211628929";
+        assert!(builder_with(&[("kernel", sha, sha, SourceKind::Git)])
+            .pin_mismatches()
+            .is_empty());
+        // git prints lowercase; a hand-edited board.conf may not.
+        let upper = sha.to_ascii_uppercase();
+        assert!(builder_with(&[("kernel", &upper, sha, SourceKind::Git)])
+            .pin_mismatches()
+            .is_empty());
+    }
+
+    /// A name resolves to whatever it points at today, so it claims nothing
+    /// the commit could contradict.
+    #[test]
+    fn named_tags_and_branches_claim_nothing() {
+        for tag in ["v7.2", "master", "linux-6.6.y"] {
+            assert!(builder_with(&[(
+                "kernel",
+                tag,
+                "8d3ae59288f1e7d58d76558a6ee96d533bc5019f",
+                SourceKind::Git,
+            )])
+            .pin_mismatches()
+            .is_empty());
+        }
+    }
+
+    /// commit is a tree hash for local and empty for missing; neither is a
+    /// git sha and neither can be compared to one.
+    #[test]
+    fn non_git_sources_are_not_compared() {
+        let sha = "4e69c1856bfd9ffb7e9d335a25842fa211628929";
+        assert!(builder_with(&[("kernel", sha, "deadbeef", SourceKind::Local)])
+            .pin_mismatches()
+            .is_empty());
+        assert!(builder_with(&[("kernel", sha, "", SourceKind::Missing)])
+            .pin_mismatches()
+            .is_empty());
+    }
 
     #[test]
     fn skips_preceding_filesystem_images() {

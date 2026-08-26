@@ -47,7 +47,7 @@ pub fn cached_clone(
 
 /// True for a full 40-hex git commit SHA, as written into build.lock.toml
 /// by `git rev-parse HEAD` and fed back through `image build --pinned`.
-fn is_commit_sha(tag: &str) -> bool {
+pub(crate) fn is_commit_sha(tag: &str) -> bool {
     tag.len() == 40 && tag.bytes().all(|b| b.is_ascii_hexdigit())
 }
 

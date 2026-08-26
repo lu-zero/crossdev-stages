@@ -2241,6 +2241,10 @@ pub fn build(
     .with_build(&bld.dir, &project_root(boards_root))
     .with_cache(ws.base());
     record_sources(&runner, &mut manifest, board)?;
+    // Read before write(), which consumes the builder.  The lock is written
+    // either way: it is the evidence of what this build actually compiled,
+    // and a build that fails is exactly when someone needs to read it.
+    let pin_mismatches = manifest.pin_mismatches();
     if manifest.has_resolved_source() {
         let manifest_path = bld.dir.join("build.lock.toml");
         manifest.write(&runner, &manifest_path)?;
@@ -2251,6 +2255,20 @@ pub fn build(
         // write here keeps `crossdev-stages update` from picking up a
         // useless lock as the newest one for the board.
         tracing::info!("Skipping manifest write: no resolved git sources yet");
+    }
+
+    // A tag that is a full commit SHA and a tree that is not on it are the
+    // same reading taken twice and disagreeing, not a stale record: the image
+    // was built from sources other than the ones it names.  Like the ABI and
+    // ISA checks, this reads what was built, so it is allowed to fail.
+    if !pin_mismatches.is_empty() {
+        for line in &pin_mismatches {
+            tracing::error!("{line}");
+        }
+        return Err(crate::error::Error::CommandFailed {
+            code: 1,
+            reason: "build.lock.toml records sources this build did not build".into(),
+        });
     }
 
     let total_elapsed = build_start.elapsed();
