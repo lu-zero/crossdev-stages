@@ -15,13 +15,17 @@ mkdir -p /build/gen/boot/grub/i386-pc
 cp "$GRUB_MODS_SRC"/*.mod /build/gen/boot/grub/i386-pc/
 
 # Write GRUB configuration.
-# Use label-based root so the config survives device renames.
+# root= is whatever board.conf declared, expanded here: it spells a
+# PARTUUID built from BOOT_DISK_ID, which the pack step exports before
+# this script is sourced and genimage.cfg stamps into the MBR.  Restating
+# a device path here is what left BOOT_ROOT_DEV unread and the kernel
+# holding a root=LABEL= it has no code to resolve.
 cat > /build/gen/boot/grub/grub.cfg << EXTEOF
 set timeout=3
 set default=0
 
 menuentry "Gentoo Linux (${kver})" {
     search --no-floppy --label --set=root bootfs
-    linux  /${BOOT_KERNEL_NAME} root=LABEL=rootfs rw rootfstype=ext4 console=${BOOT_CONSOLE}
+    linux  /${BOOT_KERNEL_NAME} root=${BOOT_ROOT_DEV} rw rootwait rootfstype=ext4 console=${BOOT_CONSOLE}
 }
 EXTEOF
