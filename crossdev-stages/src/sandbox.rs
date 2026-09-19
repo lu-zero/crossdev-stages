@@ -414,6 +414,14 @@ impl Sandbox {
              echo 'root:x:0:' >> /usr/{chost}/etc/group"
         ))?;
 
+        // The clang-crossdev-wrappers version matching our LLVM_SLOT pin has
+        // no KEYWORDS yet, so portage falls back to an older, pin-masked slot.
+        runner.run(&format!(
+            "mkdir -p /etc/portage/package.accept_keywords && \
+             echo 'cross-{chost}/clang-crossdev-wrappers **' \
+             >> /etc/portage/package.accept_keywords/clang-crossdev-wrappers"
+        ))?;
+
         tracing::info!("Running crossdev (this takes a while)…");
         // rustc has no upstream target for riscv32-unknown-linux-gnu; skip rust-std on rv32.
         let rust_std_ex_pkg = if target_arch == "riscv32" {
