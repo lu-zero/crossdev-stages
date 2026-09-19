@@ -38,3 +38,24 @@ cat >> /build/gen/root/etc/fstab <<FSTAB
 PARTUUID=${BOOT_DISK_ID}-02  /      ext4  defaults,noatime  0 1
 PARTUUID=${BOOT_DISK_ID}-01  /boot  ext4  defaults,noatime  0 2
 FSTAB
+
+# Docker install gotchas from real hardware (see README's Known gotchas).
+# These two packages hardcode CGO_ENABLED=0, so patch it via a bashrc hook.
+cat >> /build/gen/root/etc/portage/bashrc <<'EOF'
+post_src_prepare() {
+	case "${CATEGORY}/${PN}" in
+		dev-go/go-md2man|app-containers/containerd)
+			sed -i 's/CGO_ENABLED=0/CGO_ENABLED=1/' Makefile
+			;;
+	esac
+}
+EOF
+
+# containerd needs network for `go mod download`, blocked by network-sandbox.
+# SHIM_CGO_ENABLED is a `?=` var, so an env var works directly (no sed).
+mkdir -p /build/gen/root/etc/portage/env
+cat > /build/gen/root/etc/portage/env/allow-net <<'EOF'
+FEATURES="${FEATURES} -network-sandbox"
+SHIM_CGO_ENABLED=1
+EOF
+echo 'app-containers/containerd allow-net' >> /build/gen/root/etc/portage/package.env
