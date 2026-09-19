@@ -1386,7 +1386,7 @@ fn default_kernel(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
         cc = board.cross_compile,
         defconfig = board.kernel_defconfig,
         board_name = board.name,
-        fragments = kernel_config_fragments(board),
+        fragments = kernel_config_fragments(board, karch, &board.cross_compile),
     ))
 }
 
@@ -1398,7 +1398,7 @@ fn default_kernel(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
 /// silently, and a board that says `# CONFIG_X is not set` has no way to find
 /// out that X came back on.  Checking the fragments themselves means the whole
 /// request is covered rather than whichever symbols someone remembered to list.
-fn kernel_config_fragments(board: &BoardConfig) -> String {
+fn kernel_config_fragments(board: &BoardConfig, karch: &str, cc: &str) -> String {
     if board.kernel_config_fragments.is_empty() {
         return String::new();
     }
@@ -1416,7 +1416,7 @@ fn kernel_config_fragments(board: &BoardConfig) -> String {
     format!(
         "frags=\n\
          {out}\
-         make -C /build/linux ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig\n\
+         make -C /build/linux ARCH={karch} CROSS_COMPILE={cc} olddefconfig\n\
          for f in $frags; do\n\
              while read -r line; do\n\
                  case \"$line\" in\n\
@@ -2363,12 +2363,12 @@ mod tests {
 
     #[test]
     fn no_fragments_generates_nothing() {
-        assert!(kernel_config_fragments(&board_with(&[])).is_empty());
+        assert!(kernel_config_fragments(&board_with(&[]), "riscv64", "riscv64-unknown-linux-gnu-").is_empty());
     }
 
     #[test]
     fn a_fragment_is_looked_up_board_first_then_defaults() {
-        let script = kernel_config_fragments(&board_with(&["riscv64-no-vector"]));
+        let script = kernel_config_fragments(&board_with(&["riscv64-no-vector"]), "riscv64", "riscv64-unknown-linux-gnu-");
         assert!(script.contains("/scripts/boards/demo/kernel-config/riscv64-no-vector"));
         assert!(script.contains("/scripts/defaults/kernel-config/riscv64-no-vector"));
         // Both directions of the check have to be generated: a symbol that was
