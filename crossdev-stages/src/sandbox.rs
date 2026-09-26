@@ -745,7 +745,17 @@ impl Sandbox {
             portage_dir.join("package.use/rust"),
             "dev-lang/rust rustfmt -system-llvm\n",
         )?;
-        std::fs::write(portage_dir.join("package.use/git"), "dev-vcs/git -iconv\n")?;
+        // -rust: needs rust-std for the target triple, which we don't cross-build.
+        std::fs::write(
+            portage_dir.join("package.use/git"),
+            "dev-vcs/git -iconv -rust\n",
+        )?;
+        // openmp wants a second gcc slot we don't have pinned; not worth it.
+        std::fs::write(
+            portage_dir.join("package.use/portage-utils"),
+            "app-portage/portage-utils -openmp\n\
+             app-crypt/libb2 -openmp\n",
+        )?;
 
         if let Some(ref platforms) = board.grub_platforms {
             let flags: Vec<String> = platforms

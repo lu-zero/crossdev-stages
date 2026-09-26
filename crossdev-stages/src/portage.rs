@@ -68,6 +68,18 @@ pub fn write_version_pins(portage_root: &Utf8Path, gcc_version: Option<&str>) ->
     std::fs::write(mask_dir.join("pin-llvm"), mask)?;
     std::fs::write(unmask_dir.join("pin-llvm"), unmask)?;
 
+    // Also pin these to LLVM_SLOT, same as llvm-core/* above.
+    std::fs::write(
+        mask_dir.join("pin-llvm-extra"),
+        "llvm-runtimes/libclc\ndev-util/spirv-llvm-translator\n",
+    )?;
+    std::fs::write(
+        unmask_dir.join("pin-llvm-extra"),
+        format!(
+            "=llvm-runtimes/libclc-{llvm_slot}*\n=dev-util/spirv-llvm-translator-{llvm_slot}*\n"
+        ),
+    )?;
+
     Ok(())
 }
 
@@ -342,9 +354,14 @@ impl<'a> Portage<'a> {
 
     /// Cross-emerge packages into the target stage (mounted at `/target`).
     /// Uses `{chost}-emerge` which crossdev installs.
+    ///
+    /// `--backtrack=100`: ROOT=/target's near-empty vdb makes this resolve
+    /// almost the whole graph from scratch; the default depth (20) isn't enough.
     pub fn cross_emerge(&self, chost: &str, packages: &[&str]) -> Result<()> {
         let pkgs = shell_quote_atoms(packages);
-        self.run_emerge(&format!("ROOT=/target {chost}-emerge -b -k {pkgs}"))
+        self.run_emerge(&format!(
+            "ROOT=/target {chost}-emerge -b -k --backtrack=100 {pkgs}"
+        ))
     }
 
     /// Cross-emerge with `USE=build` for bootstrapping (baselayout, portage).
