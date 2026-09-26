@@ -407,11 +407,15 @@ impl Sandbox {
         // The prefix gets a passwd/group from acct-user/portage alone, so it
         // knows "portage" but not "root".  Any ebuild reaching fowners with a
         // root:<group> pair then dies at install time.
+        // Except when something merges before acct-user/portage does and
+        // needs "portage" too -- seed that defensively as well.
         runner.run(&format!(
             "grep -q '^root:' /usr/{chost}/etc/passwd 2>/dev/null || \
              echo 'root:x:0:0:root:/root:/bin/bash' >> /usr/{chost}/etc/passwd; \
              grep -q '^root:' /usr/{chost}/etc/group 2>/dev/null || \
-             echo 'root:x:0:' >> /usr/{chost}/etc/group"
+             echo 'root:x:0:' >> /usr/{chost}/etc/group; \
+             grep -q '^portage:' /usr/{chost}/etc/group 2>/dev/null || \
+             echo 'portage:x:250:' >> /usr/{chost}/etc/group"
         ))?;
 
         // The clang-crossdev-wrappers version matching our LLVM_SLOT pin has
