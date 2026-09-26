@@ -19,11 +19,3 @@ echo 'media-libs/libglvnd X' > "${cross}/package.use/mesa"
 # mesa_clc builds for CBUILD, so the card selection is repeated on the host.
 mkdir -p /etc/portage/package.use
 echo 'dev-util/mesa_clc video_cards_panfrost' > /etc/portage/package.use/mesa
-
-# eapply_user reads patches from PORTAGE_CONFIGROOT, so they go in the prefix
-# too.  gallivm names llvm::StringMapIterator, which LLVM 22 removed, inside a
-# DETECT_ARCH_ARM block: mesa 26.1.x fails to build for 32-bit ARM and only for
-# 32-bit ARM.  Fixed in mesa main, not backported.
-mkdir -p "${cross}/patches/media-libs/mesa"
-cp /scripts/boards/odroid-xu4/patches/mesa-arm-llvm22-stringmap.patch \
-   "${cross}/patches/media-libs/mesa/"
