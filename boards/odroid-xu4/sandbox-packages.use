@@ -1,0 +1,2 @@
+# U-Boot's mkeficapsule fails to link without gnutls pkcs11 support.
+net-libs/gnutls pkcs11
