@@ -59,3 +59,12 @@ FEATURES="${FEATURES} -network-sandbox"
 SHIM_CGO_ENABLED=1
 EOF
 echo 'app-containers/containerd allow-net' >> /build/gen/root/etc/portage/package.env
+
+# docker-cli's own ebuild hardcodes CGO_ENABLED=0 for its manpages target
+# since 29.7.2 (no sed/env fix works against that); docker-29.8.1+ blocks
+# older docker-cli, so both are capped at the last good pair.
+mkdir -p /build/gen/root/etc/portage/package.mask
+cat > /build/gen/root/etc/portage/package.mask/docker-cli <<'EOF'
+>app-containers/docker-cli-29.5.2
+>app-containers/docker-29.5.2
+EOF
