@@ -7,6 +7,10 @@ for dir in "${FIRMWARE_DIRS[@]}"; do
     cp -a "/build/firmware/${dir}/." "/build/gen/root/lib/firmware/${dir}/"
 done
 
+# MFC v8 video codec firmware: a top-level file, so FIRMWARE_DIRS doesn't cover it.
+mkdir -p /build/gen/root/lib/firmware
+cp -a /build/firmware/s5p-mfc-v8.fw /build/gen/root/lib/firmware/
+
 # Mainline U-Boot's odroid-xu3 target keeps CONFIG_DISTRO_DEFAULTS, whose
 # BOOT_TARGET_DEVICES walks mmc2 (the SD slot), mmc1 and mmc0 looking for
 # extlinux/extlinux.conf.  Hardkernel's boot.ini is a fork-only feature and is
