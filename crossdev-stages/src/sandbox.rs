@@ -10,6 +10,7 @@ use crate::container::{
 };
 use crate::error::{Error, Result};
 use crate::portage::{install_host_deps, sync_portage_tree, MakeConf};
+use crate::provider::RootfsProvider;
 use crate::stage::gentoo_profile;
 use crate::workspace::{store_key, Workspace};
 
@@ -50,15 +51,9 @@ impl Sandbox {
     /// Idempotent: skips if `.prepared` marker exists (or `.prepared-bare` when `bare`).
     ///
     /// With `bare`, writes `make.conf` and syncs the portage tree but does not
-    /// emerge packages.  When `<defaults_root>/overlay.conf` names one,
-    /// installs the `crossdev-stages` portage overlay (apk-tools, dnf5, the
-    /// opt-in ESOS firmware ebuilds).
+    /// emerge packages.  The `crossdev-stages` overlay is not installed here:
+    /// see [`Sandbox::install_overlay`].
     pub fn prepare(&self, mirror: Option<&str>, defaults_root: &Utf8Path, bare: bool) -> Result<()> {
-        // The overlay refreshes on every prepare, even on an already-prepared
-        // sandbox: the pinned overlay repo is the source of truth and the
-        // checkout is cheap and idempotent.
-        install_overlay(self.runner(), &self.dir, defaults_root)?;
-
         if self.dir.join(".prepared").exists() {
             tracing::info!("Sandbox already prepared, skipping.");
             return Ok(());
@@ -94,6 +89,36 @@ impl Sandbox {
             tracing::info!("Sandbox prepared.");
         }
         Ok(())
+    }
+
+    /// Install the `crossdev-stages` portage overlay at the revision pinned
+    /// in `<defaults_root>/overlay.conf`.
+    ///
+    /// Only a provider whose `deps` step emerges from the overlay may call
+    /// this ([`RootfsProvider::needs_overlay`]), and there it is fatal:
+    /// making it a precondition of `prepare` instead let an unreachable
+    /// overlay repository kill kernel builds that use no ebuild of it.
+    /// `provider` only names the reason in the error.
+    pub fn install_overlay(
+        &self,
+        defaults_root: &Utf8Path,
+        provider: RootfsProvider,
+    ) -> Result<()> {
+        let conf = defaults_root.join("overlay.conf");
+        let failed = |msg: String| Error::Config {
+            file: conf.to_string(),
+            msg: format!(
+                "ROOTFS_PROVIDER={} needs packages from the crossdev-stages \
+                 overlay, but {msg}",
+                provider.name()
+            ),
+        };
+        let Some((repo, tag)) = read_overlay_conf(&conf)? else {
+            return Err(failed("OVERLAY_REPO is empty".into()));
+        };
+        tracing::info!("Installing crossdev-stages overlay from {repo} ({tag})…");
+        install_overlay(self.runner(), &self.dir, &repo, &tag)
+            .map_err(|e| failed(format!("installing it from {repo} failed: {e}")))
     }
 
     /// Return installed GCC versions grouped by slot, using `.gcc_versions` cache if present.
@@ -382,11 +407,23 @@ impl Sandbox {
         // The prefix gets a passwd/group from acct-user/portage alone, so it
         // knows "portage" but not "root".  Any ebuild reaching fowners with a
         // root:<group> pair then dies at install time.
+        // Except when something merges before acct-user/portage does and
+        // needs "portage" too -- seed that defensively as well.
         runner.run(&format!(
             "grep -q '^root:' /usr/{chost}/etc/passwd 2>/dev/null || \
              echo 'root:x:0:0:root:/root:/bin/bash' >> /usr/{chost}/etc/passwd; \
              grep -q '^root:' /usr/{chost}/etc/group 2>/dev/null || \
-             echo 'root:x:0:' >> /usr/{chost}/etc/group"
+             echo 'root:x:0:' >> /usr/{chost}/etc/group; \
+             grep -q '^portage:' /usr/{chost}/etc/group 2>/dev/null || \
+             echo 'portage:x:250:' >> /usr/{chost}/etc/group"
+        ))?;
+
+        // The clang-crossdev-wrappers version matching our LLVM_SLOT pin has
+        // no KEYWORDS yet, so portage falls back to an older, pin-masked slot.
+        runner.run(&format!(
+            "mkdir -p /etc/portage/package.accept_keywords && \
+             echo 'cross-{chost}/clang-crossdev-wrappers **' \
+             >> /etc/portage/package.accept_keywords/clang-crossdev-wrappers"
         ))?;
 
         tracing::info!("Running crossdev (this takes a while)…");
@@ -712,7 +749,17 @@ impl Sandbox {
             portage_dir.join("package.use/rust"),
             "dev-lang/rust rustfmt -system-llvm\n",
         )?;
-        std::fs::write(portage_dir.join("package.use/git"), "dev-vcs/git -iconv\n")?;
+        // -rust: needs rust-std for the target triple, which we don't cross-build.
+        std::fs::write(
+            portage_dir.join("package.use/git"),
+            "dev-vcs/git -iconv -rust\n",
+        )?;
+        // openmp wants a second gcc slot we don't have pinned; not worth it.
+        std::fs::write(
+            portage_dir.join("package.use/portage-utils"),
+            "app-portage/portage-utils -openmp\n\
+             app-crypt/libb2 -openmp\n",
+        )?;
 
         if let Some(ref platforms) = board.grub_platforms {
             let flags: Vec<String> = platforms
@@ -798,48 +845,49 @@ const OVERLAY_SRC_IN_CONTAINER: &str = "/.overlay-src";
 /// Overlay checkout inside the sandbox.
 const OVERLAY_DIR: &str = "/var/db/repos/crossdev-stages";
 
-/// Install the `crossdev-stages` portage overlay at the revision pinned in
-/// `<defaults_root>/overlay.conf` and write a repos.conf entry.
-/// No-op when that file is absent or sets no `OVERLAY_REPO`.
+/// Where a new checkout is staged before it replaces `OVERLAY_DIR`.
+const OVERLAY_STAGE: &str = "/var/db/repos/.crossdev-stages.new";
+
+/// Check out the overlay `repo` at `tag` inside the sandbox and write its
+/// repos.conf entry.  Not called directly: see [`Sandbox::install_overlay`].
 ///
 /// The ebuilds live in their own repository, so this one carries no ebuilds
-/// and no licenses but its own.  `OVERLAY_REPO` may also name a local
-/// clone, which is bind-mounted read-only and copied in; that is the route
-/// for an overlay that is not published yet.
-fn install_overlay(
-    runner: SandboxRunner,
-    sandbox: &Utf8Path,
-    defaults_root: &Utf8Path,
-) -> Result<()> {
-    let conf = defaults_root.join("overlay.conf");
-    let Some((repo, tag)) = read_overlay_conf(&conf)? else {
-        return Ok(());
-    };
-    tracing::info!("Installing crossdev-stages overlay from {repo} ({tag})…");
-
+/// and no licenses but its own.  `repo` may also name a local clone, which
+/// is bind-mounted read-only and copied in; that is the route for an
+/// overlay that is not published yet.
+fn install_overlay(runner: SandboxRunner, sandbox: &Utf8Path, repo: &str, tag: &str) -> Result<()> {
     // /var/db/repos is created by portage inside the container, so it ends up
     // owned by a subordinate uid the host user cannot write to: every write
     // below goes through the container.
+    //
+    // The checkout is staged next to the overlay and swapped in only once it
+    // is complete, so a failure leaves the previous overlay and the
+    // repos.conf entry that points at it consistent with each other, never
+    // an empty directory portage is still told to read.
     runner.run(&format!(
-        "mkdir -p {OVERLAY_DIR} && find {OVERLAY_DIR} -mindepth 1 -delete"
+        "rm -rf {OVERLAY_STAGE} && mkdir -p {OVERLAY_STAGE}"
     ))?;
 
-    let local = Utf8Path::new(&repo);
-    if local.is_dir() {
+    let local = Utf8Path::new(repo);
+    let runner = if local.is_dir() {
+        let runner = runner.with_extra_ro(local, OVERLAY_SRC_IN_CONTAINER);
+        runner.run(&format!(
+            "cp -a {OVERLAY_SRC_IN_CONTAINER}/. {OVERLAY_STAGE}/"
+        ))?;
         runner
-            .with_extra_ro(local, OVERLAY_SRC_IN_CONTAINER)
-            .run(&format!(
-                "cp -a {OVERLAY_SRC_IN_CONTAINER}/. {OVERLAY_DIR}/"
-            ))?;
     } else {
         crate::source_cache::cached_clone(
             &runner,
-            &repo,
-            &tag,
-            OVERLAY_DIR,
+            repo,
+            tag,
+            OVERLAY_STAGE,
             "crossdev-stages-overlay",
         )?;
-    }
+        runner
+    };
+    runner.run(&format!(
+        "rm -rf {OVERLAY_DIR} && mv {OVERLAY_STAGE} {OVERLAY_DIR}"
+    ))?;
 
     let repos_conf = sandbox.join("etc/portage/repos.conf");
     fs::create_dir_all(&repos_conf)?;

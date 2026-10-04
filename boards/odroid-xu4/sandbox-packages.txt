@@ -1,0 +1,3 @@
+# mkeficapsule needs gnutls built with pkcs11 (see sandbox-packages.use).
+# Named here too so --changed-use actually rebuilds it.
+net-libs/gnutls

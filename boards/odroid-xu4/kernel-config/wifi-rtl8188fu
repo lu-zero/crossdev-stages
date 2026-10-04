@@ -1,0 +1,3 @@
+# USB WiFi dongle: Realtek RTL8188FU (0bda:f179). Handled by mainline's
+# rtl8xxxu driver, deps already come from exynos_defconfig.
+CONFIG_RTL8XXXU=m

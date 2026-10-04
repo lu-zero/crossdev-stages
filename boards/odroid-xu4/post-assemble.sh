@@ -7,6 +7,10 @@ for dir in "${FIRMWARE_DIRS[@]}"; do
     cp -a "/build/firmware/${dir}/." "/build/gen/root/lib/firmware/${dir}/"
 done
 
+# MFC v8 video codec firmware: a top-level file, so FIRMWARE_DIRS doesn't cover it.
+mkdir -p /build/gen/root/lib/firmware
+cp -a /build/firmware/s5p-mfc-v8.fw /build/gen/root/lib/firmware/
+
 # Mainline U-Boot's odroid-xu3 target keeps CONFIG_DISTRO_DEFAULTS, whose
 # BOOT_TARGET_DEVICES walks mmc2 (the SD slot), mmc1 and mmc0 looking for
 # extlinux/extlinux.conf.  Hardkernel's boot.ini is a fork-only feature and is
@@ -38,3 +42,33 @@ cat >> /build/gen/root/etc/fstab <<FSTAB
 PARTUUID=${BOOT_DISK_ID}-02  /      ext4  defaults,noatime  0 1
 PARTUUID=${BOOT_DISK_ID}-01  /boot  ext4  defaults,noatime  0 2
 FSTAB
+
+# Docker install gotchas from real hardware (see README's Known gotchas).
+# These two packages hardcode CGO_ENABLED=0, so patch it via a bashrc hook.
+cat >> /build/gen/root/etc/portage/bashrc <<'EOF'
+post_src_prepare() {
+	case "${CATEGORY}/${PN}" in
+		dev-go/go-md2man|app-containers/containerd)
+			sed -i 's/CGO_ENABLED=0/CGO_ENABLED=1/' Makefile
+			;;
+	esac
+}
+EOF
+
+# containerd needs network for `go mod download`, blocked by network-sandbox.
+# SHIM_CGO_ENABLED is a `?=` var, so an env var works directly (no sed).
+mkdir -p /build/gen/root/etc/portage/env
+cat > /build/gen/root/etc/portage/env/allow-net <<'EOF'
+FEATURES="${FEATURES} -network-sandbox"
+SHIM_CGO_ENABLED=1
+EOF
+echo 'app-containers/containerd allow-net' >> /build/gen/root/etc/portage/package.env
+
+# docker-cli's own ebuild hardcodes CGO_ENABLED=0 for its manpages target
+# since 29.7.2 (no sed/env fix works against that); docker-29.8.1+ blocks
+# older docker-cli, so both are capped at the last good pair.
+mkdir -p /build/gen/root/etc/portage/package.mask
+cat > /build/gen/root/etc/portage/package.mask/docker-cli <<'EOF'
+>app-containers/docker-cli-29.5.2
+>app-containers/docker-29.5.2
+EOF

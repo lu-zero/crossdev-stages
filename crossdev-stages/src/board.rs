@@ -405,9 +405,14 @@ fn parse(name: &str, path: &Utf8Path, content: &str) -> Result<BoardConfig> {
             .map(|v| v.split_whitespace().map(str::to_string).collect())
             .unwrap_or_default(),
         kernel_defconfig: req!("KERNEL_DEFCONFIG"),
-        kernel_config_fragments: kv
+        // Array syntax lives in `arrays`, not `kv` -- this always returned nothing.
+        kernel_config_fragments: arrays
             .get("KERNEL_CONFIG_FRAGMENTS")
-            .map(|v| v.split_whitespace().map(str::to_string).collect())
+            .cloned()
+            .or_else(|| {
+                kv.get("KERNEL_CONFIG_FRAGMENTS")
+                    .map(|v| v.split_whitespace().map(str::to_string).collect())
+            })
             .unwrap_or_default(),
         kernel_dtb_glob: kv.get("BOARD_DTB_GLOB").cloned(),
 

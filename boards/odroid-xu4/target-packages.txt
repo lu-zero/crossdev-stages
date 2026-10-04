@@ -16,3 +16,8 @@ app-portage/gentoolkit
 # Mesa for the Mali-T620.  Midgard v4 caps at GLES 2.0 and there is no Vulkan,
 # so this is panfrost only; VIDEO_CARDS is written by pre-deps.sh.
 media-libs/mesa
+
+# USB WiFi dongle support. SSID/PSK are set up on-device, not committed here.
+net-wireless/wpa_supplicant
+net-wireless/iw
+net-wireless/wireless-regdb

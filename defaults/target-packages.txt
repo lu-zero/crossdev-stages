@@ -34,6 +34,5 @@ sys-block/parted
 dev-vcs/git
 net-analyzer/nmap
 
-# Portage helpers (equery, genlop)
+# Portage helpers. Not genlop: needs perl-5.44, conflicts with stage3's 5.42.
 app-portage/gentoolkit
-app-portage/genlop
