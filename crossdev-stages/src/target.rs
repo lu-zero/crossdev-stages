@@ -60,17 +60,7 @@ impl Target {
         portage.cross_emerge_build(&chost, &["sys-apps/baselayout"])?;
 
         tracing::info!("Cross-emerging packages.build…");
-        let packages = runner.run_output(
-            "grep -v '^#' /var/db/repos/gentoo/profiles/default/linux/packages.build \
-             | grep -v '^[[:space:]]*$' | tr '\\n' ' '",
-        )?;
-        if packages.is_empty() {
-            return Err(crate::error::Error::CommandFailed {
-                code: 1,
-                reason: "packages.build is empty or missing".into(),
-            });
-        }
-        runner.run(&format!("ROOT=/target {chost}-emerge -b -k {packages}"))?;
+        portage.cross_emerge(&chost, &[&portage.packages_build()?])?;
 
         tracing::info!("Cross-emerging portage…");
         portage.cross_emerge_build(&chost, &["sys-apps/portage"])?;
@@ -96,9 +86,7 @@ impl Target {
 
         // Rebuild @world in the target.
         tracing::info!("Rebuilding @world in target…");
-        runner.run(&format!(
-            "KERNEL_DIR=/usr/src/linux ROOT=/target {chost}-emerge -b -k -e @world"
-        ))?;
+        portage.cross_emerge_world(&chost)?;
 
         self.update_ldconfig(sandbox)?;
         std::fs::write(self.dir.join(".updated"), chrono::Utc::now().to_rfc3339())?;

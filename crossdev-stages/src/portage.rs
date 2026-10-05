@@ -169,6 +169,30 @@ impl<'a> Portage<'a> {
         ))
     }
 
+    /// Rebuild the target stage's `@world` with `KERNEL_DIR` pointing at the
+    /// in-prefix kernel headers, which some `@world` packages read.
+    pub fn cross_emerge_world(&self, chost: &str) -> Result<()> {
+        self.runner.run(&format!(
+            "KERNEL_DIR=/usr/src/linux ROOT=/target {chost}-emerge -b -k -e @world"
+        ))
+    }
+
+    /// `packages.build` lines from the target profile's gentoo repo, joined
+    /// for a single cross-emerge. Fails if the file is missing or empty.
+    pub fn packages_build(&self) -> Result<String> {
+        let packages = self.runner.run_output(
+            "grep -v '^#' /var/db/repos/gentoo/profiles/default/linux/packages.build \
+             | grep -v '^[[:space:]]*$' | tr '\\n' ' '",
+        )?;
+        if packages.is_empty() {
+            return Err(crate::error::Error::CommandFailed {
+                code: 1,
+                reason: "packages.build is empty or missing".into(),
+            });
+        }
+        Ok(packages)
+    }
+
     /// Run `{chost}-emerge` without overriding ROOT, so packages install into
     /// the crossdev prefix (`/usr/{chost}`) rather than `/target`.
     /// Used for updating the cross-toolchain itself (gcc, binutils-libs, @system).
