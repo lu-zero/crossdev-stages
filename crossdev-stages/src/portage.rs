@@ -176,6 +176,105 @@ impl<'a> Portage<'a> {
         let pkgs = packages.join(" ");
         self.runner.run(&format!("{chost}-emerge -b -k {pkgs}"))
     }
+
+    /// Emerge the host `sys-devel/gcc` cross-compiler seed into the sandbox.
+    ///
+    /// `ver_prefix` selects a version glob (`=sys-devel/gcc-15.2*`, quoted so the
+    /// shell cannot expand it); `None` takes the best available in the slot.
+    pub fn emerge_host_gcc(&self, slot: &str, ver_prefix: Option<&str>) -> Result<()> {
+        match ver_prefix {
+            Some(prefix) => {
+                tracing::info!("Emerging =sys-devel/gcc-{prefix}* (host)…");
+                self.runner
+                    .run(&format!("emerge -b -k '=sys-devel/gcc-{prefix}*'"))
+            }
+            None => {
+                tracing::info!("Emerging sys-devel/gcc:{slot} (host)…");
+                self.runner
+                    .run(&format!("emerge -b -k sys-devel/gcc:{slot}"))
+            }
+        }
+    }
+
+    // ── Crossdev prefix setup ────────────────────────────────────────────────
+
+    /// Create the `crossdev` overlay repository if it isn't registered yet.
+    pub fn ensure_crossdev_repo(&self) -> Result<()> {
+        self.runner.run(
+            "eselect repository list -i | grep -q crossdev \
+             || eselect repository create crossdev",
+        )
+    }
+
+    /// `crossdev <chost> --init-target`: overlay alias and sysroot skeleton,
+    /// no toolchain built yet.
+    pub fn crossdev_init(&self, chost: &str) -> Result<()> {
+        self.runner.run(&format!("crossdev {chost} --init-target"))
+    }
+
+    /// `crossdev <chost> --gcc <ver> --ex-pkg …`: the toolchain build itself.
+    pub fn crossdev_setup(&self, chost: &str, gcc_ver: &str, ex_pkgs: &[&str]) -> Result<()> {
+        let mut cmd = format!("crossdev {chost} --gcc {gcc_ver}");
+        for pkg in ex_pkgs {
+            cmd.push_str(" --ex-pkg ");
+            cmd.push_str(pkg);
+        }
+        self.runner.run(&cmd)
+    }
+
+    /// Point `PORTAGE_CONFIGROOT` at the crossdev prefix and pick its profile.
+    pub fn crossdev_set_profile(&self, chost: &str, profile: &str) -> Result<()> {
+        self.runner.run(&format!(
+            "export PORTAGE_CONFIGROOT=/usr/{chost}; eselect profile set {profile}"
+        ))
+    }
+
+    /// Repair the split-usr layout crossdev leaves behind in the prefix.
+    pub fn crossdev_merge_usr(&self, chost: &str) -> Result<()> {
+        self.runner.run(&format!("mkdir -p /usr/{chost}/bin"))?;
+        self.runner.run(&format!("merge-usr --root /usr/{chost}"))
+    }
+
+    /// Write one `package.accept_keywords` line into the sandbox's `/etc/portage`.
+    pub fn accept_keywords(&self, name: &str, line: &str) -> Result<()> {
+        self.runner.run(&format!(
+            "echo '{line}' > /etc/portage/package.accept_keywords/{name}"
+        ))
+    }
+
+    // ── Toolchain activation ────────────────────────────────────────────────
+
+    /// Activate the `{chost}-{slot}` gcc profile.
+    pub fn activate_gcc(&self, chost: &str, slot: &str) -> Result<()> {
+        self.runner.run(&format!("gcc-config {chost}-{slot}"))
+    }
+
+    /// Re-read `/etc/profile` so an activated compiler reaches `PATH`.
+    pub fn activate_gcc_and_profile(&self, chost: &str, slot: &str) -> Result<()> {
+        self.runner
+            .run(&format!("gcc-config {chost}-{slot} && source /etc/profile"))
+    }
+
+    /// Regenerate `/etc/profile.env` from `/etc/env.d` and re-read it.
+    pub fn refresh_profile_env(&self) -> Result<()> {
+        self.runner.run("env-update && source /etc/profile")
+    }
+
+    // ── Queries ─────────────────────────────────────────────────────────────
+
+    /// The sandbox host's own `CHOST`, as `portageq` reports it.
+    pub fn host_chost(&self) -> Result<String> {
+        Ok(self
+            .runner
+            .run_output("portageq envvar CHOST")?
+            .trim()
+            .to_string())
+    }
+
+    /// Installed versions of `cpn`, one per line, as `qlist -ICev` reports them.
+    pub fn installed_versions(&self, cpn: &str) -> Result<String> {
+        self.runner.run_output(&format!("qlist -ICev {cpn}"))
+    }
 }
 
 /// Sync the portage tree inside a sandbox (emerge-webrsync, signing keys).

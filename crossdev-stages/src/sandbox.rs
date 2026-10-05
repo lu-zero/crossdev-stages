@@ -7,7 +7,7 @@ use portage_atom::Version as PortageVersion;
 use crate::board::BoardConfig;
 use crate::container::{destroy_dir, recover_mounts_for_removal, unpack_tarball, SandboxRunner};
 use crate::error::{Error, Result};
-use crate::portage::{install_host_deps, sync_portage_tree, MakeConf};
+use crate::portage::{install_host_deps, sync_portage_tree, MakeConf, Portage};
 use crate::stage::gentoo_profile;
 use crate::workspace::Workspace;
 
@@ -95,7 +95,8 @@ impl Sandbox {
 
     /// Query installed GCC versions fresh via `qlist` and rewrite the `.gcc_versions` cache.
     fn refresh_gcc_versions(&self) -> Result<HashMap<String, Vec<String>>> {
-        let output = self.runner().run_output("qlist -ICev sys-devel/gcc")?;
+        let runner = self.runner();
+        let output = Portage::new(&runner).installed_versions("sys-devel/gcc")?;
         let mut versions: HashMap<String, Vec<String>> = HashMap::new();
         for line in output.lines() {
             let line = line.trim();
@@ -211,33 +212,20 @@ impl Sandbox {
         let profile = gentoo_profile(target_arch)?;
         let cflags = board.effective_cflags();
 
+        let portage = Portage::new(&runner);
+
         tracing::info!("Creating crossdev overlay…");
-        runner.run(
-            "eselect repository list -i | grep -q crossdev \
-             || eselect repository create crossdev",
-        )?;
+        portage.ensure_crossdev_repo()?;
 
         tracing::info!("Initialising crossdev for {chost}…");
-        runner.run(&format!("crossdev {chost} --init-target"))?;
+        portage.crossdev_init(&chost)?;
 
         // Accept testing/prerelease keywords for this gcc slot and rust-std.
-        runner.run(&format!(
-            "echo 'cross-{chost}/rust-std **' \
-             > /etc/portage/package.accept_keywords/rust-std"
-        ))?;
+        portage.accept_keywords("rust-std", &format!("cross-{chost}/rust-std **"))?;
         let gcc_keyword_line = format!("sys-devel/gcc:{gcc_slot} **");
-        runner.run(&format!(
-            "echo '{gcc_keyword_line}' > /etc/portage/package.accept_keywords/gcc"
-        ))?;
+        portage.accept_keywords("gcc", &gcc_keyword_line)?;
 
-        // Emerge: version prefix glob (quoted to prevent shell expansion) or best-in-slot.
-        if let Some(ref prefix) = ver_prefix {
-            tracing::info!("Emerging =sys-devel/gcc-{prefix}* (host)…");
-            runner.run(&format!("emerge -b -k '=sys-devel/gcc-{prefix}*'"))?;
-        } else {
-            tracing::info!("Emerging sys-devel/gcc:{gcc_slot} (host)…");
-            runner.run(&format!("emerge -b -k sys-devel/gcc:{gcc_slot}"))?;
-        }
+        portage.emerge_host_gcc(&gcc_slot, ver_prefix.as_deref())?;
 
         // Refresh metadata after emerge — never use the pre-emerge cache here.
         let installed = self.refresh_gcc_versions()?;
@@ -266,19 +254,14 @@ impl Sandbox {
 
         // gcc-config profile names are "{chost}-{slot}" (e.g. "aarch64-unknown-linux-gnu-15"),
         // not "{chost}-{full-version}". Select by slot directly.
-        let host_chost = runner
-            .run_output("portageq envvar CHOST")?
-            .trim()
-            .to_string();
-        runner.run(&format!("gcc-config {host_chost}-{gcc_slot}"))?;
-        runner.run("env-update && source /etc/profile")?;
+        let host_chost = portage.host_chost()?;
+        portage.activate_gcc(&host_chost, &gcc_slot)?;
+        portage.refresh_profile_env()?;
 
         // Configure the crossdev prefix portage settings (written on the host fs).
         let crossdev_root = self.dir.join(format!("usr/{chost}"));
         let crossdev_portage = crossdev_root.join("etc/portage");
-        runner.run(&format!(
-            "export PORTAGE_CONFIGROOT=/usr/{chost}; eselect profile set {profile}"
-        ))?;
+        portage.crossdev_set_profile(&chost, profile)?;
         self.write_crossdev_portage(
             &crossdev_portage,
             target_arch,
@@ -289,26 +272,17 @@ impl Sandbox {
         )?;
 
         // Fix the split-usr layout created by crossdev.
-        runner.run(&format!("mkdir -p /usr/{chost}/bin"))?;
-        runner.run(&format!("merge-usr --root /usr/{chost}"))?;
+        portage.crossdev_merge_usr(&chost)?;
 
         tracing::info!("Running crossdev (this takes a while)…");
-        let grub_ex_pkg = if board.grub_platforms.is_some() {
-            " --ex-pkg sys-boot/grub"
-        } else {
-            ""
-        };
-        runner.run(&format!(
-            "crossdev {chost} \
-             --gcc {gcc_ver} \
-             --ex-pkg sys-devel/clang-crossdev-wrappers \
-             --ex-pkg sys-devel/rust-std{grub_ex_pkg}"
-        ))?;
+        let mut ex_pkgs = vec!["sys-devel/clang-crossdev-wrappers", "sys-devel/rust-std"];
+        if board.grub_platforms.is_some() {
+            ex_pkgs.push("sys-boot/grub");
+        }
+        portage.crossdev_setup(&chost, &gcc_ver, &ex_pkgs)?;
 
         // Switch cross compiler to the installed slot.
-        runner.run(&format!(
-            "gcc-config {chost}-{gcc_slot} && source /etc/profile"
-        ))?;
+        portage.activate_gcc_and_profile(&chost, &gcc_slot)?;
 
         // Write marker with the exact version used (enables idempotency on next run).
         std::fs::write(&marker, &gcc_ver)?;
@@ -355,6 +329,7 @@ impl Sandbox {
         let Some(ref platforms) = board.grub_platforms else {
             return Ok(());
         };
+        let portage = Portage::new(runner);
         let grub_mods = self
             .dir
             .join(format!("usr/{chost}/usr/lib/grub/i386-pc"));
@@ -375,7 +350,7 @@ impl Sandbox {
             format!("sys-boot/grub {}\n", flags.join(" ")),
         )?;
         tracing::info!("Installing sys-boot/grub into crossdev prefix for {chost}…");
-        runner.run(&format!("{chost}-emerge -b -k sys-boot/grub"))
+        portage.cross_emerge_crossdev(chost, &["sys-boot/grub"])
     }
 
     /// Write portage config files for the crossdev prefix directly on the host fs.
