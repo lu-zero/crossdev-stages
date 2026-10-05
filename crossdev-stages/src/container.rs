@@ -4,6 +4,12 @@ use hakoniwa::{Container, Namespace, Runctl};
 use crate::error::{check_status, Error, Result};
 use crate::workspace::Workspace;
 
+/// `PATH` for argv execs, which get no login shell to source it.
+///
+/// A superset of baselayout's default: the `profile.env` a sandbox's
+/// `env-update` generates can leave `/sbin` and `/bin` out entirely.
+const SANDBOX_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bin";
+
 /// Abstraction over the hakoniwa container API, modeling the four
 /// `run*` variants from `sandbox-stage.sh`.
 pub struct SandboxRunner {
@@ -58,40 +64,57 @@ impl SandboxRunner {
 
     /// Run a shell command (via `bash --login -c`) inside the sandbox.
     pub fn run(&self, cmd: &str) -> Result<()> {
+        self.run_argv(&["/bin/bash", "--login", "-c", cmd])
+    }
+
+    /// Run a shell command and capture its trimmed stdout.
+    pub fn run_output(&self, cmd: &str) -> Result<String> {
+        self.run_output_argv(&["/bin/bash", "--login", "-c", cmd])
+    }
+
+    /// Run an argv command inside the sandbox, with no shell involved.
+    ///
+    /// Prefer this over [`run`](Self::run) for arguments that come from a
+    /// `board.conf` or a package list: nothing to quote, so nothing to get
+    /// wrong. `PATH` is set explicitly because there is no login shell here to
+    /// source `/etc/profile.env` from.
+    pub fn run_argv(&self, argv: &[&str]) -> Result<()> {
         let container = self.build_container();
-        let mut command = container.command("/bin/bash");
+        let mut command = self.command(&container, argv);
+        check_status(command.status()?).map_err(|e| annotate_cmd(e, &argv.join(" ")))
+    }
+
+    /// Run an argv command inside the sandbox and capture its trimmed stdout.
+    pub fn run_output_argv(&self, argv: &[&str]) -> Result<String> {
+        let container = self.build_container();
+        let mut command = self.command(&container, argv);
+        command.stdout(hakoniwa::Stdio::piped());
+        let output = command.output()?;
+        let display = argv.join(" ");
+        if !output.status.success() {
+            return Err(crate::error::Error::CommandFailed {
+                code: output.status.code,
+                reason: format!("{display}: {}", output.status.reason),
+            });
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    /// Build a container command for `argv` with the environment every
+    /// in-sandbox invocation relies on.
+    fn command(&self, container: &Container, argv: &[&str]) -> hakoniwa::Command {
+        let mut command = container.command(argv[0]);
+        command.args(&argv[1..]);
         command
-            .arg("--login")
-            .arg("-c")
-            .arg(cmd)
             .env("HOME", "/root")
+            .env("PATH", SANDBOX_PATH)
             .env(
                 "TERM",
                 &std::env::var("TERM").unwrap_or_else(|_| "xterm".into()),
             )
             .env("COLORTERM", &std::env::var("COLORTERM").unwrap_or_default())
             .env("NO_COLOR", &std::env::var("NO_COLOR").unwrap_or_default());
-        check_status(command.status()?).map_err(|e| annotate_cmd(e, cmd))
-    }
-
-    /// Run a shell command and capture its trimmed stdout.
-    pub fn run_output(&self, cmd: &str) -> Result<String> {
-        let container = self.build_container();
-        let mut command = container.command("/bin/bash");
         command
-            .arg("--login")
-            .arg("-c")
-            .arg(cmd)
-            .env("HOME", "/root")
-            .stdout(hakoniwa::Stdio::piped());
-        let output = command.output()?;
-        if !output.status.success() {
-            return Err(crate::error::Error::CommandFailed {
-                code: output.status.code,
-                reason: format!("{cmd}: {}", output.status.reason),
-            });
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
     /// Spawn an interactive `bash --login` shell in the sandbox.
