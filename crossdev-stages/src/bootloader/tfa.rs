@@ -28,7 +28,9 @@ pub fn build(runner: &SandboxRunner, board: &BoardConfig, _env: &[String]) -> Re
 
 pub fn exports(board: &BoardConfig) -> Vec<String> {
     if let (Some(_), Some(plat)) = (&board.tfa_repo, &board.tfa_plat) {
-        vec![format!("BL31=/build/tfa/build/{plat}/release/bl31/bl31.elf")]
+        vec![format!(
+            "BL31=/build/tfa/build/{plat}/release/bl31/bl31.elf"
+        )]
     } else {
         Vec::new()
     }

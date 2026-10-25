@@ -314,7 +314,10 @@ fn doctor(ws: &Workspace, boards_root: &camino::Utf8Path) -> Result<()> {
         if !stale_mounts.is_empty() {
             println!("Run 'crossdev-stages maint recover' to unmount stale sandbox mounts.");
         }
-        if sandboxes.is_empty() || sandboxes.first().is_some_and(|d| !d.join(".prepared").exists())
+        if sandboxes.is_empty()
+            || sandboxes
+                .first()
+                .is_some_and(|d| !d.join(".prepared").exists())
         {
             println!("Run 'crossdev-stages sandbox setup' and 'sandbox prepare' to fix.");
         }

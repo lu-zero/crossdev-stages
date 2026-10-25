@@ -58,7 +58,7 @@ pub struct BoardConfig {
 
     // Firmware overlay
     pub firmware_repo: Option<String>,
-    pub firmware_tag: Option<String>,     // FIRMWARE_TAG; falls back to TAG
+    pub firmware_tag: Option<String>, // FIRMWARE_TAG; falls back to TAG
     pub firmware_overlay: Option<String>, // path inside firmware repo
     pub host_firmware_paths: Vec<String>, // host paths to copy into image
 
