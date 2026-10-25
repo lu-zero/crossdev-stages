@@ -3,13 +3,12 @@
 //! Each component (opensbi, uboot, grub, syslinux, tfa, rkbin, ...) is a
 //! self-contained module exposing three functions:
 //!
-//!   * `clone(runner, board)`         — fetch source, no-op if the board
-//!                                       doesn't use this component.
-//!   * `build(runner, board, env)`    — compile; receives env contributions
-//!                                       from earlier stages as `&[String]`.
-//!   * `exports(board) -> Vec<String>` — env vars this stage provides to
-//!                                       LATER stages (e.g. tfa exports
-//!                                       `BL31=...`).
+//! * `clone(runner, board)`: fetch source, no-op if the board doesn't use
+//!   this component.
+//! * `build(runner, board, env)`: compile; receives env contributions from
+//!   earlier stages as `&[String]`.
+//! * `exports(board) -> Vec<String>`: env vars this stage provides to LATER
+//!   stages (e.g. tfa exports `BL31=...`).
 //!
 //! Boards declare an ordered `BOOT_PIPELINE` array selecting which stages
 //! and in what order:
