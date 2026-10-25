@@ -140,9 +140,15 @@ pub async fn run(
                 if tar {
                     let archive = out_dir.join(format!("{board_name}-flash-bundle.tar.xz"));
                     let status = std::process::Command::new("tar")
-                        .args(["-cf", archive.as_str(), "-I", "xz -T0", "-C",
-                               out_dir.as_str(),
-                               &format!("{board_name}-flash-bundle")])
+                        .args([
+                            "-cf",
+                            archive.as_str(),
+                            "-I",
+                            "xz -T0",
+                            "-C",
+                            out_dir.as_str(),
+                            &format!("{board_name}-flash-bundle"),
+                        ])
                         .status()?;
                     if !status.success() {
                         return Err(crate::error::Error::CommandFailed {
@@ -206,7 +212,9 @@ fn copy_listed_artifacts(src: &Utf8Path, dst: &Utf8Path, manifest: &Utf8Path) ->
             match std::fs::read_to_string(src.join(".image")) {
                 Ok(name) => name.trim().to_string(),
                 Err(_) if optional => {
-                    eprintln!("bundle.list: no packed image (.image marker absent), skipping @image");
+                    eprintln!(
+                        "bundle.list: no packed image (.image marker absent), skipping @image"
+                    );
                     continue;
                 }
                 Err(_) => {
@@ -244,8 +252,12 @@ fn copy_listed_artifacts(src: &Utf8Path, dst: &Utf8Path, manifest: &Utf8Path) ->
 /// Pull flash helpers (partition tables, fastboot.yaml, flash.sh) from
 /// the board source dir into the bundle so the tarball is self-contained.
 fn copy_flash_aux(board_dir: &Utf8Path, dst: &Utf8Path) -> Result<()> {
-    for name in ["partition_4M.json", "partition_universal.json",
-                 "fastboot.yaml", "flash.sh"] {
+    for name in [
+        "partition_4M.json",
+        "partition_universal.json",
+        "fastboot.yaml",
+        "flash.sh",
+    ] {
         let src = board_dir.join(name);
         if src.is_file() {
             std::fs::copy(&src, dst.join(name))?;

@@ -330,9 +330,7 @@ impl Sandbox {
             return Ok(());
         };
         let portage = Portage::new(runner);
-        let grub_mods = self
-            .dir
-            .join(format!("usr/{chost}/usr/lib/grub/i386-pc"));
+        let grub_mods = self.dir.join(format!("usr/{chost}/usr/lib/grub/i386-pc"));
         if grub_mods.exists() {
             return Ok(());
         }
@@ -343,7 +341,9 @@ impl Sandbox {
             .split_whitespace()
             .map(|p| format!("grub_platforms_{p}"))
             .collect();
-        let use_dir = self.dir.join(format!("usr/{chost}/etc/portage/package.use"));
+        let use_dir = self
+            .dir
+            .join(format!("usr/{chost}/etc/portage/package.use"));
         std::fs::create_dir_all(&use_dir)?;
         std::fs::write(
             use_dir.join("grub"),

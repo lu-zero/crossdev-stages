@@ -434,10 +434,7 @@ fn mount_point_from_mountinfo(line: &str) -> Option<Utf8PathBuf> {
 pub fn find_stale_sandbox_mounts(ws: &Workspace) -> Result<Vec<StaleMount>> {
     let mut stale = Vec::new();
     for sandbox_dir in ws.list_sandboxes()? {
-        let name = sandbox_dir
-            .file_name()
-            .unwrap_or("?")
-            .to_string();
+        let name = sandbox_dir.file_name().unwrap_or("?").to_string();
         for sub in sandbox_bind_targets(&sandbox_dir) {
             let target = sandbox_dir.join(sub);
             if target.exists() && is_mount_point(&target) {
@@ -457,10 +454,7 @@ pub fn recover_sandbox_mounts(ws: &Workspace, dry_run: bool) -> Result<usize> {
     let mut count = 0usize;
     for mount in stale {
         if dry_run {
-            println!(
-                "Would unmount {} (sandbox {})",
-                mount.path, mount.sandbox
-            );
+            println!("Would unmount {} (sandbox {})", mount.path, mount.sandbox);
         } else {
             umount_lazy(&mount.path)?;
             restore_mount_target(&mount.path)?;
@@ -503,11 +497,10 @@ pub fn recover_mounts_for_removal(path: &Utf8Path, dry_run: bool) -> Result<usiz
 }
 
 fn umount_lazy(path: &Utf8Path) -> Result<()> {
-    let cpath = std::ffi::CString::new(path.as_str())
-        .map_err(|_| Error::CommandFailed {
-            code: 1,
-            reason: format!("mount path contains NUL byte: {path}"),
-        })?;
+    let cpath = std::ffi::CString::new(path.as_str()).map_err(|_| Error::CommandFailed {
+        code: 1,
+        reason: format!("mount path contains NUL byte: {path}"),
+    })?;
     let rc = unsafe { libc::umount2(cpath.as_ptr(), libc::MNT_DETACH) };
     if rc == 0 {
         return Ok(());
