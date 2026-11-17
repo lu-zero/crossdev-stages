@@ -106,24 +106,17 @@ pub fn run(boards_root: &Utf8Path, cmd: BoardCmd) -> Result<()> {
             }
 
             let board_dir = boards_root.join(&board_name);
-            let steps = [
-                "deps",
-                "checkout",
-                "bootloader",
-                "kernel",
-                "assemble",
-                "pack",
-            ];
             let mut hooks = Vec::new();
-            for s in &steps {
-                if board_dir.join(format!("override-{s}.sh")).exists() {
-                    hooks.push(format!("override-{s}.sh"));
+            for step in crate::image::Step::ALL {
+                let name = step.name();
+                if board_dir.join(format!("override-{name}.sh")).exists() {
+                    hooks.push(format!("override-{name}.sh"));
                 }
-                if board_dir.join(format!("pre-{s}.sh")).exists() {
-                    hooks.push(format!("pre-{s}.sh"));
+                if board_dir.join(format!("pre-{name}.sh")).exists() {
+                    hooks.push(format!("pre-{name}.sh"));
                 }
-                if board_dir.join(format!("post-{s}.sh")).exists() {
-                    hooks.push(format!("post-{s}.sh"));
+                if board_dir.join(format!("post-{name}.sh")).exists() {
+                    hooks.push(format!("post-{name}.sh"));
                 }
             }
             if !hooks.is_empty() {
