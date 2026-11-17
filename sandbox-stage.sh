@@ -89,7 +89,8 @@ EOF
 prepare_crossdev_host() {
     local sandbox_dir="$1"
     local target_arch="$2"
-    local chost="${target_arch}-unknown-linux-gnu"
+    local chost
+    chost=$(chost_for_arch "$target_arch")
 
     echo "Preparing host sandbox for cross-compilation (${chost})..."
 
@@ -97,7 +98,7 @@ prepare_crossdev_host() {
     run "$sandbox_dir" "eselect repository list -i | grep -q crossdev || eselect repository create crossdev"
 
     # Host accept_keywords workarounds
-    run "$sandbox_dir" "echo \"cross-${target_arch}-unknown-linux-gnu/rust-std **\" > /etc/portage/package.accept_keywords/rust-std"
+    run "$sandbox_dir" "echo \"cross-${chost}/rust-std **\" > /etc/portage/package.accept_keywords/rust-std"
     run "$sandbox_dir" "echo \"<sys-devel/gcc-16.0.9999:16 **\" > /etc/portage/package.accept_keywords/gcc"
     run "$sandbox_dir" mkdir -p "/etc/portage/package.{accept_keywords,mask}"
 
@@ -124,7 +125,8 @@ prepare_crossdev_host() {
 setup_crossdev_sandbox() {
     local sandbox_dir="$1"
     local target_arch="$2"
-    local chost="${target_arch}-unknown-linux-gnu"
+    local chost
+    chost=$(chost_for_arch "$target_arch")
     local crossdev_root="/usr/${chost}"
 
     # Prepare host first
@@ -413,7 +415,8 @@ prepare_target_portage() {
     local target_arch="$3"
 
     gentoo_arch "$target_arch"
-    local chost="${target_arch}-unknown-linux-gnu"
+    local chost
+    chost=$(chost_for_arch "$target_arch")
     local cflags
     cflags=$(target_cflags "$target_arch")
     local profile
@@ -442,7 +445,8 @@ build_stage1() {
     local sandbox_dir="$1"
     local target_dir="$2"
     local target_arch="${3:-riscv64}"
-    local chost="${target_arch}-unknown-linux-gnu"
+    local chost
+    chost=$(chost_for_arch "$target_arch")
 
     echo "Building stage1 for ${chost} from scratch..."
 
@@ -480,7 +484,8 @@ update_stage3() {
     local sandbox_dir="$1"
     local stage_dir="$2"
     local target_arch="${3:-riscv64}"
-    local chost="${target_arch}-unknown-linux-gnu"
+    local chost
+    chost=$(chost_for_arch "$target_arch")
 
     echo "Updating stage3 at $stage_dir for ${chost}..."
     run_with_stage "$sandbox_dir" "$stage_dir" "${chost}-emerge -b -k gcc"
@@ -496,7 +501,8 @@ install_packages() {
     local stage_dir="$2"
     local target_arch="$3"
     shift 3
-    local chost="${target_arch}-unknown-linux-gnu"
+    local chost
+    chost=$(chost_for_arch "$target_arch")
 
     echo "Installing packages into target for ${chost}..."
     run_with_stage "$sandbox_dir" "$stage_dir" "ROOT=/target ${chost}-emerge -b -k $*"
@@ -513,17 +519,13 @@ image_install_deps() {
     local sandbox_pkgs="$BOARD_CFG_DIR/sandbox-packages.txt"
     local target_pkgs="$BOARD_CFG_DIR/target-packages.txt"
     local target_arch="$BOARD_ARCH"
-    local chost="${target_arch}-unknown-linux-gnu"
+    local chost
+    chost=$(chost_for_arch "$target_arch")
 
-    # Apply per-package CFLAGS workarounds before emerging
-    local sysroot_dir
-    if [[ -n "$CURRENT_SYSROOT" ]]; then
-        sysroot_dir="$CURRENT_SYSROOT"
-    elif [[ -n "${SYSROOT:-}" ]]; then
-        sysroot_dir="$SYSROOTS_DIR/$SYSROOT"
-    else
-        sysroot_dir="$sandbox_dir/usr/${chost}"
-    fi
+    # Resolve the same context as `image build`, so a standalone invocation
+    # operates on the same sysroot as the one inside the pipeline.
+    resolve_build_context "$target_arch" "${SYSROOT:-}" || return 1
+    local sysroot_dir="${CURRENT_SYSROOT:-$sandbox_dir/usr/$chost}"
     apply_workarounds "$sysroot_dir"
 
     local pkgs
@@ -1373,11 +1375,8 @@ main() {
                             fi
                         done
                     else
-                        # Activate sysroot bind mount for all run() calls
-                        if [[ -n "${SYSROOT:-}" ]]; then
-                            CURRENT_SYSROOT=$(resolve_sysroot "$SYSROOT")
-                            CURRENT_CHOST="${BOARD_ARCH}-unknown-linux-gnu"
-                        fi
+                        # Resolve CHOST + sysroot once for every run() in this build.
+                        resolve_build_context "$BOARD_ARCH" "${SYSROOT:-}" || exit 1
                         local timestamp
                         timestamp=$(date -u +%Y%m%dT%H%M%SZ)
                         local build_name="${1:-${board}-${timestamp}}"
