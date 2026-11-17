@@ -10,6 +10,40 @@ source "$BASE_DIR/lib/common.sh"
 source "$BASE_DIR/lib/board.sh"
 source "$BASE_DIR/lib/sysroot.sh"
 
+# ── Image pipeline state ────────────────────────────────────────────────────
+# Single source of truth for step order and completion markers. Marker names
+# are historical (checkout -> .sources, assemble -> .assembled, ...) and are
+# shared by the step loop, `image list`, and `prune`.
+declare -a STEP_ORDER=(deps checkout bootloader kernel assemble pack)
+declare -A STEP_MARKERS=(
+    [deps]=deps
+    [checkout]=sources
+    [bootloader]=bootloader
+    [kernel]=kernel
+    [assemble]=assembled
+    [pack]=packed
+)
+
+step_marker() { printf '%s' "${STEP_MARKERS[$1]}"; }
+
+mark_step_done() {
+    local build_dir="$1" step="$2"
+    printf '%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.$(step_marker "$step")"
+}
+
+build_is_packed() { [[ -f "$1/.${STEP_MARKERS[pack]}" ]]; }
+
+# Record which step failed when `set -e` aborts a build. Additive: a no-op
+# when no build step is active, so unrelated command failures are untouched.
+CURRENT_BUILD_STEP=""
+CURRENT_BUILD_DIR=""
+_record_build_failure() {
+    [[ -n "$CURRENT_BUILD_STEP" && -n "$CURRENT_BUILD_DIR" ]] || return 0
+    printf '%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" > \
+        "$CURRENT_BUILD_DIR/.failed-${CURRENT_BUILD_STEP}" 2>/dev/null || true
+}
+trap '_record_build_failure' ERR
+
 configure_portage() {
     local sandbox_dir="$1"
     local arch="$2"
@@ -537,7 +571,7 @@ image_checkout() {
             checkout '${FIRMWARE_REPO}' '${TAG}' firmware
         "
     fi
-    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.sources"
+    mark_step_done "$build_dir" checkout
 }
 
 image_build_bootloader() {
@@ -557,7 +591,7 @@ image_build_bootloader() {
             make -C /build/u-boot ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} -j\$(nproc)
         "
     fi
-    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.bootloader"
+    mark_step_done "$build_dir" bootloader
 }
 
 image_build_kernel() {
@@ -577,7 +611,7 @@ image_build_kernel() {
             make -C /build/linux ARCH=${KERNEL_ARCH} CROSS_COMPILE=${CROSS_COMPILE} modules -j\$(nproc)
         "
     fi
-    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.kernel"
+    mark_step_done "$build_dir" kernel
 }
 
 image_assemble() {
@@ -649,7 +683,7 @@ image_assemble() {
         "
     fi
 
-    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.assembled"
+    mark_step_done "$build_dir" assemble
 }
 
 image_pack() {
@@ -678,7 +712,7 @@ image_pack() {
             "xz -f -T0 -9 /build/$img_name"
         echo "Image ready: $build_dir/$img_name.xz"
     fi
-    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.packed"
+    mark_step_done "$build_dir" pack
 }
 
 ensure_crossdev() {
@@ -1165,12 +1199,17 @@ main() {
                             local name=$(basename "$d")
                             local board=$(get_build_board "$d")
                             local steps=()
-                            [[ -f "$d/.deps"       ]] && steps+=("deps")
-                            [[ -f "$d/.sources"    ]] && steps+=("sources")
-                            [[ -f "$d/.bootloader" ]] && steps+=("bootloader")
-                            [[ -f "$d/.kernel"     ]] && steps+=("kernel")
-                            [[ -f "$d/.assembled"  ]] && steps+=("assembled($(cat "$d/.assembled"))")
-                            [[ -f "$d/.packed"     ]] && steps+=("packed")
+                            for step in "${STEP_ORDER[@]}"; do
+                                local marker
+                                marker=$(step_marker "$step")
+                                if [[ -f "$d/.$marker" ]]; then
+                                    if [[ "$marker" == "assembled" ]]; then
+                                        steps+=("assembled($(cat "$d/.$marker"))")
+                                    else
+                                        steps+=("$marker")
+                                    fi
+                                fi
+                            done
                             local state="setup"
                             [[ ${#steps[@]} -gt 0 ]] && state="${steps[*]}"
                             printf "%-30s %-10s %s\n" "$name" "${board:-(unknown)}" "$state"
@@ -1310,7 +1349,7 @@ main() {
                     [[ -n "$opt_sysroot" ]] && SYSROOT="$opt_sysroot"
 
                     if [[ -z "${BUILD_STEPS+x}" ]]; then
-                        BUILD_STEPS=(deps checkout bootloader kernel assemble pack)
+                        BUILD_STEPS=("${STEP_ORDER[@]}")
                     fi
                     local steps=("${BUILD_STEPS[@]}")
                     local total=${#steps[@]}
@@ -1343,7 +1382,22 @@ main() {
                         ensure_cache_dirs
                         local build_dir="$BUILDS_DIR/$build_name"
                         mkdir -p "$build_dir"
-                        echo "$board" > "$build_dir/.board"
+
+                        # A reused build name must not keep markers describing a
+                        # different board or pipeline configuration.
+                        local previous_board="" previous_steps=""
+                        local steps_signature="${steps[*]}"
+                        [[ -f "$build_dir/.board" ]] && previous_board=$(cat "$build_dir/.board")
+                        [[ -f "$build_dir/.steps" ]] && previous_steps=$(cat "$build_dir/.steps")
+                        if [[ -n "$previous_board" && \
+                              ( "$previous_board" != "$board" || "$previous_steps" != "$steps_signature" ) ]]; then
+                            for step in "${STEP_ORDER[@]}"; do
+                                rm -f "$build_dir/.$(step_marker "$step")" \
+                                      "$build_dir/.failed-${step}"
+                            done
+                        fi
+                        printf '%s\n' "$board" > "$build_dir/.board"
+                        printf '%s\n' "$steps_signature" > "$build_dir/.steps"
 
                         local target_dir
                         resolve_target target_dir "${1-}"
@@ -1357,10 +1411,12 @@ main() {
                         for step in "${steps[@]}"; do
                             step_num=$((step_num + 1))
                             echo "==> [$step_num/$total] ${step}..."
+                            CURRENT_BUILD_STEP="$step"
+                            CURRENT_BUILD_DIR="$build_dir"
                             case "$step" in
                                 deps)
                                     image_install_deps "$sandbox_dir" "$target_dir" "$board"
-                                    echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$build_dir/.deps"
+                                    mark_step_done "$build_dir" deps
                                     ;;
                                 checkout)
                                     image_checkout "$sandbox_dir" "$build_dir" "$board"
@@ -1382,6 +1438,7 @@ main() {
                                     exit 1
                                     ;;
                             esac
+                            CURRENT_BUILD_STEP=""
                         done
                     fi
                     ;;
@@ -1414,7 +1471,7 @@ main() {
                         continue
                     fi
 
-                    if [[ $prune_all -eq 1 ]] || [[ ! -f "$d/.packed" ]]; then
+                    if [[ $prune_all -eq 1 ]] || ! build_is_packed "$d"; then
                         echo "Removing: $name ($board)"
                         remove_dir "$d"
                         count=$((count + 1))
