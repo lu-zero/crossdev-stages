@@ -47,13 +47,23 @@ create_sysroot() {
     local chost
     chost=$(chost_for_arch "$target_arch")
     local crossdev_root="/usr/${chost}"
+    local creating="$sysroot_dir/.creating"
 
     if [[ -d "$sysroot_dir" && -f "$sysroot_dir/.cflags" ]]; then
         echo "Sysroot '$name' already exists at $sysroot_dir"
         return 0
     fi
 
+    # .cflags means complete; .creating means a previous run aborted before
+    # finishing. Discard that tree rather than unpacking over stale config.
+    if [[ -f "$creating" ]]; then
+        echo "Discarding incomplete sysroot from a previous run..."
+        remove_dir "$sysroot_dir"
+    fi
+
     echo "Creating sysroot '$name' for ${chost} with CFLAGS: $cflags"
+    mkdir -p "$sysroot_dir"
+    printf '%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" > "$creating"
 
     # Ensure host sandbox has crossdev toolchain
     if [[ ! -f "$sandbox_dir/.crossdev-host-${target_arch}" ]]; then
@@ -167,6 +177,7 @@ ENVEOF
     echo "$cflags" > "$sysroot_dir/.cflags"
     echo "$target_arch" > "$sysroot_dir/.arch"
     echo "$(date -u +%Y%m%dT%H%M%SZ)" > "$sysroot_dir/.created"
+    rm -f "$creating"
 
     echo "Sysroot '$name' created at $sysroot_dir"
 }
