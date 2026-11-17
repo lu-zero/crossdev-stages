@@ -572,8 +572,13 @@ pub fn build(
         };
 
         let elapsed = step_start.elapsed();
-        println!("    {} done ({})", step, format_duration(elapsed));
-        result?;
+        match result {
+            Ok(()) => println!("    {} done ({})", step, format_duration(elapsed)),
+            Err(e) => {
+                println!("    {} failed ({})", step, format_duration(elapsed));
+                return Err(e);
+            }
+        }
     }
 
     let total_elapsed = build_start.elapsed();
