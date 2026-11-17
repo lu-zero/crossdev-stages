@@ -404,6 +404,57 @@ fn sandbox_bind_targets(_sandbox_dir: &Utf8Path) -> [&'static str; 2] {
     ["var/log", "etc/resolv.conf"]
 }
 
+/// What kind of bind target a stale mount points at, which determines how
+/// its target must be restored after a lazy unmount.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MountKind {
+    LogDir,
+    ResolvConf,
+    Other,
+}
+
+fn mount_kind(path: &Utf8Path) -> MountKind {
+    if path.ends_with("var/log") {
+        MountKind::LogDir
+    } else if path.ends_with("resolv.conf") {
+        MountKind::ResolvConf
+    } else {
+        MountKind::Other
+    }
+}
+
+/// All paths under a workspace entry that may be stale bind mounts: the
+/// two `SandboxRunner` sub-targets (when it is a directory) plus the entry
+/// itself. Kept in one place so new bind targets are added in one spot.
+fn mount_targets_for_removal(path: &Utf8Path) -> Vec<Utf8PathBuf> {
+    let mut targets: Vec<Utf8PathBuf> = if path.is_dir() {
+        sandbox_bind_targets(path)
+            .iter()
+            .map(|sub| path.join(sub))
+            .filter(|p| p.exists())
+            .collect()
+    } else {
+        Vec::new()
+    };
+    if path.exists() {
+        targets.push(path.to_path_buf());
+    }
+    targets
+}
+
+/// Lazy-unmount a stale mount and restore its target. Returns whether a
+/// mount was actually found; `dry_run` suppresses all side effects.
+fn unmount_and_restore(path: &Utf8Path, dry_run: bool) -> Result<bool> {
+    if !path.exists() || !is_mount_point(path) {
+        return Ok(false);
+    }
+    if !dry_run {
+        umount_lazy(path)?;
+        restore_mount_target(path)?;
+    }
+    Ok(true)
+}
+
 /// Return true when `path` is a mount point in the current mount namespace.
 pub fn is_mount_point(path: &Utf8Path) -> bool {
     let Ok(canonical) = path.canonicalize_utf8() else {
@@ -453,14 +504,14 @@ pub fn recover_sandbox_mounts(ws: &Workspace, dry_run: bool) -> Result<usize> {
     let stale = find_stale_sandbox_mounts(ws)?;
     let mut count = 0usize;
     for mount in stale {
-        if dry_run {
-            println!("Would unmount {} (sandbox {})", mount.path, mount.sandbox);
-        } else {
-            umount_lazy(&mount.path)?;
-            restore_mount_target(&mount.path)?;
-            println!("Unmounted {} (sandbox {})", mount.path, mount.sandbox);
+        if unmount_and_restore(&mount.path, dry_run)? {
+            if dry_run {
+                println!("Would unmount {} (sandbox {})", mount.path, mount.sandbox);
+            } else {
+                println!("Unmounted {} (sandbox {})", mount.path, mount.sandbox);
+            }
+            count += 1;
         }
-        count += 1;
     }
     Ok(count)
 }
@@ -468,30 +519,15 @@ pub fn recover_sandbox_mounts(ws: &Workspace, dry_run: bool) -> Result<usize> {
 /// Unmount stale bind targets under `path` before removing a workspace entry.
 pub fn recover_mounts_for_removal(path: &Utf8Path, dry_run: bool) -> Result<usize> {
     let mut count = 0usize;
-    if path.is_dir() {
-        for sub in sandbox_bind_targets(path) {
-            let target = path.join(sub);
-            if target.exists() && is_mount_point(&target) {
-                if dry_run {
-                    println!("Would unmount {}", target);
-                } else {
-                    umount_lazy(&target)?;
-                    restore_mount_target(&target)?;
-                    println!("Unmounted {}", target);
-                }
-                count += 1;
+    for target in mount_targets_for_removal(path) {
+        if unmount_and_restore(&target, dry_run)? {
+            if dry_run {
+                println!("Would unmount {}", target);
+            } else {
+                println!("Unmounted {}", target);
             }
+            count += 1;
         }
-    }
-    if path.exists() && is_mount_point(path) {
-        if dry_run {
-            println!("Would unmount {}", path);
-        } else {
-            umount_lazy(path)?;
-            restore_mount_target(path)?;
-            println!("Unmounted {}", path);
-        }
-        count += 1;
     }
     Ok(count)
 }
@@ -520,16 +556,18 @@ fn umount_lazy(path: &Utf8Path) -> Result<()> {
 
 /// Ensure bind-mount targets exist after a lazy unmount.
 fn restore_mount_target(path: &Utf8Path) -> Result<()> {
-    if path.ends_with("var/log") {
-        std::fs::create_dir_all(path)?;
-    } else if path.ends_with("resolv.conf") && !path.exists() {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
+    match mount_kind(path) {
+        MountKind::LogDir => std::fs::create_dir_all(path)?,
+        MountKind::ResolvConf if !path.exists() => {
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(
+                path,
+                "nameserver 1.1.1.1\nnameserver 2606:4700:4700::1111\n",
+            )?;
         }
-        std::fs::write(
-            path,
-            "nameserver 1.1.1.1\nnameserver 2606:4700:4700::1111\n",
-        )?;
+        MountKind::ResolvConf | MountKind::Other => {}
     }
     Ok(())
 }
@@ -561,5 +599,61 @@ mod tests {
         let path = Utf8PathBuf::try_from(dir).unwrap();
         assert!(!is_mount_point(&path));
         let _ = std::fs::remove_dir(&path);
+    }
+
+    struct TempDir(Utf8PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let path = Utf8PathBuf::try_from(std::env::temp_dir().join(format!(
+                "crossdev-stages-recovery-{tag}-{}",
+                std::process::id()
+            )))
+            .unwrap();
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn mount_kind_classification() {
+        assert_eq!(mount_kind(Utf8Path::new("/sb/var/log")), MountKind::LogDir);
+        assert_eq!(
+            mount_kind(Utf8Path::new("/sb/etc/resolv.conf")),
+            MountKind::ResolvConf
+        );
+        assert_eq!(mount_kind(Utf8Path::new("/sb")), MountKind::Other);
+    }
+
+    #[test]
+    fn removal_targets_are_sub_targets_then_root() {
+        let dir = TempDir::new("targets");
+        std::fs::create_dir_all(dir.0.join("var/log")).unwrap();
+        std::fs::create_dir_all(dir.0.join("etc")).unwrap();
+        std::fs::write(dir.0.join("etc/resolv.conf"), "").unwrap();
+
+        let targets = mount_targets_for_removal(&dir.0);
+        assert_eq!(
+            targets,
+            vec![
+                dir.0.join("var/log"),
+                dir.0.join("etc/resolv.conf"),
+                dir.0.clone(),
+            ]
+        );
+    }
+
+    #[test]
+    fn unmount_skips_non_mount_paths() {
+        let dir = TempDir::new("unmount");
+        assert!(!unmount_and_restore(&dir.0, false).unwrap());
+        assert!(!unmount_and_restore(&dir.0, true).unwrap());
     }
 }
