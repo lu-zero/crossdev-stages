@@ -469,7 +469,10 @@ build_stage1() {
         "USE=build ROOT=/target ${chost}-emerge -b -k sys-apps/portage"
 
     update_ldconfig_sandbox "$sandbox_dir" "$target_dir"
+    # The log line stays for backward compatibility; the marker is the
+    # stable phase signal used by `target list`.
     echo "$(date -u +%Y%m%dT%H%M%SZ) stage1" >> "$target_dir/.updated"
+    printf '%s\n' "$(date -u +%Y%m%dT%H%M%SZ)" > "$target_dir/.stage1"
     echo "Stage1 build complete for ${chost}"
 }
 
@@ -981,6 +984,7 @@ main() {
                             local name=$(basename "$d")
                             local arch=$(get_arch "$d")
                             local state="setup"
+                            [[ -f "$d/.stage1" ]] && state="stage1"
                             if [[ -f "$d/.updated" ]]; then
                                 local last_update
                                 last_update=$(tail -n1 "$d/.updated")
