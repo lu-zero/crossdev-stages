@@ -256,6 +256,7 @@ prepare_sandbox() {
     install_dependencies "$sandbox_dir"
 
     touch "$sandbox_dir/.prepared"
+    rm -f "$sandbox_dir/.prepared-manual"
     echo "Sandbox preparation complete for $arch"
 }
 
@@ -742,8 +743,8 @@ ensure_crossdev() {
         return 1
     fi
 
-    # Auto-prepare sandbox if not yet prepared
-    if [[ ! -f "$sandbox_dir/.prepared" ]]; then
+    # Auto-prepare sandbox if neither a full nor a manual prepare happened
+    if [[ ! -f "$sandbox_dir/.prepared" && ! -f "$sandbox_dir/.prepared-manual" ]]; then
         echo "Sandbox not prepared, running prepare..."
         prepare_sandbox "$sandbox_dir" "$arch"
     fi
@@ -896,7 +897,11 @@ main() {
                     local name=$(basename "$d")
                     local arch=$(get_arch "$d")
                     local state="setup"
-                    [[ -f "$d/.prepared" ]] && state="prepared"
+                    if [[ -f "$d/.prepared" ]]; then
+                        state="prepared"
+                    elif [[ -f "$d/.prepared-manual" ]]; then
+                        state="prepared-manual"
+                    fi
                     local crossdev_targets=()
                     for f in "$d"/.crossdev-*; do
                         [[ -f "$f" ]] && crossdev_targets+=("${f##*/.crossdev-}")
@@ -942,6 +947,9 @@ main() {
 
             if [[ $manual -eq 1 ]]; then
                 configure_portage "$sandbox_dir" "$arch"
+                # Make the manually configured state visible to readiness
+                # checks instead of re-preparing on the next command.
+                touch "$sandbox_dir/.prepared-manual"
                 echo "Portage configured. Entering sandbox for manual setup..."
                 run "$sandbox_dir" bash --login
             else
