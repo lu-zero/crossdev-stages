@@ -37,14 +37,6 @@ case "$BOARD" in
         ;;
 esac
 
-# Override with environment variables if set
-TAG="${BOARD_TAG:-$TAG}"
-OPENSBI_TAG="${BOARD_OPENSBI_TAG:-$OPENSBI_TAG}"
-OPENSBI_REPO="${BOARD_OPENSBI_REPO:-$OPENSBI_REPO}"
-U_BOOT_REPO="${BOARD_U_BOOT_REPO:-$U_BOOT_REPO}"
-FIRMWARE_REPO="${BOARD_FIRMWARE_REPO:-$FIRMWARE_REPO}"
-KERNEL_REPO="${BOARD_KERNEL_REPO:-$KERNEL_REPO}"
-
 BASE_DIR=$(dirname $(readlink -f "$0"))
 
 usage() {
@@ -67,7 +59,16 @@ else
     exit 1
 fi
 
-export CROSS_COMPILE=riscv64-unknown-linux-gnu-
+# Environment overrides must be applied after sourcing board.conf, which
+# otherwise clobbers them with its own TAG/REPO defaults.
+TAG="${BOARD_TAG:-$TAG}"
+OPENSBI_TAG="${BOARD_OPENSBI_TAG:-$OPENSBI_TAG}"
+OPENSBI_REPO="${BOARD_OPENSBI_REPO:-$OPENSBI_REPO}"
+U_BOOT_REPO="${BOARD_U_BOOT_REPO:-$U_BOOT_REPO}"
+FIRMWARE_REPO="${BOARD_FIRMWARE_REPO:-$FIRMWARE_REPO}"
+KERNEL_REPO="${BOARD_KERNEL_REPO:-$KERNEL_REPO}"
+
+export CROSS_COMPILE="${CROSS_COMPILE:-riscv64-unknown-linux-gnu-}"
 export OPENSBI="$BUILD_DIR"/opensbi/build/platform/generic/firmware/fw_dynamic.bin
 export ARCH=riscv
 
