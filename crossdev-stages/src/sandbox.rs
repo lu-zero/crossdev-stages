@@ -17,6 +17,71 @@ pub struct Sandbox {
     pub arch: String,
 }
 
+/// Lifecycle of a sandbox, derived from its readiness markers.
+///
+/// A full prepare supersedes a bare one: when both markers are present (a
+/// possible crash window), [`Prepared`](SandboxState::Prepared) wins.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SandboxState {
+    Unpacked,
+    BarePrepared,
+    Prepared,
+}
+
+impl SandboxState {
+    /// Short label used by `sandbox list` and `status`.
+    pub fn label(self) -> &'static str {
+        match self {
+            SandboxState::Unpacked => "unpacked",
+            SandboxState::BarePrepared => "bare",
+            SandboxState::Prepared => "prepared",
+        }
+    }
+}
+
+/// Read the sandbox state directly from a directory, without opening its
+/// `.arch` marker. Also used by `doctor`, which only has a directory path.
+pub fn state_of(dir: &Utf8Path) -> SandboxState {
+    if dir.join(".prepared").exists() {
+        SandboxState::Prepared
+    } else if dir.join(".prepared-bare").exists() {
+        SandboxState::BarePrepared
+    } else {
+        SandboxState::Unpacked
+    }
+}
+
+/// A resolved GCC pin: a slot, optionally narrowed to a version prefix.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GccSpec {
+    slot: String,
+    prefix: Option<String>,
+}
+
+/// Whether a `.crossdev-<arch>` marker still satisfies the pin.
+///
+/// The prefix branch first compares parsed version numbers, then falls back
+/// to a literal prefix match for markers that are not valid portage versions.
+fn marker_matches(existing: &str, spec: &GccSpec) -> bool {
+    match &spec.prefix {
+        Some(prefix) => match (
+            PortageVersion::parse(existing),
+            PortageVersion::parse(prefix.as_str()),
+        ) {
+            (Ok(ev), Ok(pv)) => ev.numbers.starts_with(&pv.numbers),
+            _ => existing.starts_with(prefix.as_str()),
+        },
+        None => {
+            PortageVersion::parse(existing)
+                .ok()
+                .and_then(|v| v.numbers.first().copied())
+                .map(|n| n.to_string())
+                .as_deref()
+                == Some(spec.slot.as_str())
+        }
+    }
+}
+
 impl Sandbox {
     /// Open an existing sandbox directory, reading its `.arch` marker.
     pub fn open(dir: Utf8PathBuf) -> Result<Self> {
@@ -24,6 +89,11 @@ impl Sandbox {
             .map(|s| s.trim().to_string())
             .map_err(|_| Error::SandboxNotFound(dir.to_string()))?;
         Ok(Self { dir, arch })
+    }
+
+    /// Current lifecycle state, from the `.prepared` / `.prepared-bare` markers.
+    pub fn state(&self) -> SandboxState {
+        state_of(&self.dir)
     }
 
     /// Create a new sandbox by unpacking a stage3 source tarball (catalyst: `source_path`).
@@ -49,13 +119,16 @@ impl Sandbox {
     ///
     /// With `bare`, writes `make.conf` and syncs the portage tree but does not emerge packages.
     pub fn prepare(&self, mirror: Option<&str>, bare: bool) -> Result<()> {
-        if self.dir.join(".prepared").exists() {
-            tracing::info!("Sandbox already prepared, skipping.");
-            return Ok(());
-        }
-        if bare && self.dir.join(".prepared-bare").exists() {
-            tracing::info!("Sandbox already bare-prepared, skipping.");
-            return Ok(());
+        match self.state() {
+            SandboxState::Prepared => {
+                tracing::info!("Sandbox already prepared, skipping.");
+                return Ok(());
+            }
+            SandboxState::BarePrepared if bare => {
+                tracing::info!("Sandbox already bare-prepared, skipping.");
+                return Ok(());
+            }
+            SandboxState::Unpacked | SandboxState::BarePrepared => {}
         }
         tracing::info!("Configuring portage…");
         MakeConf {
@@ -117,6 +190,42 @@ impl Sandbox {
         Ok(versions)
     }
 
+    /// Resolve the GCC pin from CLI > board > highest installed slot.
+    /// A single number ("15") selects a slot; a longer version ("15.2",
+    /// "15.2.1_p…") becomes a portage `=pkg-ver*` prefix.
+    fn resolve_gcc_spec(&self, requested: Option<&str>, board: &BoardConfig) -> Result<GccSpec> {
+        match requested.or(board.gcc_version.as_deref()) {
+            None => {
+                // Auto-detect: highest installed slot (avoids an extra gcc-config call).
+                let installed = self.get_installed_gcc_versions()?;
+                let slot = installed
+                    .keys()
+                    .filter_map(|k| k.parse::<u32>().ok())
+                    .max()
+                    .map(|n| n.to_string())
+                    .ok_or_else(|| Error::CommandFailed {
+                        code: 1,
+                        reason: "No GCC installed in sandbox; run sandbox prepare first".into(),
+                    })?;
+                Ok(GccSpec { slot, prefix: None })
+            }
+            Some(s) => {
+                let ver = PortageVersion::parse(s).map_err(|_| Error::CommandFailed {
+                    code: 1,
+                    reason: format!("BOARD_GCC_VERSION {s:?} is not a valid portage version"),
+                })?;
+                let slot = ver.numbers[0].to_string();
+                // A single bare number ("15") means slot-only; anything longer is a prefix.
+                let is_slot_only =
+                    ver.numbers.len() == 1 && ver.letter.is_none() && ver.suffixes.is_empty();
+                Ok(GccSpec {
+                    slot,
+                    prefix: (!is_slot_only).then(|| s.to_string()),
+                })
+            }
+        }
+    }
+
     /// Set up the crossdev toolchain for `target_arch` inside this sandbox.
     /// Idempotent: skips if `.crossdev-<target_arch>` marker exists with a matching gcc version.
     ///
@@ -133,64 +242,18 @@ impl Sandbox {
         let marker = self.dir.join(format!(".crossdev-{target_arch}"));
         let runner = self.runner();
 
-        // Resolve spec from CLI > board > auto-detect.
-        // A single number ("15") selects the slot; any longer version ("15.2", "15.2.1_p…")
-        // is used as a portage version prefix via =sys-devel/gcc-<prefix>*.
-        let requested = gcc_version.or(board.gcc_version.as_deref());
-        let (gcc_slot, ver_prefix): (String, Option<String>) = match requested {
-            None => {
-                // Auto-detect: highest installed slot (avoids an extra gcc-config call).
-                let installed = self.get_installed_gcc_versions()?;
-                let slot = installed
-                    .keys()
-                    .filter_map(|k| k.parse::<u32>().ok())
-                    .max()
-                    .map(|n| n.to_string())
-                    .ok_or_else(|| Error::CommandFailed {
-                        code: 1,
-                        reason: "No GCC installed in sandbox; run sandbox prepare first".into(),
-                    })?;
-                (slot, None)
-            }
-            Some(s) => {
-                let ver = PortageVersion::parse(s).map_err(|_| Error::CommandFailed {
-                    code: 1,
-                    reason: format!("BOARD_GCC_VERSION {s:?} is not a valid portage version"),
-                })?;
-                let slot = ver.numbers[0].to_string();
-                // A single bare number ("15") means slot-only; anything longer is a prefix.
-                let is_slot_only =
-                    ver.numbers.len() == 1 && ver.letter.is_none() && ver.suffixes.is_empty();
-                if is_slot_only {
-                    (slot, None)
-                } else {
-                    (slot, Some(s.to_string()))
-                }
-            }
-        };
+        // Resolve spec from CLI > board > auto-detect, then keep owned/loaned
+        // views for the existing emerge/config sequence below.
+        let spec = self.resolve_gcc_spec(gcc_version, board)?;
+        let gcc_slot = spec.slot.clone();
+        let ver_prefix = spec.prefix.as_deref();
 
         // Idempotency: marker holds the exact gcc version used last time.
         // For a prefix spec, check that the installed version's numbers start with the prefix's.
         if marker.exists() {
             if let Ok(existing) = std::fs::read_to_string(&marker) {
                 let existing = existing.trim();
-                let matches = match &ver_prefix {
-                    Some(prefix) => match (
-                        PortageVersion::parse(existing),
-                        PortageVersion::parse(prefix),
-                    ) {
-                        (Ok(ev), Ok(pv)) => ev.numbers.starts_with(&pv.numbers),
-                        _ => existing.starts_with(prefix.as_str()),
-                    },
-                    None => {
-                        PortageVersion::parse(existing)
-                            .ok()
-                            .and_then(|v| v.numbers.first().copied())
-                            .map(|n| n.to_string())
-                            .as_deref()
-                            == Some(gcc_slot.as_str())
-                    }
-                };
+                let matches = marker_matches(existing, &spec);
                 if matches {
                     tracing::info!(
                         "Crossdev for {target_arch} already set up with gcc-{existing}, skipping."
@@ -200,7 +263,7 @@ impl Sandbox {
                     self.ensure_grub_ex_pkg(board, &chost, &runner)?;
                     return Ok(());
                 }
-                let want = ver_prefix.as_deref().unwrap_or(&gcc_slot);
+                let want = ver_prefix.unwrap_or(&gcc_slot);
                 tracing::info!(
                     "Crossdev for {target_arch}: re-setting up (was gcc-{existing}, want gcc-{want})…"
                 );
@@ -225,16 +288,16 @@ impl Sandbox {
         let gcc_keyword_line = format!("sys-devel/gcc:{gcc_slot} **");
         portage.accept_keywords("gcc", &gcc_keyword_line)?;
 
-        portage.emerge_host_gcc(&gcc_slot, ver_prefix.as_deref())?;
+        portage.emerge_host_gcc(&gcc_slot, ver_prefix)?;
 
         // Refresh metadata after emerge — never use the pre-emerge cache here.
         let installed = self.refresh_gcc_versions()?;
         let slot_versions = installed.get(&gcc_slot).cloned().unwrap_or_default();
 
-        let gcc_ver = if let Some(ref prefix) = ver_prefix {
+        let gcc_ver = if let Some(prefix) = ver_prefix {
             slot_versions
                 .into_iter()
-                .find(|v| v.starts_with(prefix.as_str()))
+                .find(|v| v.starts_with(prefix))
                 .ok_or_else(|| Error::CommandFailed {
                     code: 1,
                     reason: format!("No gcc-{prefix}* found in sandbox after emerge"),
@@ -306,7 +369,7 @@ impl Sandbox {
 
     #[allow(dead_code)]
     pub fn is_prepared(&self) -> bool {
-        self.dir.join(".prepared").exists()
+        self.state() == SandboxState::Prepared
     }
 
     #[allow(dead_code)]
@@ -469,15 +532,9 @@ pub fn list(ws: &Workspace) -> Result<Vec<SandboxInfo>> {
         .into_iter()
         .map(|dir| {
             let arch = crate::workspace::read_arch(&dir).unwrap_or_else(|| "unknown".into());
-            let prepared = dir.join(".prepared").exists();
-            let bare_prepared = dir.join(".prepared-bare").exists();
+            let state = state_of(&dir);
             let name = dir.file_name().unwrap_or("").to_string();
-            SandboxInfo {
-                name,
-                arch,
-                prepared,
-                bare_prepared,
-            }
+            SandboxInfo { name, arch, state }
         })
         .collect())
 }
@@ -485,6 +542,175 @@ pub fn list(ws: &Workspace) -> Result<Vec<SandboxInfo>> {
 pub struct SandboxInfo {
     pub name: String,
     pub arch: String,
-    pub prepared: bool,
-    pub bare_prepared: bool,
+    pub state: SandboxState,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TempDir(Utf8PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let path = Utf8PathBuf::try_from(std::env::temp_dir().join(format!(
+                "crossdev-stages-sandbox-{tag}-{}",
+                std::process::id()
+            )))
+            .unwrap();
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn path(&self) -> &Utf8Path {
+            &self.0
+        }
+
+        fn marker(&self, name: &str) {
+            std::fs::write(self.0.join(name), "").unwrap();
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn state_from_markers() {
+        let dir = TempDir::new("state");
+        assert_eq!(state_of(dir.path()), SandboxState::Unpacked);
+        dir.marker(".prepared-bare");
+        assert_eq!(state_of(dir.path()), SandboxState::BarePrepared);
+        dir.marker(".prepared");
+        assert_eq!(state_of(dir.path()), SandboxState::Prepared);
+    }
+
+    #[test]
+    fn full_prepare_wins_over_bare_marker() {
+        // Crash window: both markers present must resolve to the stronger state.
+        let dir = TempDir::new("both");
+        dir.marker(".prepared-bare");
+        dir.marker(".prepared");
+        assert_eq!(state_of(dir.path()), SandboxState::Prepared);
+    }
+
+    #[test]
+    fn state_labels() {
+        assert_eq!(SandboxState::Unpacked.label(), "unpacked");
+        assert_eq!(SandboxState::BarePrepared.label(), "bare");
+        assert_eq!(SandboxState::Prepared.label(), "prepared");
+    }
+
+    fn board_with_gcc(version: Option<&str>) -> BoardConfig {
+        let mut board = crate::cli::util::default_board_config("x86_64");
+        board.gcc_version = version.map(str::to_string);
+        board
+    }
+
+    fn sandbox_with_versions(dir: &TempDir, toml: &str) -> Sandbox {
+        std::fs::write(dir.path().join(".gcc_versions"), toml).unwrap();
+        Sandbox {
+            dir: dir.path().to_path_buf(),
+            arch: "x86_64".into(),
+        }
+    }
+
+    #[test]
+    fn gcc_spec_auto_detects_highest_slot() {
+        let dir = TempDir::new("gcc-auto");
+        let sb = sandbox_with_versions(
+            &dir,
+            "14 = [\"14.2.0\"]\n15 = [\"15.2.1_p20260214\"]\n16 = [\"16.2.0\"]\n",
+        );
+        let spec = sb.resolve_gcc_spec(None, &board_with_gcc(None)).unwrap();
+        assert_eq!(
+            spec,
+            GccSpec {
+                slot: "16".into(),
+                prefix: None
+            }
+        );
+    }
+
+    #[test]
+    fn gcc_spec_cli_pin_beats_board_pin() {
+        let dir = TempDir::new("gcc-cli");
+        let sb = sandbox_with_versions(&dir, "");
+        let board = board_with_gcc(Some("14"));
+        let spec = sb.resolve_gcc_spec(Some("15"), &board).unwrap();
+        assert_eq!(
+            spec,
+            GccSpec {
+                slot: "15".into(),
+                prefix: None
+            }
+        );
+    }
+
+    #[test]
+    fn gcc_spec_board_pin_and_prefix() {
+        let dir = TempDir::new("gcc-board");
+        let sb = sandbox_with_versions(&dir, "");
+        let spec = sb
+            .resolve_gcc_spec(None, &board_with_gcc(Some("15.2")))
+            .unwrap();
+        assert_eq!(
+            spec,
+            GccSpec {
+                slot: "15".into(),
+                prefix: Some("15.2".into())
+            }
+        );
+    }
+
+    #[test]
+    fn gcc_spec_long_version_is_a_prefix() {
+        let dir = TempDir::new("gcc-prefix");
+        let sb = sandbox_with_versions(&dir, "");
+        let spec = sb
+            .resolve_gcc_spec(Some("15.2.1_p20260214"), &board_with_gcc(None))
+            .unwrap();
+        assert_eq!(
+            spec,
+            GccSpec {
+                slot: "15".into(),
+                prefix: Some("15.2.1_p20260214".into())
+            }
+        );
+    }
+
+    #[test]
+    fn gcc_spec_rejects_invalid_inputs() {
+        let dir = TempDir::new("gcc-invalid");
+        let sb = sandbox_with_versions(&dir, "");
+        assert!(sb
+            .resolve_gcc_spec(Some("not-a-version"), &board_with_gcc(None))
+            .is_err());
+        assert!(sb.resolve_gcc_spec(None, &board_with_gcc(None)).is_err());
+    }
+
+    #[test]
+    fn marker_matching_slot_only() {
+        let spec = GccSpec {
+            slot: "15".into(),
+            prefix: None,
+        };
+        assert!(marker_matches("15.9.9", &spec));
+        assert!(!marker_matches("16.0.0", &spec));
+    }
+
+    #[test]
+    fn marker_matching_prefix() {
+        let spec = GccSpec {
+            slot: "15".into(),
+            prefix: Some("15.2".into()),
+        };
+        assert!(marker_matches("15.2.1_p20260214", &spec));
+        assert!(!marker_matches("15.1.0", &spec));
+        // Unparsable markers fall back to a literal prefix check.
+        assert!(marker_matches("15.2-snapshot", &spec));
+    }
 }

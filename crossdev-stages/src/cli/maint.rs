@@ -1,6 +1,6 @@
 use crate::cli::{CleanArgs, MaintCmd};
 use crate::error::Result;
-use crate::{board, container, image, workspace::Workspace};
+use crate::{board, container, image, sandbox, workspace::Workspace};
 use camino::{Utf8Path, Utf8PathBuf};
 
 pub fn run(
@@ -289,11 +289,11 @@ fn doctor(ws: &Workspace, boards_root: &camino::Utf8Path) -> Result<()> {
 
     let sandboxes = ws.list_sandboxes().unwrap_or_default();
     check!("at least one sandbox", !sandboxes.is_empty());
-    if let Some(sb_dir) = sandboxes.first() {
-        let prepared = sb_dir.join(".prepared").exists();
+    let first_state = sandboxes.first().map(|d| sandbox::state_of(d));
+    if let (Some(sb_dir), Some(state)) = (sandboxes.first(), first_state) {
         check!(
             &format!("sandbox {} prepared", sb_dir.file_name().unwrap_or("?")),
-            prepared
+            state != sandbox::SandboxState::Unpacked
         );
     }
 
@@ -314,12 +314,14 @@ fn doctor(ws: &Workspace, boards_root: &camino::Utf8Path) -> Result<()> {
         if !stale_mounts.is_empty() {
             println!("Run 'crossdev-stages maint recover' to unmount stale sandbox mounts.");
         }
-        if sandboxes.is_empty()
-            || sandboxes
-                .first()
-                .is_some_and(|d| !d.join(".prepared").exists())
-        {
-            println!("Run 'crossdev-stages sandbox setup' and 'sandbox prepare' to fix.");
+        match first_state {
+            Some(sandbox::SandboxState::Unpacked) => println!(
+                "Run 'crossdev-stages sandbox setup' and 'sandbox prepare' to fix."
+            ),
+            Some(sandbox::SandboxState::BarePrepared) => println!(
+                "Sandbox is bare-prepared: run 'crossdev-stages sandbox prepare' to install host dependencies."
+            ),
+            Some(sandbox::SandboxState::Prepared) | None => {}
         }
     }
     Ok(())
