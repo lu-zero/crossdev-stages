@@ -223,10 +223,18 @@ impl<'a> Portage<'a> {
     // ── Crossdev prefix setup ────────────────────────────────────────────────
 
     /// Create the `crossdev` overlay repository if it isn't registered yet.
+    ///
+    /// Match the exact `[crossdev]` section with a `location`, not any name
+    /// containing "crossdev": `crossdev --init-target` also registers a
+    /// `crossdev.<chost>` alias repo, and a substring grep would mistake that
+    /// for the output overlay and skip creating it.
     pub fn ensure_crossdev_repo(&self) -> Result<()> {
         self.runner.run(
-            "eselect repository list -i | grep -q crossdev \
-             || eselect repository create crossdev",
+            "if grep -qsE '^\\[crossdev\\]$' /etc/portage/repos.conf/*.conf 2>/dev/null; then \
+                 true; \
+             else \
+                 eselect repository create crossdev; \
+             fi",
         )
     }
 
