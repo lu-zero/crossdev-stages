@@ -14,6 +14,91 @@ fn project_root(boards_root: &Utf8Path) -> Utf8PathBuf {
     boards_root.parent().unwrap_or(boards_root).to_path_buf()
 }
 
+// ── Step registry ───────────────────────────────────────────────────────────
+
+/// An image-pipeline step. This is the single source of truth for the
+/// pipeline order, the CLI/hook name, and the on-disk completion marker.
+///
+/// The marker names are historical and intentionally kept unchanged:
+/// `checkout` writes `.sources`, `assemble` writes `.assembled`, etc.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Step {
+    Deps,
+    Checkout,
+    Bootloader,
+    Kernel,
+    Assemble,
+    Pack,
+}
+
+impl Step {
+    /// Default pipeline, also used for `board info` and dry-run output.
+    pub const ALL: &'static [Step] = &[
+        Step::Deps,
+        Step::Checkout,
+        Step::Bootloader,
+        Step::Kernel,
+        Step::Assemble,
+        Step::Pack,
+    ];
+
+    /// Name used by the CLI `--steps` argument and pre/post/override hooks.
+    pub fn name(self) -> &'static str {
+        match self {
+            Step::Deps => "deps",
+            Step::Checkout => "checkout",
+            Step::Bootloader => "bootloader",
+            Step::Kernel => "kernel",
+            Step::Assemble => "assemble",
+            Step::Pack => "pack",
+        }
+    }
+
+    /// Completion marker written into the build directory.
+    pub fn marker(self) -> &'static str {
+        match self {
+            Step::Deps => "deps",
+            Step::Checkout => "sources",
+            Step::Bootloader => "bootloader",
+            Step::Kernel => "kernel",
+            Step::Assemble => "assembled",
+            Step::Pack => "packed",
+        }
+    }
+
+    /// Parse a CLI/board-config step name; unknown names are handled by the
+    /// caller (currently a warning) rather than being rejected here.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Step::ALL.iter().copied().find(|s| s.name() == name)
+    }
+}
+
+/// Path of the marker that records the final image filename.
+pub fn image_marker(dir: &Utf8Path) -> Utf8PathBuf {
+    dir.join(".image")
+}
+
+/// Whether a build directory has completed the packing step. Used by
+/// `status`, `prune`, and `maint gc`; no `.board` marker required.
+pub fn is_packed(dir: &Utf8Path) -> bool {
+    dir.join(format!(".{}", Step::Pack.marker())).exists()
+}
+
+/// Completion state of a build, derived from its step markers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildState {
+    /// Steps whose markers are present, in pipeline order.
+    pub done: Vec<Step>,
+    /// Filename of the packed image, when available.
+    pub image: Option<String>,
+}
+
+impl BuildState {
+    pub fn is_complete(&self) -> bool {
+        self.done.contains(&Step::Pack)
+    }
+}
+
 // ── Build directory ─────────────────────────────────────────────────────────
 
 pub struct Build {
@@ -59,16 +144,39 @@ impl Build {
             .unwrap_or_else(|| Utc::now().format("%Y%m%dT%H%M%SZ").to_string())
     }
 
-    fn marker(&self, step: &str) -> Utf8PathBuf {
-        self.dir.join(format!(".{step}"))
+    fn marker(&self, step: Step) -> Utf8PathBuf {
+        self.dir.join(format!(".{}", step.marker()))
     }
 
-    fn is_done(&self, step: &str) -> bool {
+    pub fn is_done(&self, step: Step) -> bool {
         self.marker(step).exists()
     }
 
-    fn mark_done(&self, step: &str) -> Result<()> {
+    fn mark_done(&self, step: Step) -> Result<()> {
         std::fs::write(self.marker(step), Utc::now().to_rfc3339())?;
+        Ok(())
+    }
+
+    /// Combined completion state, used by `status` and `logs`.
+    pub fn state(&self) -> BuildState {
+        BuildState {
+            done: Step::ALL
+                .iter()
+                .copied()
+                .filter(|s| self.is_done(*s))
+                .collect(),
+            image: self.image_name(),
+        }
+    }
+
+    pub fn image_name(&self) -> Option<String> {
+        std::fs::read_to_string(image_marker(&self.dir))
+            .ok()
+            .map(|s| s.trim().to_string())
+    }
+
+    fn set_image_name(&self, name: &str) -> Result<()> {
+        std::fs::write(image_marker(&self.dir), name)?;
         Ok(())
     }
 }
@@ -81,39 +189,39 @@ impl Build {
 //   post-{step}.sh      →  runs after Rust default
 
 fn run_step(
-    step: &str,
-    marker: &str,
+    step: Step,
     build: &Build,
     runner: &SandboxRunner,
     boards_root: &Utf8Path,
     board: &BoardConfig,
     default_fn: impl FnOnce(&SandboxRunner) -> Result<()>,
 ) -> Result<()> {
-    if build.is_done(marker) {
+    if build.is_done(step) {
         return Ok(());
     }
 
     let board_dir = boards_root.join(&board.name);
+    let step_name = step.name();
 
-    let override_sh = format!("override-{step}.sh");
+    let override_sh = format!("override-{step_name}.sh");
     if board_dir.join(&override_sh).exists() {
         runner.run(&run_board_script(&board.name, &override_sh))?;
-        return build.mark_done(marker);
+        return build.mark_done(step);
     }
 
-    let pre_sh = format!("pre-{step}.sh");
+    let pre_sh = format!("pre-{step_name}.sh");
     if board_dir.join(&pre_sh).exists() {
         runner.run(&run_board_script(&board.name, &pre_sh))?;
     }
 
     default_fn(runner)?;
 
-    let post_sh = format!("post-{step}.sh");
+    let post_sh = format!("post-{step_name}.sh");
     if board_dir.join(&post_sh).exists() {
         runner.run(&run_board_script(&board.name, &post_sh))?;
     }
 
-    build.mark_done(marker)
+    build.mark_done(step)
 }
 
 fn run_board_script(board_name: &str, script: &str) -> String {
@@ -388,7 +496,7 @@ fn default_pack(
         }
     };
 
-    std::fs::write(build.dir.join(".image"), &final_name)?;
+    build.set_image_name(&final_name)?;
     Ok(())
 }
 
@@ -401,6 +509,26 @@ fn board_runner(sandbox: &Sandbox, board: &BoardConfig) -> SandboxRunner {
 
 // ── Pipeline ────────────────────────────────────────────────────────────────
 
+/// Dispatch the default implementation of a known step.
+fn default_for_step(
+    step: Step,
+    runner: &SandboxRunner,
+    build: &Build,
+    sandbox: &Sandbox,
+    target: &Target,
+    board: &BoardConfig,
+    boards_root: &Utf8Path,
+) -> Result<()> {
+    match step {
+        Step::Deps => default_deps(runner, sandbox, target, board, boards_root),
+        Step::Checkout => default_checkout(runner, board),
+        Step::Bootloader => default_bootloader(runner, board),
+        Step::Kernel => default_kernel(runner, board),
+        Step::Assemble => default_assemble(runner, board),
+        Step::Pack => default_pack(runner, board, build, boards_root),
+    }
+}
+
 pub fn build(
     ws: &Workspace,
     sandbox: &Sandbox,
@@ -411,21 +539,14 @@ pub fn build(
 ) -> Result<()> {
     let bld = Build::create(ws, &board.name)?;
 
-    let default_steps = if board.build_steps.is_empty() {
-        vec![
-            "deps",
-            "checkout",
-            "bootloader",
-            "kernel",
-            "assemble",
-            "pack",
-        ]
+    let default_steps: Vec<String> = if board.build_steps.is_empty() {
+        Step::ALL.iter().map(|s| s.name().to_string()).collect()
     } else {
-        board.build_steps.iter().map(String::as_str).collect()
+        board.build_steps.clone()
     };
     let steps_to_run: Vec<&str> = match steps {
         Some(s) => s.iter().map(String::as_str).collect(),
-        None => default_steps,
+        None => default_steps.iter().map(String::as_str).collect(),
     };
 
     let total = steps_to_run.len();
@@ -440,45 +561,12 @@ pub fn build(
             .with_build(&bld.dir, &project_root(boards_root))
             .with_cache(ws.base());
 
-        let result = match *step {
-            "deps" => run_step("deps", "deps", &bld, &runner, boards_root, board, |_r| {
-                default_deps(_r, sandbox, target, board, boards_root)
+        let result = match Step::from_name(step) {
+            Some(s) => run_step(s, &bld, &runner, boards_root, board, |r| {
+                default_for_step(s, r, &bld, sandbox, target, board, boards_root)
             }),
-            "checkout" => run_step(
-                "checkout",
-                "sources",
-                &bld,
-                &runner,
-                boards_root,
-                board,
-                |r| default_checkout(r, board),
-            ),
-            "bootloader" => run_step(
-                "bootloader",
-                "bootloader",
-                &bld,
-                &runner,
-                boards_root,
-                board,
-                |r| default_bootloader(r, board),
-            ),
-            "kernel" => run_step("kernel", "kernel", &bld, &runner, boards_root, board, |r| {
-                default_kernel(r, board)
-            }),
-            "assemble" => run_step(
-                "assemble",
-                "assembled",
-                &bld,
-                &runner,
-                boards_root,
-                board,
-                |r| default_assemble(r, board),
-            ),
-            "pack" => run_step("pack", "packed", &bld, &runner, boards_root, board, |r| {
-                default_pack(r, board, &bld, boards_root)
-            }),
-            other => {
-                tracing::warn!("Unknown step '{}', skipping.", other);
+            None => {
+                tracing::warn!("Unknown step '{}', skipping.", step);
                 Ok(())
             }
         };
@@ -501,5 +589,88 @@ fn format_duration(d: std::time::Duration) -> String {
         format!("{}m {}s", secs / 60, secs % 60)
     } else {
         format!("{}h {}m {}s", secs / 3600, (secs % 3600) / 60, secs % 60)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TempDir(Utf8PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let path = Utf8PathBuf::try_from(std::env::temp_dir().join(format!(
+                "crossdev-stages-build-{tag}-{}",
+                std::process::id()
+            )))
+            .unwrap();
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn build(&self) -> Build {
+            Build {
+                dir: self.0.clone(),
+                board: "test".into(),
+            }
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn step_names_and_markers_are_stable() {
+        // Locks the historical names/markers, including the irregular ones.
+        let expected = [
+            (Step::Deps, "deps", "deps"),
+            (Step::Checkout, "checkout", "sources"),
+            (Step::Bootloader, "bootloader", "bootloader"),
+            (Step::Kernel, "kernel", "kernel"),
+            (Step::Assemble, "assemble", "assembled"),
+            (Step::Pack, "pack", "packed"),
+        ];
+        assert_eq!(Step::ALL.len(), expected.len());
+        for (step, name, marker) in expected {
+            assert_eq!(step.name(), name);
+            assert_eq!(step.marker(), marker);
+            assert_eq!(Step::from_name(name), Some(step));
+        }
+        assert_eq!(Step::from_name("bogus"), None);
+    }
+
+    #[test]
+    fn build_state_tracks_markers_in_pipeline_order() {
+        let dir = TempDir::new("state");
+        let build = dir.build();
+        assert!(build.state().done.is_empty());
+        assert!(!build.state().is_complete());
+
+        build.mark_done(Step::Assemble).unwrap();
+        build.mark_done(Step::Deps).unwrap();
+        assert_eq!(build.state().done, vec![Step::Deps, Step::Assemble]);
+        assert!(!build.state().is_complete());
+
+        build.mark_done(Step::Pack).unwrap();
+        assert!(build.state().is_complete());
+        assert!(is_packed(&build.dir));
+    }
+
+    #[test]
+    fn image_name_roundtrip() {
+        let dir = TempDir::new("image");
+        let build = dir.build();
+        assert_eq!(build.image_name(), None);
+        build.set_image_name("image.img.xz\n").unwrap();
+        assert_eq!(build.image_name(), Some("image.img.xz".into()));
+        assert_eq!(
+            std::fs::read_to_string(image_marker(&build.dir)).unwrap(),
+            "image.img.xz\n"
+        );
     }
 }

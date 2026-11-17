@@ -51,7 +51,7 @@ fn gc(ws: &Workspace, dry_run: bool) -> Result<()> {
 
     // 1. Incomplete builds
     for dir in &ws.list_builds()? {
-        if !dir.join(".packed").exists() {
+        if !image::is_packed(dir) {
             let name = dir.file_name().unwrap_or("?");
             if dry_run {
                 println!("Would remove build: {name}");
@@ -226,14 +226,8 @@ fn logs(ws: &Workspace, board_name: &str, step: Option<&str>) -> Result<()> {
     println!("Build: {}", build.dir);
     println!("Board: {}", build.board);
 
-    for s in &[
-        "deps",
-        "sources",
-        "bootloader",
-        "kernel",
-        "assembled",
-        "packed",
-    ] {
+    for s in image::Step::ALL {
+        let s = s.marker();
         let marker = build.dir.join(format!(".{s}"));
         if marker.exists() {
             let ts = std::fs::read_to_string(&marker).unwrap_or_default();

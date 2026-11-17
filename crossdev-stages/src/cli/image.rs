@@ -25,17 +25,10 @@ pub async fn run(
             }
 
             let default_steps: Vec<String> = if board_cfg.build_steps.is_empty() {
-                [
-                    "deps",
-                    "checkout",
-                    "bootloader",
-                    "kernel",
-                    "assemble",
-                    "pack",
-                ]
-                .iter()
-                .map(|s| s.to_string())
-                .collect()
+                image::Step::ALL
+                    .iter()
+                    .map(|s| s.name().to_string())
+                    .collect()
             } else {
                 board_cfg.build_steps.clone()
             };
@@ -99,7 +92,7 @@ pub async fn run(
             let builds = ws.list_builds()?;
             let mut pruned = 0;
             for dir in builds {
-                if !dir.join(".packed").exists() {
+                if !image::is_packed(&dir) {
                     std::fs::remove_dir_all(&dir)?;
                     pruned += 1;
                 }
@@ -132,7 +125,7 @@ pub async fn run(
                 }
                 let manifest = boards_root.join(&board_name).join("bundle.list");
                 if manifest.is_file() {
-                    copy_listed_artifacts(&build.dir, &bundle_root, &manifest)?;
+                    copy_listed_artifacts(&build, &bundle_root, &manifest)?;
                 } else {
                     copy_build_artifacts(&build.dir, &bundle_root)?;
                 }
@@ -162,9 +155,7 @@ pub async fn run(
                     println!("Bundle at {bundle_root}");
                 }
             } else {
-                let img_name = std::fs::read_to_string(build.dir.join(".image"))
-                    .map(|s| s.trim().to_string())
-                    .ok();
+                let img_name = build.image_name();
                 if let Some(name) = img_name {
                     let src = build.dir.join(&name);
                     if src.is_file() {
@@ -193,7 +184,7 @@ pub async fn run(
 /// it is skipped with a warning.  Any other missing entry is a hard error, so
 /// a dropped boot blob fails the export instead of silently shipping a broken
 /// bundle.
-fn copy_listed_artifacts(src: &Utf8Path, dst: &Utf8Path, manifest: &Utf8Path) -> Result<()> {
+fn copy_listed_artifacts(src: &image::Build, dst: &Utf8Path, manifest: &Utf8Path) -> Result<()> {
     std::fs::create_dir_all(dst)?;
     let text = std::fs::read_to_string(manifest)?;
     for line in text.lines() {
@@ -209,15 +200,15 @@ fn copy_listed_artifacts(src: &Utf8Path, dst: &Utf8Path, manifest: &Utf8Path) ->
             continue;
         }
         let rel = if token == "@image" {
-            match std::fs::read_to_string(src.join(".image")) {
-                Ok(name) => name.trim().to_string(),
-                Err(_) if optional => {
+            match src.image_name() {
+                Some(name) => name,
+                None if optional => {
                     eprintln!(
                         "bundle.list: no packed image (.image marker absent), skipping @image"
                     );
                     continue;
                 }
-                Err(_) => {
+                None => {
                     return Err(std::io::Error::new(
                         std::io::ErrorKind::NotFound,
                         "bundle.list: @image requested but build has no .image marker (not packed)",
@@ -228,7 +219,7 @@ fn copy_listed_artifacts(src: &Utf8Path, dst: &Utf8Path, manifest: &Utf8Path) ->
         } else {
             token.to_string()
         };
-        let s = src.join(&rel);
+        let s = src.dir.join(&rel);
         if !s.is_file() {
             if optional {
                 eprintln!("bundle.list: optional {rel} missing, skipping");
