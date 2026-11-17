@@ -2,5 +2,5 @@
 
 net-misc/openssh
 app-admin/metalog
-net-misc/ntp
+net-misc/chrony
 sys-apps/busybox
