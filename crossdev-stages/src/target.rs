@@ -13,6 +13,40 @@ pub struct Target {
     pub arch: String,
 }
 
+/// Lifecycle of a target stage, derived from its `.stage1` / `.updated` markers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TargetState {
+    Unpacked,
+    Stage1 { updated: Option<String> },
+}
+
+impl TargetState {
+    pub fn label(&self) -> &'static str {
+        match self {
+            TargetState::Unpacked => "unpacked",
+            TargetState::Stage1 { .. } => "stage1",
+        }
+    }
+
+    pub fn updated(&self) -> Option<&str> {
+        match self {
+            TargetState::Stage1 { updated } => updated.as_deref(),
+            TargetState::Unpacked => None,
+        }
+    }
+}
+
+/// Read target state directly from a directory (no `.arch` needed).
+pub fn state_of(dir: &Utf8Path) -> TargetState {
+    if !dir.join(".stage1").exists() {
+        return TargetState::Unpacked;
+    }
+    let updated = std::fs::read_to_string(dir.join(".updated"))
+        .ok()
+        .map(|s| s.trim().to_string());
+    TargetState::Stage1 { updated }
+}
+
 impl Target {
     pub fn open(dir: Utf8PathBuf) -> Result<Self> {
         let arch = std::fs::read_to_string(dir.join(".arch"))
@@ -37,6 +71,24 @@ impl Target {
             dir,
             arch: arch.to_string(),
         })
+    }
+
+    /// Current lifecycle state, from the `.stage1` / `.updated` markers.
+    pub fn state(&self) -> TargetState {
+        state_of(&self.dir)
+    }
+
+    /// Refuse to update a stage that was never bootstrapped. Without this
+    /// guard, `@world` could run on a bare unpacked stage3 and still write
+    /// `.updated`, producing a state that never legitimately existed.
+    fn ensure_stage1(&self) -> Result<()> {
+        if self.state() == TargetState::Unpacked {
+            return Err(Error::CommandFailed {
+                code: 1,
+                reason: "target not bootstrapped; run 'target stage1' first".into(),
+            });
+        }
+        Ok(())
     }
 
     /// Bootstrap the target: cross-emerge baselayout → packages.build → portage.
@@ -74,6 +126,7 @@ impl Target {
 
     /// Update the target stage (`@world` rebuild).
     pub fn update(&self, sandbox: &Sandbox) -> Result<()> {
+        self.ensure_stage1()?;
         let chost = chost_for_arch(&self.arch)?;
         let runner = sandbox.runner().with_target(&self.dir);
         let portage = Portage::new(&runner);
@@ -175,17 +228,9 @@ pub fn list(ws: &Workspace) -> Result<Vec<TargetInfo>> {
         .into_iter()
         .map(|dir| {
             let arch = crate::workspace::read_arch(&dir).unwrap_or_else(|| "unknown".into());
-            let stage1 = dir.join(".stage1").exists();
-            let updated = std::fs::read_to_string(dir.join(".updated"))
-                .ok()
-                .map(|s| s.trim().to_string());
+            let state = state_of(&dir);
             let name = dir.file_name().unwrap_or("").to_string();
-            TargetInfo {
-                name,
-                arch,
-                stage1,
-                updated,
-            }
+            TargetInfo { name, arch, state }
         })
         .collect())
 }
@@ -193,6 +238,76 @@ pub fn list(ws: &Workspace) -> Result<Vec<TargetInfo>> {
 pub struct TargetInfo {
     pub name: String,
     pub arch: String,
-    pub stage1: bool,
-    pub updated: Option<String>,
+    pub state: TargetState,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TempDir(Utf8PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> Self {
+            let path = Utf8PathBuf::try_from(std::env::temp_dir().join(format!(
+                "crossdev-stages-target-{tag}-{}",
+                std::process::id()
+            )))
+            .unwrap();
+            let _ = std::fs::remove_dir_all(&path);
+            std::fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+
+        fn target(&self) -> Target {
+            Target {
+                dir: self.0.clone(),
+                arch: "x86_64".into(),
+            }
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn state_from_markers() {
+        let dir = TempDir::new("state");
+        assert_eq!(state_of(dir.target().dir.as_path()), TargetState::Unpacked);
+        std::fs::write(dir.0.join(".stage1"), "").unwrap();
+        assert_eq!(
+            state_of(dir.target().dir.as_path()),
+            TargetState::Stage1 { updated: None }
+        );
+        std::fs::write(dir.0.join(".updated"), "2026-01-01T00:00:00Z\n").unwrap();
+        assert_eq!(
+            state_of(dir.target().dir.as_path()),
+            TargetState::Stage1 {
+                updated: Some("2026-01-01T00:00:00Z".into())
+            }
+        );
+    }
+
+    #[test]
+    fn update_requires_stage1() {
+        let dir = TempDir::new("guard");
+        let tgt = dir.target();
+        assert!(tgt.ensure_stage1().is_err());
+        std::fs::write(dir.0.join(".stage1"), "").unwrap();
+        assert!(tgt.ensure_stage1().is_ok());
+    }
+
+    #[test]
+    fn state_labels_and_timestamp() {
+        let state = TargetState::Stage1 {
+            updated: Some("ts".into()),
+        };
+        assert_eq!(state.label(), "stage1");
+        assert_eq!(state.updated(), Some("ts"));
+        assert_eq!(TargetState::Unpacked.label(), "unpacked");
+        assert_eq!(TargetState::Unpacked.updated(), None);
+    }
 }

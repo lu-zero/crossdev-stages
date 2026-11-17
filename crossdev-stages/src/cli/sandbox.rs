@@ -12,14 +12,7 @@ pub async fn run(
     match cmd {
         SandboxCmd::List => {
             for s in sandbox::list(ws)? {
-                let state = if s.prepared {
-                    "prepared"
-                } else if s.bare_prepared {
-                    "bare"
-                } else {
-                    "unpacked"
-                };
-                println!("{:<20} arch={} state={}", s.name, s.arch, state);
+                println!("{:<20} arch={} state={}", s.name, s.arch, s.state.label());
             }
         }
         SandboxCmd::Setup { arch, name } => {

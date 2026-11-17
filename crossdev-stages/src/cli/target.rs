@@ -15,11 +15,12 @@ pub async fn run(
     match cmd {
         TargetCmd::List => {
             for t in target::list(ws)? {
-                let s1 = if t.stage1 { "stage1" } else { "unpacked" };
-                let upd = t.updated.as_deref().unwrap_or("-");
                 println!(
                     "{:<20} arch={} state={} updated={}",
-                    t.name, t.arch, s1, upd
+                    t.name,
+                    t.arch,
+                    t.state.label(),
+                    t.state.updated().unwrap_or("-")
                 );
             }
         }
