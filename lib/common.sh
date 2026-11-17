@@ -116,6 +116,21 @@ remove_dir() {
 CURRENT_SYSROOT=""
 CURRENT_CHOST=""
 
+# Resolve the effective build context once, so every consumer sees the same
+# CHOST and sysroot path. With no sysroot name, both globals are cleared.
+# resolve_sysroot lives in lib/sysroot.sh (sourced after this file).
+# Usage: resolve_build_context <arch> [sysroot_name]
+resolve_build_context() {
+    local arch="$1"
+    local sysroot_name="${2:-}"
+
+    CURRENT_CHOST=$(chost_for_arch "$arch")
+    CURRENT_SYSROOT=""
+    if [[ -n "$sysroot_name" ]]; then
+        CURRENT_SYSROOT=$(resolve_sysroot "$sysroot_name") || return 1
+    fi
+}
+
 # Internal: run hakoniwa with common flags + extra bind mounts
 # Usage: _hakoniwa_run <sandbox_dir> <script> [extra hakoniwa args...]
 _hakoniwa_run() {
