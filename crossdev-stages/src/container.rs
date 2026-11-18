@@ -10,6 +10,14 @@ use crate::workspace::Workspace;
 /// `env-update` generates can leave `/sbin` and `/bin` out entirely.
 const SANDBOX_PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bin";
 
+/// `bash --login` re-reads `/etc/profile.env`, whose PATH on baselayout
+/// systems can omit `/bin`, `/sbin` and `/usr/sbin`. Setting PATH on the
+/// hakoniwa command is not enough — the login shell overwrites it — so
+/// re-export it inside the shell that actually runs the command.
+fn login_command(cmd: &str) -> String {
+    format!("export PATH={SANDBOX_PATH}; {cmd}")
+}
+
 /// Abstraction over the hakoniwa container API, modeling the four
 /// `run*` variants from `sandbox-stage.sh`.
 pub struct SandboxRunner {
@@ -64,12 +72,12 @@ impl SandboxRunner {
 
     /// Run a shell command (via `bash --login -c`) inside the sandbox.
     pub fn run(&self, cmd: &str) -> Result<()> {
-        self.run_argv(&["/bin/bash", "--login", "-c", cmd])
+        self.run_argv(&["/bin/bash", "--login", "-c", &login_command(cmd)])
     }
 
     /// Run a shell command and capture its trimmed stdout.
     pub fn run_output(&self, cmd: &str) -> Result<String> {
-        self.run_output_argv(&["/bin/bash", "--login", "-c", cmd])
+        self.run_output_argv(&["/bin/bash", "--login", "-c", &login_command(cmd)])
     }
 
     /// Run an argv command inside the sandbox, with no shell involved.
@@ -586,6 +594,14 @@ fn annotate_cmd(e: crate::error::Error, cmd: &str) -> crate::error::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn login_command_restores_full_path() {
+        let cmd = login_command("echo hi");
+        assert!(cmd.starts_with("export PATH="));
+        assert!(cmd.contains("/usr/sbin:/usr/bin:/sbin:/bin"));
+        assert!(cmd.ends_with("echo hi"));
+    }
 
     #[test]
     fn proc_is_a_mount_point() {
