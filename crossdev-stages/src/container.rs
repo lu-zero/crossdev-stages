@@ -47,6 +47,11 @@ impl SandboxRunner {
         &self.log_dir
     }
 
+    /// Host path of the sandbox root.
+    pub fn sandbox_dir(&self) -> &Utf8Path {
+        &self.sandbox_dir
+    }
+
     /// Bind-mount `target_dir` read-write at `/target` (for cross-emerge).
     pub fn with_target(mut self, target_dir: &Utf8Path) -> Self {
         self.extra_rw

@@ -309,6 +309,43 @@ impl<'a> Portage<'a> {
     }
 }
 
+/// Keep live `sys-devel/gcc` out of the image. The host keyword accept is
+/// untouched, so the cross compiler itself can stay a live ebuild.
+pub fn reject_live_target_gcc(sandbox: &Utf8Path, chost: &str) -> Result<()> {
+    let portage_dir = sandbox.join(format!("usr/{chost}/etc/portage"));
+    let keywords = portage_dir.join("package.accept_keywords/gcc");
+    if keywords.is_file() {
+        std::fs::remove_file(keywords)?;
+    }
+    let gcc_dir = sandbox.join("var/db/repos/gentoo/sys-devel/gcc");
+    let names = match std::fs::read_dir(&gcc_dir) {
+        Ok(entries) => entries
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    let mask_dir = portage_dir.join("package.mask");
+    std::fs::create_dir_all(&mask_dir)?;
+    std::fs::write(mask_dir.join("gcc-live"), gcc_live_atoms(&names))?;
+    Ok(())
+}
+
+/// `package.mask` lines for live gcc ebuilds. Release ebuilds are omitted.
+fn gcc_live_atoms(ebuild_names: &[String]) -> String {
+    let mut lines: Vec<String> = ebuild_names
+        .iter()
+        .filter_map(|name| {
+            let ver = name.strip_prefix("gcc-")?.strip_suffix(".ebuild")?;
+            ver.contains(".9999")
+                .then(|| format!("=sys-devel/gcc-{ver}\n"))
+        })
+        .collect();
+    lines.sort();
+    lines.concat()
+}
+
 /// Sync the portage tree inside a sandbox (emerge-webrsync, signing keys).
 pub fn sync_portage_tree(runner: &SandboxRunner) -> Result<()> {
     let portage = Portage::new(runner);
@@ -353,4 +390,23 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
     runner.run("cargo install --root /usr/local ldconfig")?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::gcc_live_atoms;
+
+    #[test]
+    fn live_gcc_mask_skips_release_ebuilds() {
+        let body = gcc_live_atoms(&[
+            "gcc-16.2.1_p20260926.ebuild".into(),
+            "gcc-16.3.9999.ebuild".into(),
+            "gcc-16.3.9999-r1.ebuild".into(),
+            "Manifest".into(),
+        ]);
+        assert_eq!(
+            body,
+            "=sys-devel/gcc-16.3.9999\n=sys-devel/gcc-16.3.9999-r1\n"
+        );
+    }
 }
