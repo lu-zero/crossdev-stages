@@ -161,6 +161,26 @@ impl<'a> Portage<'a> {
             .run(&format!("ROOT=/target {chost}-emerge -b -k {pkgs}"))
     }
 
+    /// Upgrade the target `@world` and `packages` to the best versions in the
+    /// synced tree, including deep runtime dependencies and changed USE flags.
+    ///
+    /// `SYSROOT` is the target, so a dependency is installed once, into the
+    /// image, rather than again into the cross prefix. Live gcc is masked
+    /// first; the cross compiler stays the host's `cross-*/gcc`.
+    pub fn cross_emerge_update(&self, chost: &str, packages: &[&str]) -> Result<()> {
+        reject_live_target_gcc(self.runner.sandbox_dir(), chost)?;
+        let extra = packages.join(" ");
+        let atoms = if extra.is_empty() {
+            "@world".to_string()
+        } else {
+            format!("@world {extra}")
+        };
+        self.runner.run(&format!(
+            "SYSROOT=/target PORTAGE_CONFIGROOT=/usr/{chost} ROOT=/target \
+             {chost}-emerge -b -k -uDN --with-bdeps=n {atoms}"
+        ))
+    }
+
     /// Cross-emerge with `USE=build` for bootstrapping (baselayout, portage).
     pub fn cross_emerge_build(&self, chost: &str, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");

@@ -179,6 +179,23 @@ impl Build {
         std::fs::write(image_marker(&self.dir), name)?;
         Ok(())
     }
+
+    /// Forget the packed image so assemble and pack run again against the
+    /// rootfs the deps step just updated.
+    fn clear_image_steps(&self) -> Result<()> {
+        for path in [
+            self.marker(Step::Assemble),
+            self.marker(Step::Pack),
+            image_marker(&self.dir),
+        ] {
+            match std::fs::remove_file(&path) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e.into()),
+            }
+        }
+        Ok(())
+    }
 }
 
 // ── Step runner with file-convention hooks ───────────────────────────────────
@@ -196,7 +213,9 @@ fn run_step(
     board: &BoardConfig,
     default_fn: impl FnOnce(&SandboxRunner) -> Result<()>,
 ) -> Result<()> {
-    if build.is_done(step) {
+    // Deps re-resolves every build. The marker records the last success, and
+    // a packed image still has to pick up packages that landed since then.
+    if step != Step::Deps && build.is_done(step) {
         return Ok(());
     }
 
@@ -242,9 +261,12 @@ fn default_deps(
     board: &BoardConfig,
     boards_root: &Utf8Path,
 ) -> Result<()> {
+    let host_runner = board_runner(sandbox, board);
+    // Prepare freezes the tree. Sync here so the image resolves current ebuilds.
+    crate::portage::sync_portage_tree(&host_runner)?;
+
     let sandbox_pkgs = boards_root.join(&board.name).join("sandbox-packages.txt");
     if sandbox_pkgs.exists() {
-        let host_runner = board_runner(sandbox, board);
         let portage = Portage::new(&host_runner);
         let content = std::fs::read_to_string(&sandbox_pkgs)?;
         let lines: Vec<&str> = content
@@ -297,19 +319,19 @@ fn default_deps(
     }
 
     let target_pkgs = boards_root.join(&board.name).join("target-packages.txt");
-    if target_pkgs.exists() {
-        let content = std::fs::read_to_string(&target_pkgs)?;
-        let pkgs: Vec<&str> = content
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.is_empty() && !l.starts_with('#'))
-            .collect();
-        if !pkgs.is_empty() {
-            let target_runner = board_runner(sandbox, board).with_target(&target.dir);
-            let portage = Portage::new(&target_runner);
-            portage.cross_emerge(&board.chost(), &pkgs)?;
-        }
-    }
+    let content = if target_pkgs.exists() {
+        std::fs::read_to_string(&target_pkgs)?
+    } else {
+        String::new()
+    };
+    let pkgs: Vec<&str> = content
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
+    let target_runner = host_runner.with_target(&target.dir);
+    let portage = Portage::new(&target_runner);
+    portage.cross_emerge_update(&board.chost(), &pkgs)?;
 
     Ok(())
 }
@@ -573,7 +595,12 @@ pub fn build(
 
         let elapsed = step_start.elapsed();
         match result {
-            Ok(()) => println!("    {} done ({})", step, format_duration(elapsed)),
+            Ok(()) => {
+                if *step == Step::Deps.name() {
+                    bld.clear_image_steps()?;
+                }
+                println!("    {} done ({})", step, format_duration(elapsed));
+            }
             Err(e) => {
                 println!("    {} failed ({})", step, format_duration(elapsed));
                 return Err(e);
@@ -664,6 +691,13 @@ mod tests {
         build.mark_done(Step::Pack).unwrap();
         assert!(build.state().is_complete());
         assert!(is_packed(&build.dir));
+
+        build.set_image_name("image.img.xz").unwrap();
+        build.clear_image_steps().unwrap();
+        assert_eq!(build.state().done, vec![Step::Deps]);
+        assert!(!is_packed(&build.dir));
+        assert_eq!(build.image_name(), None);
+        assert!(build.marker(Step::Deps).exists());
     }
 
     #[test]
