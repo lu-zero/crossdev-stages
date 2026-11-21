@@ -261,6 +261,7 @@ impl Sandbox {
                     // Ensure any board-required ex-pkgs are present even if we skip a full re-run.
                     let chost = crate::stage::chost_for_arch(target_arch)?;
                     self.ensure_grub_ex_pkg(board, &chost, &runner)?;
+                    crate::portage::reject_live_target_gcc(&self.dir, &chost)?;
                     return Ok(());
                 }
                 let want = ver_prefix.unwrap_or(&gcc_slot);
@@ -283,10 +284,11 @@ impl Sandbox {
         tracing::info!("Initialising crossdev for {chost}…");
         portage.crossdev_init(&chost)?;
 
-        // Accept testing/prerelease keywords for this gcc slot and rust-std.
+        // Accept the host gcc slot, including a live ebuild, and cross rust-std.
+        // The cross prefix does not get that keyword accept: it would select
+        // the live ebuild as the image's compiler.
         portage.accept_keywords("rust-std", &format!("cross-{chost}/rust-std **"))?;
-        let gcc_keyword_line = format!("sys-devel/gcc:{gcc_slot} **");
-        portage.accept_keywords("gcc", &gcc_keyword_line)?;
+        portage.accept_keywords("gcc", &format!("sys-devel/gcc:{gcc_slot} **"))?;
 
         portage.emerge_host_gcc(&gcc_slot, ver_prefix)?;
 
@@ -325,14 +327,8 @@ impl Sandbox {
         let crossdev_root = self.dir.join(format!("usr/{chost}"));
         let crossdev_portage = crossdev_root.join("etc/portage");
         portage.crossdev_set_profile(&chost, profile)?;
-        self.write_crossdev_portage(
-            &crossdev_portage,
-            target_arch,
-            &chost,
-            &cflags,
-            board,
-            &gcc_keyword_line,
-        )?;
+        self.write_crossdev_portage(&crossdev_portage, target_arch, &chost, &cflags, board)?;
+        crate::portage::reject_live_target_gcc(&self.dir, &chost)?;
 
         // Fix the split-usr layout created by crossdev.
         portage.crossdev_merge_usr(&chost)?;
@@ -424,7 +420,6 @@ impl Sandbox {
         chost: &str,
         cflags: &str,
         board: &BoardConfig,
-        gcc_keyword_line: &str,
     ) -> Result<()> {
         // make.conf for the crossdev prefix
         MakeConf {
@@ -484,12 +479,6 @@ impl Sandbox {
                 format!("sys-boot/grub {}\n", flags.join(" ")),
             )?;
         }
-
-        // package.accept_keywords
-        std::fs::write(
-            portage_dir.join("package.accept_keywords/gcc"),
-            format!("{gcc_keyword_line}\n"),
-        )?;
 
         // Per-package CFLAGS workarounds from board.conf
         for (pkg, flags) in board
