@@ -18,6 +18,7 @@ pub async fn run(
             target,
             compression,
             steps,
+            sync,
         } => {
             let mut board_cfg = board::load(boards_root, &board_name)?;
             if let Some(c) = compression {
@@ -57,6 +58,7 @@ pub async fn run(
                         .collect::<Vec<_>>()
                         .join(" ")
                 );
+                println!("Sync:       {}", if sync { "yes" } else { "no" });
                 return Ok(());
             }
 
@@ -86,7 +88,7 @@ pub async fn run(
             } else {
                 Some(steps.as_slice())
             };
-            image::build(ws, &sb, &tgt, &board_cfg, boards_root, steps_opt)?;
+            image::build(ws, &sb, &tgt, &board_cfg, boards_root, steps_opt, sync)?;
         }
         ImageCmd::Prune => {
             let builds = ws.list_builds()?;

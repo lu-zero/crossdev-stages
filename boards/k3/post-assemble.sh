@@ -12,7 +12,7 @@ done
 
 # Move DTBs into spacemit/${kver}/ to match the path layout the K3 u-boot
 # env's `loaddtb` expects (`${dtb_dir}/${dtb_name}`).
-kver=$(ls /build/gen/root/lib/modules/ 2>/dev/null | head -1)
+kver=$(ls -1t /build/gen/root/lib/modules/ 2>/dev/null | head -1)
 mkdir -p "/build/gen/boot/spacemit/${kver}"
 mv /build/gen/boot/*.dtb "/build/gen/boot/spacemit/${kver}/" 2>/dev/null || true
 

@@ -180,21 +180,45 @@ impl Build {
         Ok(())
     }
 
-    /// Forget the packed image so assemble and pack run again against the
-    /// rootfs the deps step just updated.
-    fn clear_image_steps(&self) -> Result<()> {
-        for path in [
-            self.marker(Step::Assemble),
-            self.marker(Step::Pack),
-            image_marker(&self.dir),
-        ] {
-            match std::fs::remove_file(&path) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e.into()),
-            }
+    fn image_stale_path(&self) -> Utf8PathBuf {
+        self.dir.join(".image-stale")
+    }
+
+    /// The target's installed set changed. Assemble and pack run again.
+    /// `.packed` stays, so prune keeps the kernel and the previous image.
+    fn mark_image_stale(&self) -> Result<()> {
+        std::fs::write(self.image_stale_path(), "")?;
+        Ok(())
+    }
+
+    fn image_is_stale(&self) -> bool {
+        self.image_stale_path().exists()
+    }
+
+    /// Assemble has rebuilt `gen/` since [`mark_image_stale`](Self::mark_image_stale).
+    fn note_assemble_fresh(&self) -> Result<()> {
+        if self.image_is_stale() {
+            std::fs::write(self.image_stale_path(), "assembled\n")?;
         }
         Ok(())
+    }
+
+    fn assemble_is_fresh(&self) -> bool {
+        if !self.image_is_stale() {
+            return true;
+        }
+        std::fs::read_to_string(self.image_stale_path())
+            .ok()
+            .as_deref()
+            == Some("assembled\n")
+    }
+
+    fn clear_image_stale(&self) -> Result<()> {
+        match std::fs::remove_file(self.image_stale_path()) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.into()),
+        }
     }
 }
 
@@ -205,6 +229,51 @@ impl Build {
 //   pre-{step}.sh       →  runs before Rust default
 //   post-{step}.sh      →  runs after Rust default
 
+/// Deps always runs. Assemble and pack run again while the target's
+/// package set is newer than the packed image. Pack waits until assemble
+/// has refreshed `gen/` since that change. Other steps stay skipped.
+fn step_is_current(step: Step, done: bool, image_stale: bool, assemble_fresh: bool) -> bool {
+    if step == Step::Deps {
+        return false;
+    }
+    if image_stale && step == Step::Pack && !assemble_fresh {
+        return true;
+    }
+    done && !(image_stale && matches!(step, Step::Assemble | Step::Pack))
+}
+
+/// Installed package identity: VDB directory name plus its mtime.
+fn vdb_fingerprint(target: &Utf8Path) -> Result<Vec<(String, std::time::SystemTime)>> {
+    let vdb = target.join("var/db/pkg");
+    let cats = match std::fs::read_dir(vdb.as_str()) {
+        Ok(cats) => cats,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.into()),
+    };
+    let mut entries = Vec::new();
+    for cat in cats {
+        let cat = cat?;
+        if !cat.file_type()?.is_dir() {
+            continue;
+        }
+        let cat_name = cat.file_name();
+        for pkg in std::fs::read_dir(cat.path())? {
+            let pkg = pkg?;
+            if !pkg.file_type()?.is_dir() {
+                continue;
+            }
+            let name = format!(
+                "{}/{}",
+                cat_name.to_string_lossy(),
+                pkg.file_name().to_string_lossy()
+            );
+            entries.push((name, pkg.metadata()?.modified()?));
+        }
+    }
+    entries.sort();
+    Ok(entries)
+}
+
 fn run_step(
     step: Step,
     build: &Build,
@@ -213,9 +282,12 @@ fn run_step(
     board: &BoardConfig,
     default_fn: impl FnOnce(&SandboxRunner) -> Result<()>,
 ) -> Result<()> {
-    // Deps re-resolves every build. The marker records the last success, and
-    // a packed image still has to pick up packages that landed since then.
-    if step != Step::Deps && build.is_done(step) {
+    if step_is_current(
+        step,
+        build.is_done(step),
+        build.image_is_stale(),
+        build.assemble_is_fresh(),
+    ) {
         return Ok(());
     }
 
@@ -260,10 +332,12 @@ fn default_deps(
     target: &Target,
     board: &BoardConfig,
     boards_root: &Utf8Path,
+    sync_tree: bool,
 ) -> Result<()> {
     let host_runner = board_runner(sandbox, board);
-    // Prepare freezes the tree. Sync here so the image resolves current ebuilds.
-    crate::portage::sync_portage_tree(&host_runner)?;
+    if sync_tree {
+        crate::portage::sync_portage_tree(&host_runner)?;
+    }
 
     let sandbox_pkgs = boards_root.join(&board.name).join("sandbox-packages.txt");
     if sandbox_pkgs.exists() {
@@ -382,7 +456,11 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
                 msg: "KERNEL_ARCH required for assemble".into(),
             })?;
 
-    runner.run("mkdir -p /build/gen/root /build/gen/boot")?;
+    // Replace the previous staging trees. Copying onto them keeps files the
+    // target no longer has, and a second assemble appends inittab and sshd_config.
+    runner.run(
+        "rm -rf /build/gen/root /build/gen/boot && mkdir -p /build/gen/root /build/gen/boot",
+    )?;
     runner.run("cp -a /target/. /build/gen/root/")?;
     // unpack_tarball excludes ./dev to avoid permission errors in rootless containers.
     // Recreate the empty mount-point directories so the kernel can mount devtmpfs,
@@ -448,7 +526,7 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
 
     if let Some(dracut_modules) = &board.dracut_modules {
         runner.run(&format!(
-            "kver=$(ls /build/gen/root/lib/modules/ | head -1) && \
+            "kver=$(ls -1t /build/gen/root/lib/modules/ | head -1) && \
              [ -n \"$kver\" ] && \
              dracutbasedir=/usr/lib/dracut \
              DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
@@ -542,7 +620,8 @@ fn default_for_step(
     boards_root: &Utf8Path,
 ) -> Result<()> {
     match step {
-        Step::Deps => default_deps(runner, sandbox, target, board, boards_root),
+        // `build` calls `default_deps` itself so it can honour `--sync`.
+        Step::Deps => default_deps(runner, sandbox, target, board, boards_root, false),
         Step::Checkout => default_checkout(runner, board),
         Step::Bootloader => default_bootloader(runner, board),
         Step::Kernel => default_kernel(runner, board),
@@ -558,6 +637,7 @@ pub fn build(
     board: &BoardConfig,
     boards_root: &Utf8Path,
     steps: Option<&[String]>,
+    sync_tree: bool,
 ) -> Result<()> {
     let bld = Build::create(ws, &board.name)?;
 
@@ -583,9 +663,27 @@ pub fn build(
             .with_build(&bld.dir, &project_root(boards_root))
             .with_cache(ws.base());
 
-        let result = match Step::from_name(step) {
+        let parsed = Step::from_name(step);
+        let skipped = parsed.is_some_and(|s| {
+            step_is_current(
+                s,
+                bld.is_done(s),
+                bld.image_is_stale(),
+                bld.assemble_is_fresh(),
+            )
+        });
+        let before = if *step == Step::Deps.name() {
+            Some(vdb_fingerprint(&target.dir)?)
+        } else {
+            None
+        };
+        let result = match parsed {
             Some(s) => run_step(s, &bld, &runner, boards_root, board, |r| {
-                default_for_step(s, r, &bld, sandbox, target, board, boards_root)
+                if s == Step::Deps {
+                    default_deps(r, sandbox, target, board, boards_root, sync_tree)
+                } else {
+                    default_for_step(s, r, &bld, sandbox, target, board, boards_root)
+                }
             }),
             None => {
                 tracing::warn!("Unknown step '{}', skipping.", step);
@@ -596,8 +694,16 @@ pub fn build(
         let elapsed = step_start.elapsed();
         match result {
             Ok(()) => {
-                if *step == Step::Deps.name() {
-                    bld.clear_image_steps()?;
+                if let Some(before) = before {
+                    if vdb_fingerprint(&target.dir)? != before {
+                        bld.mark_image_stale()?;
+                    }
+                }
+                if *step == Step::Assemble.name() && !skipped {
+                    bld.note_assemble_fresh()?;
+                }
+                if *step == Step::Pack.name() && !skipped {
+                    bld.clear_image_stale()?;
                 }
                 println!("    {} done ({})", step, format_duration(elapsed));
             }
@@ -693,11 +799,47 @@ mod tests {
         assert!(is_packed(&build.dir));
 
         build.set_image_name("image.img.xz").unwrap();
-        build.clear_image_steps().unwrap();
-        assert_eq!(build.state().done, vec![Step::Deps]);
-        assert!(!is_packed(&build.dir));
-        assert_eq!(build.image_name(), None);
+        build.mark_image_stale().unwrap();
+        assert!(build.image_is_stale());
+        assert!(!build.assemble_is_fresh());
+        assert!(is_packed(&build.dir));
+        assert_eq!(build.image_name(), Some("image.img.xz".into()));
         assert!(build.marker(Step::Deps).exists());
+
+        build.note_assemble_fresh().unwrap();
+        assert!(build.assemble_is_fresh());
+        build.clear_image_stale().unwrap();
+        assert!(!build.image_is_stale());
+        assert!(is_packed(&build.dir));
+    }
+
+    #[test]
+    fn step_skip_reruns_assemble_without_dropping_pack() {
+        assert!(!step_is_current(Step::Deps, true, false, true));
+        assert!(step_is_current(Step::Assemble, true, false, true));
+        assert!(!step_is_current(Step::Assemble, true, true, true));
+        assert!(!step_is_current(Step::Pack, true, true, true));
+        assert!(step_is_current(Step::Pack, true, true, false));
+        assert!(step_is_current(Step::Kernel, true, true, false));
+        assert!(!step_is_current(Step::Assemble, false, false, true));
+    }
+
+    #[test]
+    fn vdb_fingerprint_tracks_package_dirs() {
+        let dir = TempDir::new("vdb");
+        let target = &dir.0;
+        assert!(vdb_fingerprint(target).unwrap().is_empty());
+
+        let pkg = target.join("var/db/pkg/sys-apps/busybox-1.36");
+        std::fs::create_dir_all(&pkg).unwrap();
+        std::fs::write(target.join("var/db/pkg/sys-apps/Manifest"), "").unwrap();
+        let once = vdb_fingerprint(target).unwrap();
+        assert_eq!(once.len(), 1);
+        assert_eq!(once[0].0, "sys-apps/busybox-1.36");
+        assert_eq!(vdb_fingerprint(target).unwrap(), once);
+
+        std::fs::create_dir_all(target.join("var/db/pkg/net-misc/chrony-4.9")).unwrap();
+        assert_ne!(vdb_fingerprint(target).unwrap(), once);
     }
 
     #[test]
