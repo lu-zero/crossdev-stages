@@ -120,7 +120,7 @@ and per-package CFLAGS workarounds.
 Steps run in order (configurable via `BUILD_STEPS` in `board.conf`):
 
 ```
-deps       Sync the tree, install extra sandbox packages, and `emerge -uDN` `@world` plus target-packages.txt. The target is the sysroot. Live gcc ebuilds are masked.
+deps       Install extra sandbox packages, and `emerge -uDN` `@world` plus target-packages.txt. The target is the sysroot. Live gcc ebuilds are masked. `--sync` refreshes the tree first.
 checkout   Clone/update kernel, opensbi, u-boot source via git source cache.
 bootloader Build opensbi and/or u-boot inside the sandbox container.
 kernel     Build Linux kernel + modules; install modules into target stage.
@@ -128,9 +128,10 @@ assemble   Build dracut initramfs; layout /build/gen/root from target stage.
 pack       Run genimage to produce the final disk image; compress.
 ```
 
-Each step other than `deps` skips when its marker is present. A successful
-`deps` step clears the assemble and pack markers so the rootfs image is
-rebuilt. For each step,
+Each step other than `deps` skips when its marker is present. When `deps`
+changes the target's installed packages, assemble and pack run again, and
+the previous image stays until pack replaces it. Assemble replaces
+`/build/gen` instead of copying onto it. For each step,
 `boards/<name>/` is checked for hook scripts:
 
 ```

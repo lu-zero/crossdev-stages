@@ -1,6 +1,6 @@
 set -e
 
-kver=$(ls /build/gen/root/lib/modules/ | head -1)
+kver=$(ls -1t /build/gen/root/lib/modules/ | head -1)
 [ -z "$kver" ] && { echo 'Error: no kernel modules found'; exit 1; }
 
 # Derive chost from CROSS_COMPILE (strip trailing dash).

@@ -218,6 +218,9 @@ pub enum ImageCmd {
         compression: Option<String>,
         /// Specific steps to run (default: all steps from board.conf).
         steps: Vec<String>,
+        /// Refresh the sandbox portage tree before resolving packages.
+        #[arg(long)]
+        sync: bool,
     },
     /// Remove incomplete builds.
     Prune,
