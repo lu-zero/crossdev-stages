@@ -106,7 +106,7 @@ impl Target {
 
         let runner = sandbox.runner().with_target(&self.dir);
         tracing::info!("Logs at: {}", runner.log_dir());
-        let portage = Portage::new(&runner);
+        let portage = Portage::new(&runner, sandbox.backend());
 
         tracing::info!("Cross-emerging baselayout…");
         portage.cross_emerge_build(&chost, &["sys-apps/baselayout"])?;
@@ -129,7 +129,7 @@ impl Target {
         self.ensure_stage1()?;
         let chost = chost_for_arch(&self.arch)?;
         let runner = sandbox.runner().with_target(&self.dir);
-        let portage = Portage::new(&runner);
+        let portage = Portage::new(&runner, sandbox.backend());
 
         // Update the cross-toolchain in the crossdev prefix first (no ROOT=/target).
         tracing::info!("Updating crossdev prefix: gcc, binutils-libs, @system…");
@@ -150,7 +150,7 @@ impl Target {
     pub fn install(&self, sandbox: &Sandbox, packages: &[&str]) -> Result<()> {
         let chost = chost_for_arch(&self.arch)?;
         let runner = sandbox.runner().with_target(&self.dir);
-        let portage = Portage::new(&runner);
+        let portage = Portage::new(&runner, sandbox.backend());
         portage.cross_emerge(&chost, packages)
     }
 

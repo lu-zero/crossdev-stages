@@ -63,6 +63,9 @@ crossdev-stages sandbox setup
 crossdev-stages sandbox prepare
 crossdev-stages sandbox crossdev --arch <ARCH> --board <BOARD>
 
+# Or use em instead of crossdev and emerge (prepare still uses emerge)
+crossdev-stages sandbox setup --em /path/to/em
+
 # Create target stage from a stage3 seed
 crossdev-stages target setup --arch <ARCH>
 crossdev-stages target stage1

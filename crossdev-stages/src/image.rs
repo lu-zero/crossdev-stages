@@ -346,7 +346,7 @@ fn default_deps(
 
     let sandbox_pkgs = boards_root.join(&board.name).join("sandbox-packages.txt");
     if sandbox_pkgs.exists() {
-        let portage = Portage::new(&host_runner);
+        let portage = Portage::new(&host_runner, sandbox.backend());
         let content = std::fs::read_to_string(&sandbox_pkgs)?;
         let lines: Vec<&str> = content
             .lines()
@@ -409,7 +409,7 @@ fn default_deps(
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
         .collect();
     let target_runner = host_runner.with_target(&target.dir);
-    let portage = Portage::new(&target_runner);
+    let portage = Portage::new(&target_runner, sandbox.backend());
     portage.cross_emerge_update(&board.chost(), &pkgs)?;
 
     Ok(())

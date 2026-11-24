@@ -109,6 +109,10 @@ pub enum SandboxCmd {
         /// Sandbox name (default: arch-<timestamp>).
         #[arg(long)]
         name: Option<String>,
+        /// Install this em binary; crossdev, target and image steps then use em instead of crossdev
+        /// and emerge (prepare keeps emerge).
+        #[arg(long, value_name = "PATH")]
+        em: Option<Utf8PathBuf>,
     },
     /// List all sandboxes.
     List,

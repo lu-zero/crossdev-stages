@@ -15,12 +15,15 @@ pub async fn run(
                 println!("{:<20} arch={} state={}", s.name, s.arch, s.state.label());
             }
         }
-        SandboxCmd::Setup { arch, name } => {
+        SandboxCmd::Setup { arch, name, em } => {
             let source_stage = stage::fetch(&ws.stages_dir(), &arch, mirror).await?;
             let name = name.unwrap_or_else(|| {
                 format!("{arch}-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"))
             });
-            sandbox::Sandbox::create(ws, &name, &arch, &source_stage)?;
+            let sb = sandbox::Sandbox::create(ws, &name, &arch, &source_stage)?;
+            if let Some(em) = em {
+                sb.install_em(&em)?;
+            }
             println!("Sandbox '{name}' created.");
         }
         SandboxCmd::Prepare { name, bare } => {
