@@ -124,7 +124,7 @@ deps       Install extra sandbox packages, and `emerge -uDN` `@world` plus targe
 checkout   Clone/update kernel, opensbi, u-boot source via git source cache.
 bootloader Build opensbi and/or u-boot inside the sandbox container.
 kernel     Build Linux kernel + modules; install modules into target stage.
-assemble   Build dracut initramfs; layout /build/gen/root from target stage.
+assemble   Lay out /build/gen/root from target stage; build dracut initramfs after post-assemble.sh.
 pack       Run genimage to produce the final disk image; compress.
 ```
 
@@ -139,6 +139,10 @@ override-{step}.sh   Replaces the Rust default entirely.
 pre-{step}.sh        Runs before the Rust default.
 post-{step}.sh       Runs after the Rust default.
 ```
+
+Assemble builds the initramfs after `post-assemble.sh`, so files and
+`dracut.conf.d` snippets that hook adds to `/build/gen/root` reach it. A hook
+that consumes `initramfs.img` belongs in `pre-pack.sh`.
 
 Hook scripts run inside the sandbox container with `/scripts` bind-mounted
 to the project directory (read-only) so they can source `board.conf` and
