@@ -228,6 +228,7 @@ impl Build {
 //   override-{step}.sh  →  replaces Rust default entirely
 //   pre-{step}.sh       →  runs before Rust default
 //   post-{step}.sh      →  runs after Rust default
+// Assemble builds the initramfs after post-assemble.sh, so files that hook adds reach it.
 
 /// Deps always runs. Assemble and pack run again while the target's
 /// package set is newer than the packed image. Pack waits until assemble
@@ -310,6 +311,10 @@ fn run_step(
     let post_sh = format!("post-{step_name}.sh");
     if board_dir.join(&post_sh).exists() {
         runner.run(&run_board_script(&board.name, &post_sh))?;
+    }
+
+    if step == Step::Assemble {
+        build_initramfs(runner, board)?;
     }
 
     build.mark_done(step)
@@ -524,21 +529,25 @@ fn default_assemble(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
          >> /build/gen/root/etc/ssh/sshd_config",
     )?;
 
-    if let Some(dracut_modules) = &board.dracut_modules {
-        runner.run(&format!(
-            "kver=$(ls -1t /build/gen/root/lib/modules/ | head -1) && \
-             [ -n \"$kver\" ] && \
-             dracutbasedir=/usr/lib/dracut \
-             DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
-               dracut -f --no-early-microcode --no-kernel \
-                 -m '{dracut_modules}' --gzip \
-                 --sysroot /build/gen/root \
-                 --tmpdir /tmp \
-                 /build/gen/boot/initramfs.img \"$kver\""
-        ))?;
-    }
-
     runner.run("/usr/local/bin/ldconfig -v -r /build/gen/root")
+}
+
+/// Build the initramfs from `/build/gen/root`, after `post-assemble.sh` has added its files.
+fn build_initramfs(runner: &SandboxRunner, board: &BoardConfig) -> Result<()> {
+    let Some(dracut_modules) = &board.dracut_modules else {
+        return Ok(());
+    };
+    runner.run(&format!(
+        "kver=$(ls -1t /build/gen/root/lib/modules/ | head -1) && \
+         [ -n \"$kver\" ] && \
+         dracutbasedir=/usr/lib/dracut \
+         DRACUT_INSTALL=/usr/lib/dracut/dracut-install \
+           dracut -f --no-early-microcode --no-kernel \
+             -m '{dracut_modules}' --gzip \
+             --sysroot /build/gen/root \
+             --tmpdir /tmp \
+             /build/gen/boot/initramfs.img \"$kver\""
+    ))
 }
 
 fn default_pack(

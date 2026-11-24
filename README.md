@@ -133,6 +133,7 @@ Steps: `deps`, `checkout`, `bootloader`, `kernel`, `assemble`, `pack`
 2. pre-{step}.sh exists?       -> run it
 3. Rust module default
 4. post-{step}.sh exists?      -> run it
+5. assemble only: build the initramfs
 ```
 
 ### Bootloader pipeline
