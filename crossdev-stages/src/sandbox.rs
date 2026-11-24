@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 
 use camino::{Utf8Path, Utf8PathBuf};
@@ -7,7 +7,7 @@ use portage_atom::Version as PortageVersion;
 use crate::board::BoardConfig;
 use crate::container::{destroy_dir, recover_mounts_for_removal, unpack_tarball, SandboxRunner};
 use crate::error::{Error, Result};
-use crate::portage::{install_host_deps, sync_portage_tree, MakeConf, Portage};
+use crate::portage::{install_host_deps, sync_portage_tree, Backend, MakeConf, Portage};
 use crate::stage::gentoo_profile;
 use crate::workspace::Workspace;
 
@@ -58,6 +58,16 @@ struct GccSpec {
     prefix: Option<String>,
 }
 
+impl GccSpec {
+    /// The `sys-devel/gcc` atom the pin selects.
+    fn atom(&self) -> String {
+        match &self.prefix {
+            Some(prefix) => format!("=sys-devel/gcc-{prefix}*"),
+            None => format!("sys-devel/gcc:{}", self.slot),
+        }
+    }
+}
+
 /// Whether a `.crossdev-<arch>` marker still satisfies the pin.
 ///
 /// The prefix branch first compares parsed version numbers, then falls back
@@ -94,6 +104,56 @@ impl Sandbox {
     /// Current lifecycle state, from the `.prepared` / `.prepared-bare` markers.
     pub fn state(&self) -> SandboxState {
         state_of(&self.dir)
+    }
+
+    /// The package backend, from the `.em` marker [`install_em`](Self::install_em) writes.
+    pub fn backend(&self) -> Backend {
+        if self.dir.join(".em").exists() {
+            Backend::Em
+        } else {
+            Backend::Portage
+        }
+    }
+
+    /// Copy `em` to `/usr/local/bin/em` and switch the sandbox to [`Backend::Em`].
+    ///
+    /// Refused once a crossdev toolchain exists, so one sandbox never mixes backends.
+    pub fn install_em(&self, em: &Utf8Path) -> Result<()> {
+        if !em.is_file() {
+            return Err(Error::CommandFailed {
+                code: 1,
+                reason: format!("{em}: no such file"),
+            });
+        }
+        if self.backend() == Backend::Portage && self.has_any_crossdev()? {
+            return Err(Error::CommandFailed {
+                code: 1,
+                reason: format!(
+                    "{} already has a crossdev toolchain; use a fresh sandbox for em",
+                    self.dir
+                ),
+            });
+        }
+        let bin = self.dir.join("usr/local/bin");
+        fs::create_dir_all(&bin)?;
+        let staged = bin.join(".em.new");
+        fs::copy(em, &staged)?;
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))?;
+        fs::rename(&staged, bin.join("em"))?;
+        fs::write(self.dir.join(".em"), "")?;
+        tracing::info!("Installed {em} as em in the sandbox.");
+        Ok(())
+    }
+
+    fn has_any_crossdev(&self) -> Result<bool> {
+        for entry in fs::read_dir(&self.dir)? {
+            let name = entry?.file_name();
+            if name.to_string_lossy().starts_with(".crossdev-") {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Create a new sandbox by unpacking a stage3 source tarball (catalyst: `source_path`).
@@ -169,7 +229,7 @@ impl Sandbox {
     /// Query installed GCC versions fresh via `qlist` and rewrite the `.gcc_versions` cache.
     fn refresh_gcc_versions(&self) -> Result<HashMap<String, Vec<String>>> {
         let runner = self.runner();
-        let output = Portage::new(&runner).installed_versions("sys-devel/gcc")?;
+        let output = Portage::new(&runner, Backend::Portage).installed_versions("sys-devel/gcc")?;
         let mut versions: HashMap<String, Vec<String>> = HashMap::new();
         for line in output.lines() {
             let line = line.trim();
@@ -273,10 +333,13 @@ impl Sandbox {
         }
 
         let chost = crate::stage::chost_for_arch(target_arch)?;
+        if self.backend() == Backend::Em {
+            return self.setup_em_toolchain(target_arch, &chost, board, &spec, &marker);
+        }
         let profile = gentoo_profile(target_arch)?;
         let cflags = board.effective_cflags();
 
-        let portage = Portage::new(&runner);
+        let portage = Portage::new(&runner, Backend::Portage);
 
         tracing::info!("Creating crossdev overlay…");
         portage.ensure_crossdev_repo()?;
@@ -349,6 +412,64 @@ impl Sandbox {
         Ok(())
     }
 
+    /// [`setup_crossdev`](Self::setup_crossdev) for [`Backend::Em`]: one `em crossdev --setup`
+    /// from a spec of the board, then the per-package env files the spec has no field for.
+    fn setup_em_toolchain(
+        &self,
+        arch: &str,
+        chost: &str,
+        board: &BoardConfig,
+        gcc: &GccSpec,
+        marker: &Utf8Path,
+    ) -> Result<()> {
+        let cflags = board.effective_cflags();
+        let make_conf = MakeConf {
+            arch,
+            chost: Some(chost),
+            cflags: Some(&cflags),
+            mirror: None,
+            binhost: None,
+        }
+        .vars()?;
+        let package_use: Vec<String> = prefix_package_use(board)
+            .into_iter()
+            .map(|(_, line)| line)
+            .collect();
+        let spec = crate::em::spec_toml(
+            chost,
+            gentoo_profile(arch)?,
+            &cflags,
+            &gcc.atom(),
+            &package_use,
+            &make_conf,
+        )?;
+        let spec_path = format!("var/lib/crossdev-stages/{chost}.toml");
+        let host_spec = self.dir.join(&spec_path);
+        if let Some(parent) = host_spec.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&host_spec, spec)?;
+
+        let runner = self.runner();
+        tracing::info!("Running em crossdev for {chost} (this takes a while)…");
+        runner.run(&format!("em crossdev --target /{spec_path} --setup"))?;
+
+        let gcc_ver = crate::em::cross_gcc_version(&self.dir, chost)?;
+        if !marker_matches(&gcc_ver, gcc) {
+            return Err(Error::CommandFailed {
+                code: 1,
+                reason: format!("em built gcc-{gcc_ver}, wanted {}", gcc.atom()),
+            });
+        }
+        write_package_env(&self.dir.join(format!("usr/{chost}/etc/portage")), board)?;
+        crate::portage::reject_live_target_gcc(&self.dir, chost)?;
+        self.ensure_grub_ex_pkg(board, chost, &runner)?;
+
+        fs::write(marker, &gcc_ver)?;
+        tracing::info!("em toolchain for {chost} complete (gcc-{gcc_ver}).");
+        Ok(())
+    }
+
     /// Return a `SandboxRunner` for running commands inside this sandbox.
     /// Logs are bind-mounted from `~/.cache/crossdev-stages/logs/<name>/`
     /// so they are accessible outside the sandbox at a known flat path.
@@ -388,7 +509,7 @@ impl Sandbox {
         let Some(ref platforms) = board.grub_platforms else {
             return Ok(());
         };
-        let portage = Portage::new(runner);
+        let portage = Portage::new(runner, self.backend());
         let grub_mods = self.dir.join(format!("usr/{chost}/usr/lib/grub/i386-pc"));
         if grub_mods.exists() {
             return Ok(());
@@ -396,17 +517,13 @@ impl Sandbox {
         // Write USE flags to the crossdev prefix portage config before emerging.
         // The crossdev portage config is not re-written when setup_crossdev is skipped,
         // so we must ensure the grub platform flag is present here.
-        let flags: Vec<String> = platforms
-            .split_whitespace()
-            .map(|p| format!("grub_platforms_{p}"))
-            .collect();
         let use_dir = self
             .dir
             .join(format!("usr/{chost}/etc/portage/package.use"));
         std::fs::create_dir_all(&use_dir)?;
         std::fs::write(
             use_dir.join("grub"),
-            format!("sys-boot/grub {}\n", flags.join(" ")),
+            format!("{}\n", grub_use_line(platforms)),
         )?;
         tracing::info!("Installing sys-boot/grub into crossdev prefix for {chost}…");
         portage.cross_emerge_crossdev(chost, &["sys-boot/grub"])
@@ -431,74 +548,79 @@ impl Sandbox {
         }
         .write(portage_dir)?;
 
-        for sub in [
-            "env",
-            "package.env",
-            "package.use",
-            "package.accept_keywords",
-        ] {
-            std::fs::create_dir_all(portage_dir.join(sub))?;
+        let use_dir = portage_dir.join("package.use");
+        std::fs::create_dir_all(&use_dir)?;
+        let mut files: BTreeMap<&str, String> = BTreeMap::new();
+        for (file, line) in prefix_package_use(board) {
+            let body = files.entry(file).or_default();
+            body.push_str(&line);
+            body.push('\n');
+        }
+        for (file, body) in files {
+            std::fs::write(use_dir.join(file), body)?;
         }
 
-        // env/plain.conf: strip arch-specific flags (used for rust, etc.)
-        std::fs::write(
-            portage_dir.join("env/plain.conf"),
-            "CFLAGS=\"-O3 -pipe\"\nCXXFLAGS=\"-O3 -pipe\"\n",
-        )?;
-
-        // package.env
-        std::fs::write(
-            portage_dir.join("package.env/rust"),
-            "dev-lang/rust plain.conf\n",
-        )?;
-
-        // package.use
-        std::fs::write(
-            portage_dir.join("package.use/busybox"),
-            ">=virtual/libcrypt-2-r1 static-libs\n\
-             >=sys-libs/libxcrypt-4.4.36-r3 static-libs\n\
-             >=sys-apps/busybox-1.36.1-r3 -pam static\n",
-        )?;
-        std::fs::write(
-            portage_dir.join("package.use/clang"),
-            "llvm-core/clang -extra\n",
-        )?;
-        std::fs::write(
-            portage_dir.join("package.use/rust"),
-            "dev-lang/rust rustfmt -system-llvm\n",
-        )?;
-        std::fs::write(portage_dir.join("package.use/git"), "dev-vcs/git -iconv\n")?;
-
-        if let Some(ref platforms) = board.grub_platforms {
-            let flags: Vec<String> = platforms
-                .split_whitespace()
-                .map(|p| format!("grub_platforms_{p}"))
-                .collect();
-            std::fs::write(
-                portage_dir.join("package.use/grub"),
-                format!("sys-boot/grub {}\n", flags.join(" ")),
-            )?;
-        }
-
-        // Per-package CFLAGS workarounds from board.conf
-        for (pkg, flags) in board
-            .workaround_pkgs
-            .iter()
-            .zip(board.workaround_cflags.iter())
-        {
-            let safe_name = pkg.replace('/', "_");
-            std::fs::write(
-                portage_dir.join(format!("env/{safe_name}.conf")),
-                format!("CFLAGS=\"{flags}\"\nCXXFLAGS=\"{flags}\"\n"),
-            )?;
-            std::fs::write(
-                portage_dir.join(format!("package.env/{safe_name}")),
-                format!("{pkg} {safe_name}.conf\n"),
-            )?;
-        }
-
-        Ok(())
+        write_package_env(portage_dir, board)
     }
+}
+
+/// `package.use` lines for the cross prefix, each with the file it is written to.
+fn prefix_package_use(board: &BoardConfig) -> Vec<(&'static str, String)> {
+    let mut lines: Vec<(&'static str, String)> = [
+        ("busybox", ">=virtual/libcrypt-2-r1 static-libs"),
+        ("busybox", ">=sys-libs/libxcrypt-4.4.36-r3 static-libs"),
+        ("busybox", ">=sys-apps/busybox-1.36.1-r3 -pam static"),
+        ("clang", "llvm-core/clang -extra"),
+        ("rust", "dev-lang/rust rustfmt -system-llvm"),
+        ("git", "dev-vcs/git -iconv"),
+    ]
+    .into_iter()
+    .map(|(file, line)| (file, line.to_string()))
+    .collect();
+    if let Some(platforms) = &board.grub_platforms {
+        lines.push(("grub", grub_use_line(platforms)));
+    }
+    lines
+}
+
+fn grub_use_line(platforms: &str) -> String {
+    let flags: Vec<String> = platforms
+        .split_whitespace()
+        .map(|p| format!("grub_platforms_{p}"))
+        .collect();
+    format!("sys-boot/grub {}", flags.join(" "))
+}
+
+/// The cross prefix's `env/` and `package.env/` files: plain CFLAGS for rust, the board's workarounds.
+fn write_package_env(portage_dir: &Utf8Path, board: &BoardConfig) -> Result<()> {
+    std::fs::create_dir_all(portage_dir.join("env"))?;
+    std::fs::create_dir_all(portage_dir.join("package.env"))?;
+
+    std::fs::write(
+        portage_dir.join("env/plain.conf"),
+        "CFLAGS=\"-O3 -pipe\"\nCXXFLAGS=\"-O3 -pipe\"\n",
+    )?;
+    std::fs::write(
+        portage_dir.join("package.env/rust"),
+        "dev-lang/rust plain.conf\n",
+    )?;
+
+    for (pkg, flags) in board
+        .workaround_pkgs
+        .iter()
+        .zip(board.workaround_cflags.iter())
+    {
+        let safe_name = pkg.replace('/', "_");
+        std::fs::write(
+            portage_dir.join(format!("env/{safe_name}.conf")),
+            format!("CFLAGS=\"{flags}\"\nCXXFLAGS=\"{flags}\"\n"),
+        )?;
+        std::fs::write(
+            portage_dir.join(format!("package.env/{safe_name}")),
+            format!("{pkg} {safe_name}.conf\n"),
+        )?;
+    }
+    Ok(())
 }
 
 /// Remove a sandbox directory (via hakoniwa to handle root-owned files from stage3).
@@ -701,5 +823,19 @@ mod tests {
         assert!(!marker_matches("15.1.0", &spec));
         // Unparsable markers fall back to a literal prefix check.
         assert!(marker_matches("15.2-snapshot", &spec));
+    }
+
+    #[test]
+    fn gcc_atom_binds_slot_or_prefix() {
+        let slot = GccSpec {
+            slot: "16".into(),
+            prefix: None,
+        };
+        assert_eq!(slot.atom(), "sys-devel/gcc:16");
+        let prefix = GccSpec {
+            slot: "16".into(),
+            prefix: Some("16.2".into()),
+        };
+        assert_eq!(prefix.atom(), "=sys-devel/gcc-16.2*");
     }
 }

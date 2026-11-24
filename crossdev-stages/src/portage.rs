@@ -24,28 +24,33 @@ impl<'a> MakeConf<'a> {
         if !make_conf.exists() {
             std::fs::write(&make_conf, "")?;
         }
+        for (name, value) in self.vars()? {
+            set_make_conf_var(&make_conf, name, &value)?;
+        }
+        Ok(())
+    }
 
+    /// The variables [`write`](Self::write) sets, in file order.
+    pub fn vars(&self) -> Result<Vec<(&'static str, String)>> {
         let (jobs, load) = parallelism();
         let garch = gentoo_arch(self.arch)?;
         let cflags = self.cflags.unwrap_or_else(|| default_cflags(self.arch));
+        let features = if self.binhost.is_some() {
+            "parallel-install -merge-wait getbinpkg"
+        } else {
+            "parallel-install -merge-wait"
+        };
 
-        set_make_conf_var(
-            &make_conf,
-            "MAKEOPTS",
-            &format!("-j{jobs} --load-average {load}"),
-        )?;
-        set_make_conf_var(
-            &make_conf,
-            "EMERGE_DEFAULT_OPTS",
-            &format!("--jobs={jobs} --load-average {load}"),
-        )?;
-        set_make_conf_var(&make_conf, "FEATURES", "parallel-install -merge-wait")?;
-        set_make_conf_var(&make_conf, "ACCEPT_KEYWORDS", &format!("~{garch}"))?;
-        set_make_conf_var(
-            &make_conf,
-            "PORT_LOGDIR",
-            &format!("/var/log/portage/{garch}"),
-        )?;
+        let mut vars = vec![
+            ("MAKEOPTS", format!("-j{jobs} --load-average {load}")),
+            (
+                "EMERGE_DEFAULT_OPTS",
+                format!("--jobs={jobs} --load-average {load}"),
+            ),
+            ("FEATURES", features.to_string()),
+            ("ACCEPT_KEYWORDS", format!("~{garch}")),
+            ("PORT_LOGDIR", format!("/var/log/portage/{garch}")),
+        ];
 
         // LLVM_TARGETS: host gets the union of every supported arch (so the
         // bundled LLVM inside dev-lang/rust can bootstrap any cross-std);
@@ -55,26 +60,21 @@ impl<'a> MakeConf<'a> {
             None => Some(all_llvm_targets()),
         };
         if let Some(targets) = llvm_targets.filter(|s| !s.is_empty()) {
-            set_make_conf_var(&make_conf, "LLVM_TARGETS", &targets)?;
+            vars.push(("LLVM_TARGETS", targets));
         }
 
         if let Some(chost) = self.chost {
-            set_make_conf_var(&make_conf, "CHOST", chost)?;
-            set_make_conf_var(&make_conf, "CFLAGS", cflags)?;
-            set_make_conf_var(&make_conf, "CXXFLAGS", cflags)?;
+            vars.push(("CHOST", chost.to_string()));
+            vars.push(("CFLAGS", cflags.to_string()));
+            vars.push(("CXXFLAGS", cflags.to_string()));
         }
-
         if let Some(mirror) = self.mirror {
-            set_make_conf_var(&make_conf, "GENTOO_MIRRORS", mirror)?;
+            vars.push(("GENTOO_MIRRORS", mirror.to_string()));
         }
-
         if let Some(binhost) = self.binhost {
-            set_make_conf_var(&make_conf, "PORTAGE_BINHOST", binhost)?;
-            let features = "parallel-install -merge-wait getbinpkg";
-            set_make_conf_var(&make_conf, "FEATURES", features)?;
+            vars.push(("PORTAGE_BINHOST", binhost.to_string()));
         }
-
-        Ok(())
+        Ok(vars)
     }
 }
 
@@ -113,14 +113,66 @@ pub fn set_make_conf_var(file: &Utf8Path, name: &str, value: &str) -> Result<()>
     Ok(())
 }
 
+/// What installs packages in a sandbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Backend {
+    /// Portage's `emerge`, with crossdev and its `<chost>-emerge` wrappers.
+    Portage,
+    /// `em`, for both the host and the cross toolchain.
+    Em,
+}
+
+/// A cross install command: `<chost>-emerge` with Portage, `em --target <chost>` with em.
+///
+/// `env` is a list of `VAR=value` words; `root` and `config_root` become
+/// `ROOT`/`PORTAGE_CONFIGROOT` for Portage and `--root`/`--config-root` for em.
+fn cross_command(
+    backend: Backend,
+    chost: &str,
+    env: &str,
+    root: Option<&str>,
+    config_root: Option<&str>,
+    args: &str,
+) -> String {
+    let mut words = vec![env.to_string()];
+    match backend {
+        Backend::Portage => {
+            words.extend(config_root.map(|c| format!("PORTAGE_CONFIGROOT={c}")));
+            words.extend(root.map(|r| format!("ROOT={r}")));
+            words.push(format!("{chost}-emerge"));
+        }
+        Backend::Em => {
+            words.push(format!("em --target {chost}"));
+            words.extend(root.map(|r| format!("--root {r}")));
+            words.extend(config_root.map(|c| format!("--config-root {c}")));
+        }
+    }
+    words.push(args.to_string());
+    words.retain(|w| !w.is_empty());
+    words.join(" ")
+}
+
 /// Portage operations that run *inside* a sandbox container.
 pub struct Portage<'a> {
     runner: &'a SandboxRunner,
+    backend: Backend,
 }
 
 impl<'a> Portage<'a> {
-    pub fn new(runner: &'a SandboxRunner) -> Self {
-        Self { runner }
+    pub fn new(runner: &'a SandboxRunner, backend: Backend) -> Self {
+        Self { runner, backend }
+    }
+
+    fn cross(
+        &self,
+        chost: &str,
+        env: &str,
+        root: Option<&str>,
+        config_root: Option<&str>,
+        args: &str,
+    ) -> Result<()> {
+        let cmd = cross_command(self.backend, chost, env, root, config_root, args);
+        self.runner.run(&cmd)
     }
 
     /// Initial sync of the portage tree.
@@ -144,7 +196,11 @@ impl<'a> Portage<'a> {
     /// Emerge packages, using binary if available (`-b -k`).
     pub fn emerge(&self, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
-        self.runner.run(&format!("emerge -b -k {pkgs}"))
+        let emerge = match self.backend {
+            Backend::Portage => "emerge",
+            Backend::Em => "em",
+        };
+        self.runner.run(&format!("{emerge} -b -k {pkgs}"))
     }
 
     /// Rebuild the world set.
@@ -154,11 +210,9 @@ impl<'a> Portage<'a> {
     }
 
     /// Cross-emerge packages into the target stage (mounted at `/target`).
-    /// Uses `{chost}-emerge` which crossdev installs.
     pub fn cross_emerge(&self, chost: &str, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
-        self.runner
-            .run(&format!("ROOT=/target {chost}-emerge -b -k {pkgs}"))
+        self.cross(chost, "", Some("/target"), None, &format!("-b -k {pkgs}"))
     }
 
     /// Upgrade the target `@world` and `packages` to the best versions in the
@@ -175,26 +229,27 @@ impl<'a> Portage<'a> {
         } else {
             format!("@world {extra}")
         };
-        self.runner.run(&format!(
-            "SYSROOT=/target PORTAGE_CONFIGROOT=/usr/{chost} ROOT=/target \
-             {chost}-emerge -b -k -uDN --with-bdeps=n {atoms}"
-        ))
+        self.cross(
+            chost,
+            "SYSROOT=/target",
+            Some("/target"),
+            Some(&format!("/usr/{chost}")),
+            &format!("-b -k -uDN --with-bdeps=n {atoms}"),
+        )
     }
 
     /// Cross-emerge with `USE=build` for bootstrapping (baselayout, portage).
     pub fn cross_emerge_build(&self, chost: &str, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
-        self.runner.run(&format!(
-            "USE=build ROOT=/target {chost}-emerge -b -k {pkgs}"
-        ))
+        let args = format!("-b -k {pkgs}");
+        self.cross(chost, "USE=build", Some("/target"), None, &args)
     }
 
     /// Rebuild the target stage's `@world` with `KERNEL_DIR` pointing at the
     /// in-prefix kernel headers, which some `@world` packages read.
     pub fn cross_emerge_world(&self, chost: &str) -> Result<()> {
-        self.runner.run(&format!(
-            "KERNEL_DIR=/usr/src/linux ROOT=/target {chost}-emerge -b -k -e @world"
-        ))
+        let env = "KERNEL_DIR=/usr/src/linux";
+        self.cross(chost, env, Some("/target"), None, "-b -k -e @world")
     }
 
     /// `packages.build` lines from the target profile's gentoo repo, joined
@@ -213,12 +268,12 @@ impl<'a> Portage<'a> {
         Ok(packages)
     }
 
-    /// Run `{chost}-emerge` without overriding ROOT, so packages install into
+    /// Cross-emerge without overriding ROOT, so packages install into
     /// the crossdev prefix (`/usr/{chost}`) rather than `/target`.
     /// Used for updating the cross-toolchain itself (gcc, binutils-libs, @system).
     pub fn cross_emerge_crossdev(&self, chost: &str, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
-        self.runner.run(&format!("{chost}-emerge -b -k {pkgs}"))
+        self.cross(chost, "", None, None, &format!("-b -k {pkgs}"))
     }
 
     /// Emerge the host `sys-devel/gcc` cross-compiler seed into the sandbox.
@@ -368,7 +423,7 @@ fn gcc_live_atoms(ebuild_names: &[String]) -> String {
 
 /// Sync the portage tree inside a sandbox (emerge-webrsync, signing keys).
 pub fn sync_portage_tree(runner: &SandboxRunner) -> Result<()> {
-    let portage = Portage::new(runner);
+    let portage = Portage::new(runner, Backend::Portage);
 
     tracing::info!("Syncing portage tree…");
     portage.webrsync()?;
@@ -378,10 +433,10 @@ pub fn sync_portage_tree(runner: &SandboxRunner) -> Result<()> {
     Ok(())
 }
 
-/// Install all host-side dependencies required for cross-compilation.
+/// Install all host-side dependencies required for cross-compilation, always with emerge.
 pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
     sync_portage_tree(runner)?;
-    let portage = Portage::new(runner);
+    let portage = Portage::new(runner, Backend::Portage);
 
     let bin_packages = ["app-arch/zstd", "app-arch/bzip2", "app-arch/xz-utils"];
     tracing::info!("Installing binary packages…");
@@ -414,7 +469,37 @@ pub fn install_host_deps(runner: &SandboxRunner) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::gcc_live_atoms;
+    use super::{cross_command, gcc_live_atoms, Backend};
+
+    #[test]
+    fn cross_command_maps_roots_per_backend() {
+        let chost = "riscv64-unknown-linux-gnu";
+        let configroot = Some("/usr/riscv64-unknown-linux-gnu");
+        let update = |b| {
+            cross_command(
+                b,
+                chost,
+                "SYSROOT=/target",
+                Some("/target"),
+                configroot,
+                "-uDN @world",
+            )
+        };
+        assert_eq!(
+            update(Backend::Portage),
+            "SYSROOT=/target PORTAGE_CONFIGROOT=/usr/riscv64-unknown-linux-gnu ROOT=/target \
+             riscv64-unknown-linux-gnu-emerge -uDN @world"
+        );
+        assert_eq!(
+            update(Backend::Em),
+            "SYSROOT=/target em --target riscv64-unknown-linux-gnu --root /target \
+             --config-root /usr/riscv64-unknown-linux-gnu -uDN @world"
+        );
+        assert_eq!(
+            cross_command(Backend::Em, chost, "", None, None, "-b -k sys-boot/grub"),
+            "em --target riscv64-unknown-linux-gnu -b -k sys-boot/grub"
+        );
+    }
 
     #[test]
     fn live_gcc_mask_skips_release_ebuilds() {

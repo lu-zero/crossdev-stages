@@ -2,6 +2,7 @@ mod board;
 mod bootloader;
 mod cli;
 mod container;
+mod em;
 mod error;
 mod image;
 mod portage;

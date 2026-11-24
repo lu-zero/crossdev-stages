@@ -70,6 +70,13 @@ build environment for cross-compilation.  Provides:
   (crossdev, rust, dracut, genimage, …), write `.prepared` marker.
 - `setup_crossdev(arch, board)` — install the cross-toolchain for `arch` into
   the crossdev prefix (`/usr/<chost>`), write `.crossdev-<arch>` marker.
+- `install_em(path)` — `sandbox setup --em`: copy `em` to `/usr/local/bin/em`
+  and write the `.em` marker. The sandbox's backend is then em:
+  `setup_crossdev` writes a spec of the board to
+  `/var/lib/crossdev-stages/<chost>.toml` and runs `em crossdev --setup`, and
+  every `<chost>-emerge` or host `emerge` outside `prepare` becomes
+  `em --target <chost>` or `em`. A sandbox that already has a crossdev
+  toolchain refuses the switch.
 - `runner()` — return a `SandboxRunner` for executing commands inside the
   container.
 
