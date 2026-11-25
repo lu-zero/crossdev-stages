@@ -172,7 +172,10 @@ impl<'a> Portage<'a> {
         args: &str,
     ) -> Result<()> {
         let cmd = cross_command(self.backend, chost, env, root, config_root, args);
-        self.runner.run(&cmd)
+        match self.backend {
+            Backend::Portage => self.runner.run(&cmd),
+            Backend::Em => self.runner.run_em(&cmd),
+        }
     }
 
     /// Initial sync of the portage tree.
@@ -196,11 +199,10 @@ impl<'a> Portage<'a> {
     /// Emerge packages, using binary if available (`-b -k`).
     pub fn emerge(&self, packages: &[&str]) -> Result<()> {
         let pkgs = packages.join(" ");
-        let emerge = match self.backend {
-            Backend::Portage => "emerge",
-            Backend::Em => "em",
-        };
-        self.runner.run(&format!("{emerge} -b -k {pkgs}"))
+        match self.backend {
+            Backend::Portage => self.runner.run(&format!("emerge -b -k {pkgs}")),
+            Backend::Em => self.runner.run_em(&format!("em -b -k {pkgs}")),
+        }
     }
 
     /// Rebuild the world set.

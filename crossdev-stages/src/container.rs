@@ -80,6 +80,26 @@ impl SandboxRunner {
         self.run_argv(&["/bin/bash", "--login", "-c", &login_command(cmd)])
     }
 
+    /// Run an em command; under `--output quiet|fancy` its events are drawn and its output logged.
+    pub fn run_em(&self, cmd: &str) -> Result<()> {
+        use crate::activity::{Output, Watch, FIFO};
+        let output = crate::activity::output();
+        if output == Output::Plain {
+            return self.run(cmd);
+        }
+        std::fs::create_dir_all(&self.log_dir)?;
+        let log = format!("em-{}.log", chrono::Local::now().format("%Y%m%d-%H%M%S"));
+        let watch = Watch::start(&self.sandbox_dir, &self.log_dir, output)?;
+        let result = self.run(&format!(
+            "{cmd} --activity-jsonl /var/log/{FIFO} > /var/log/{log} 2>&1"
+        ));
+        watch.finish();
+        if result.is_err() {
+            tracing::error!("em output: {}", self.log_dir.join(&log));
+        }
+        result
+    }
+
     /// Run a shell command and capture its trimmed stdout.
     pub fn run_output(&self, cmd: &str) -> Result<String> {
         self.run_output_argv(&["/bin/bash", "--login", "-c", &login_command(cmd)])

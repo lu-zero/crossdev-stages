@@ -1,3 +1,4 @@
+mod activity;
 mod board;
 mod bootloader;
 mod cli;
@@ -20,6 +21,7 @@ use cli::{Cli, Commands};
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    activity::set_output(cli.output);
 
     tracing_subscriber::fmt()
         .with_env_filter("crossdev_stages=info")
