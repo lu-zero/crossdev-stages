@@ -48,6 +48,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub dry_run: bool,
 
+    /// How em's builds are shown: as em prints them, a line per step, or progress bars.
+    #[arg(long, global = true, value_enum, default_value_t)]
+    pub output: crate::activity::Output,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -149,7 +153,7 @@ pub enum SandboxCmd {
     Run {
         #[arg(long)]
         name: Option<String>,
-        /// Command string to execute via bash --login -c.
+        /// Command string to execute via bash --login -c; a single `em` command honours `--output`.
         cmd: Vec<String>,
     },
     /// Remove a sandbox.

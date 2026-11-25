@@ -452,7 +452,7 @@ impl Sandbox {
 
         let runner = self.runner();
         tracing::info!("Running em crossdev for {chost} (this takes a while)…");
-        runner.run(&format!("em crossdev --target /{spec_path} --setup"))?;
+        runner.run_em(&format!("em crossdev --target /{spec_path} --setup"))?;
 
         let gcc_ver = crate::em::cross_gcc_version(&self.dir, chost)?;
         if !marker_matches(&gcc_ver, gcc) {

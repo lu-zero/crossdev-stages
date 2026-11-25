@@ -60,7 +60,15 @@ pub async fn run(
         SandboxCmd::Run { name, cmd } => {
             let dir = ws.resolve_sandbox(name.as_deref())?;
             let sb = sandbox::Sandbox::open(dir)?;
-            sb.runner().run(&cmd.join(" "))?;
+            let cmd = cmd.join(" ");
+            // A lone em command shows under `--output` like the ones crossdev-stages runs itself.
+            let lone_em = cmd.split_whitespace().next() == Some("em")
+                && !cmd.contains([';', '&', '|', '>', '<']);
+            if lone_em {
+                sb.runner().run_em(&cmd)?;
+            } else {
+                sb.runner().run(&cmd)?;
+            }
         }
         SandboxCmd::Destroy { name } => {
             sandbox::destroy(ws, &name)?;
